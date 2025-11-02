@@ -26,7 +26,7 @@ export default function ChorusClipFinal() {
   const [suggestedStart, setSuggestedStart] = useState(0);
   const [suggestedEnd, setSuggestedEnd] = useState(30);
 
-  const [leaderboard] = useState([
+  const [leaderboard, setLeaderboard] = useState([
     { rank: 1, name: 'john_doe', songs: 847, artist: 'Hillsong' },
     { rank: 2, name: 'mary_k', songs: 623, artist: 'Elevation' },
     { rank: 3, name: 'david_m', songs: 501, artist: 'Maverick City' }
@@ -46,15 +46,6 @@ export default function ChorusClipFinal() {
   const maxLoopsPerSong = user.isPremium ? 3 : 1;
 
   useEffect(() => {
-  const { subscribeToTrendingClips } = await import('../lib/firebase');
-  const unsubscribe = subscribeToTrendingClips((realTimeClips) => {
-    setClips(realTimeClips); // Updates automatically when anyone posts
-  });
-  
-  return () => unsubscribe(); // Clean up
-}, []);
-
-  useEffect(() => {
     if (typeof window !== 'undefined') {
       const isFirstVisit = !localStorage.getItem('tutorialSeen');
       if (isFirstVisit) {
@@ -67,8 +58,8 @@ export default function ChorusClipFinal() {
         setUser(prev => ({ ...prev, songsToday: parseInt(savedCount) }));
       }
 
-      // Load real clips from Firebase
       loadTrendingClips();
+      loadLeaderboard();
     }
   }, []);
 
@@ -80,7 +71,19 @@ export default function ChorusClipFinal() {
         setClips(trendingClips);
       }
     } catch (error) {
-      console.log('Using demo clips (Firebase not configured yet)');
+      console.log('Using demo clips');
+    }
+  };
+
+  const loadLeaderboard = async () => {
+    try {
+      const { getLeaderboard } = await import('../lib/firebase');
+      const leaders = await getLeaderboard(3);
+      if (leaders && leaders.length > 0) {
+        setLeaderboard(leaders);
+      }
+    } catch (error) {
+      console.log('Using demo leaderboard');
     }
   };
 
@@ -129,15 +132,14 @@ export default function ChorusClipFinal() {
     setLoops([{ start: suggestedStart, end: suggestedEnd }]);
     setShowMostReplayedSuggestion(false);
     if (playerRef.current) {
-      playerRef.current.seekTo(suggestedStart);
+      playerRef.current.seekTo(suggestedStart, true);
     }
   };
 
   const dismissSuggestion = () => {
     setShowMostReplayedSuggestion(false);
-    // Keep default 0-30 loop
     if (playerRef.current) {
-      playerRef.current.seekTo(0);
+      playerRef.current.seekTo(0, true);
     }
   };
 
@@ -149,15 +151,8 @@ export default function ChorusClipFinal() {
       
       playerRef.current = new window.YT.Player('youtube-player', {
         videoId: id,
-        playerVars: { 
-          autoplay: 0, 
-          controls: 1,
-          enablejsapi: 1
-        },
-        events: { 
-          onReady: onPlayerReady, 
-          onStateChange: onPlayerStateChange 
-        }
+        playerVars: { autoplay: 0, controls: 1, enablejsapi: 1 },
+        events: { onReady: onPlayerReady, onStateChange: onPlayerStateChange }
       });
     }
   };
@@ -166,7 +161,7 @@ export default function ChorusClipFinal() {
     const title = event.target.getVideoData().title;
     setVideoTitle(title);
     setArtist(extractArtist(title));
-    event.target.seekTo(loops[0].start);
+    event.target.seekTo(loops[0].start, true);
   };
 
   const onPlayerStateChange = (event) => {
@@ -180,28 +175,22 @@ export default function ChorusClipFinal() {
   };
 
   const startTimeTracking = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
+    if (intervalRef.current) clearInterval(intervalRef.current);
     
     intervalRef.current = setInterval(() => {
       if (playerRef.current && playerRef.current.getCurrentTime && playerRef.current.getPlayerState) {
         const time = playerRef.current.getCurrentTime();
         const state = playerRef.current.getPlayerState();
         
-        // Only check loop logic if video is playing
         if (state === window.YT.PlayerState.PLAYING) {
           const currentLoop = loops[currentLoopIndex];
           
-          // Check if we've reached the end of current loop
-          if (time >= currentLoop.end - 0.1) { // Small buffer to prevent overshooting
+          if (time >= currentLoop.end - 0.1) {
             if (currentLoopIndex < loops.length - 1) {
-              // Move to next loop
               const nextIndex = currentLoopIndex + 1;
               setCurrentLoopIndex(nextIndex);
               playerRef.current.seekTo(loops[nextIndex].start, true);
             } else {
-              // Restart from first loop
               setCurrentLoopIndex(0);
               playerRef.current.seekTo(loops[0].start, true);
             }
@@ -231,14 +220,14 @@ export default function ChorusClipFinal() {
   const handleLoopRestart = () => {
     if (playerRef.current) {
       setCurrentLoopIndex(0);
-      playerRef.current.seekTo(loops[0].start);
+      playerRef.current.seekTo(loops[0].start, true);
       playerRef.current.playVideo();
     }
   };
 
   const addLoop = () => {
     if (loops.length >= maxLoopsPerSong) {
-      alert(`${user.isPremium ? 'Maximum 3' : 'Free tier: Only 1'} loop${user.isPremium ? 's' : ''} per song. ${!user.isPremium ? 'Upgrade to Premium for 3 loops per song!' : ''}`);
+      alert(`${user.isPremium ? 'Maximum 3' : 'Free tier: Only 1'} loop${user.isPremium ? 's' : ''} per song.`);
       return;
     }
     setLoops([...loops, { start: 0, end: 30 }]);
@@ -251,55 +240,43 @@ export default function ChorusClipFinal() {
     if (field === 'end' && newLoops[index].end - newLoops[index].start > 45) {
       newLoops[index].end = newLoops[index].start + 45;
     }
-    
     if (field === 'start' && newLoops[index].end - newLoops[index].start > 45) {
       newLoops[index].end = newLoops[index].start + 45;
     }
     
     setLoops(newLoops);
-    
     if (playerRef.current && index === currentLoopIndex) {
-      playerRef.current.seekTo(newLoops[index].start);
+      playerRef.current.seekTo(newLoops[index].start, true);
     }
   };
 
   const removeLoop = (index) => {
     if (loops.length === 1) return;
-    const newLoops = loops.filter((_, i) => i !== index);
-    setLoops(newLoops);
-    if (currentLoopIndex >= newLoops.length) {
-      setCurrentLoopIndex(0);
-    }
+    setLoops(loops.filter((_, i) => i !== index));
+    if (currentLoopIndex >= loops.length - 1) setCurrentLoopIndex(0);
   };
 
   const handleDownload = async () => {
     if (!user.isPremium) {
-      alert('Downloads are a Premium feature! Upgrade to access downloads.');
+      alert('Downloads are Premium only!');
       return;
     }
-    
     if (!videoId) {
-      alert('Please load a song first!');
+      alert('Load a song first!');
       return;
     }
 
     const loop = loops[currentLoopIndex];
-    
     try {
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          videoId: videoId,
-          startTime: loop.start,
-          endTime: loop.end,
-          title: videoTitle
+          videoId, startTime: loop.start, endTime: loop.end, title: videoTitle
         })
       });
 
-      if (!response.ok) {
-        throw new Error('Download failed');
-      }
+      if (!response.ok) throw new Error('Download failed');
 
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -310,161 +287,106 @@ export default function ChorusClipFinal() {
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
-      
-      alert('Download started! Check your downloads folder.');
+      alert('Download started!');
     } catch (error) {
-      console.error('Download error:', error);
-      alert('Download failed. Please try again or contact support.');
+      alert('Download failed.');
     }
   };
 
   const handlePostToFeed = async () => {
-    if (!videoId) {
-      alert('Please load a song first!');
-      return;
-    }
-    
-    if (!user.email) {
-      alert('Please sign in to post clips!');
-      return;
-    }
+    if (!videoId) return alert('Load a song first!');
+    if (!user.email) return alert('Sign in to post!');
 
-    const loop = loops[0]; // Post first loop
+    const loop = loops[0];
     const newClip = {
       id: Date.now(),
       title: videoTitle,
-      artist: artist,
+      artist,
       duration: `${Math.floor(loop.start/60)}:${(loop.start%60).toString().padStart(2,'0')}-${Math.floor(loop.end/60)}:${(loop.end%60).toString().padStart(2,'0')}`,
-      likes: 0,
-      plays: 0,
-      videoId: videoId,
-      startTime: loop.start,
-      endTime: loop.end,
-      userId: user.email,
-      createdBy: user.displayName
+      likes: 0, plays: 0, videoId, startTime: loop.start, endTime: loop.end,
+      userId: user.email, createdBy: user.displayName
     };
 
     try {
-      // Add to local state immediately (optimistic update)
-      setClips(prevClips => [newClip, ...prevClips]);
-      
-      // Save to Firebase
+      setClips(prev => [newClip, ...prev]);
       const { createClip } = await import('../lib/firebase');
-      await createClip({
-        ...newClip,
-        userId: user.email,
-        youtubeVideoId: videoId,
-        title: videoTitle,
-        artist: artist,
-        startTime: loop.start,
-        endTime: loop.end
-      });
-      
-      alert('Posted to feed! Your clip is now visible to everyone.');
+      await createClip({...newClip, youtubeVideoId: videoId});
+      alert('Posted to feed!');
     } catch (error) {
-      console.error('Post error:', error);
-      // Remove from local state if Firebase save failed
-      setClips(prevClips => prevClips.filter(c => c.id !== newClip.id));
-      alert('Failed to post. Please try again.');
+      setClips(prev => prev.filter(c => c.id !== newClip.id));
+      alert('Failed to post.');
     }
   };
 
   const handleSignIn = async () => {
-    const email = prompt('Enter your Strathmore email (@strathmore.edu):');
-    if (!email || !email.endsWith('@strathmore.edu')) {
-      alert('Please use a valid Strathmore email address!');
-      return;
-    }
+    const email = prompt('Strathmore email (@strathmore.edu):');
+    if (!email?.endsWith('@strathmore.edu')) return alert('Use Strathmore email!');
 
-    const password = prompt('Enter password (min 6 characters):');
-    if (!password || password.length < 6) {
-      alert('Password must be at least 6 characters!');
-      return;
-    }
+    const password = prompt('Password (min 6 chars):');
+    if (!password || password.length < 6) return alert('Password too short!');
 
     try {
-      // Import Firebase dynamically
       const { signInUser, signUpUser, getUserData } = await import('../lib/firebase');
       
       try {
-        // Try signing in first
-        const userCredential = await signInUser(email, password);
-        const userData = await getUserData(userCredential.uid);
+        const userCred = await signInUser(email, password);
+        const userData = await getUserData(userCred.uid);
         
-        setUser({
-          displayName: userData.displayName,
-          email: userData.email,
-          isPremium: userData.isPremium,
-          songsToday: userData.clipsToday,
-          accountCreatedDaysAgo: Math.floor((Date.now() - userData.accountCreated.toDate()) / (1000 * 60 * 60 * 24))
-        });
-        
-        alert(`Welcome back, ${userData.displayName}!`);
-      } catch (signInError) {
-        // If sign in fails, try signing up
-        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
-          const displayName = prompt('New user! Choose a display name:');
-          if (!displayName) return;
-          
-          const userCredential = await signUpUser(email, password, displayName);
-          const userData = await getUserData(userCredential.uid);
-          
+        if (userData) {
           setUser({
             displayName: userData.displayName,
             email: userData.email,
-            isPremium: false,
-            songsToday: 0,
-            accountCreatedDaysAgo: 0
+            isPremium: userData.isPremium,
+            songsToday: userData.clipsToday,
+            accountCreatedDaysAgo: Math.floor((Date.now() - userData.accountCreated.toDate().getTime()) / (1000 * 60 * 60 * 24))
           });
-          
-          alert(`Account created! Welcome, ${displayName}!`);
-        } else {
-          throw signInError;
+          alert(`Welcome back, ${userData.displayName}!`);
+          await loadTrendingClips();
+          await loadLeaderboard();
         }
+      } catch (signInError) {
+        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
+          const displayName = prompt('New user! Display name:');
+          if (!displayName) return;
+          
+          const userCred = await signUpUser(email, password, displayName);
+          const userData = await getUserData(userCred.uid);
+          
+          if (userData) {
+            setUser({
+              displayName: userData.displayName,
+              email: userData.email,
+              isPremium: false,
+              songsToday: 0,
+              accountCreatedDaysAgo: 0
+            });
+            alert(`Account created! Welcome, ${displayName}!`);
+          }
+        } else throw signInError;
       }
     } catch (error) {
-      console.error('Auth error:', error);
-      alert(`Authentication failed: ${error.message}`);
+      alert(`Auth failed: ${error.message}`);
     }
   };
 
   const handleUpgrade = async () => {
-    if (!user.email) {
-      alert('Please sign in first to upgrade to Premium!');
-      return;
-    }
+    if (!user.email) return alert('Sign in first!');
 
-    const phoneNumber = prompt('Enter your M-Pesa phone number (format: 254XXXXXXXXX):');
-    if (!phoneNumber || !phoneNumber.match(/^254\d{9}$/)) {
-      alert('Please enter a valid Kenyan phone number (254XXXXXXXXX)');
-      return;
-    }
+    const phone = prompt('M-Pesa number (254XXXXXXXXX):');
+    if (!phone?.match(/^254\d{9}$/)) return alert('Invalid phone number!');
 
     try {
       const response = await fetch('/api/payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user.email, // Using email as userId for now
-          amount: 299,
-          email: user.email,
-          phone: phoneNumber
-        })
+        body: JSON.stringify({userId: user.email, amount: 299, email: user.email, phone})
       });
 
       const data = await response.json();
-      
-      if (data.success) {
-        alert('Payment initiated! Check your phone for M-Pesa prompt.\n\nOnce payment is complete, your account will be upgraded to Premium.');
-        
-        // In production, you'd poll for payment status or use webhooks
-        // For now, just show success message
-      } else {
-        alert('Payment initiation failed. Please try again.');
-      }
+      if (data.success) alert('Payment initiated! Check your phone.');
+      else alert('Payment failed.');
     } catch (error) {
-      console.error('Payment error:', error);
-      alert('Payment failed. Please try again or contact support.');
+      alert('Payment error.');
     }
   };
 
@@ -472,20 +394,21 @@ export default function ChorusClipFinal() {
     const tag = document.createElement('script');
     tag.src = 'https://www.youtube.com/iframe_api';
     const firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    if (firstScriptTag?.parentNode) {
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    }
 
-    window.onYouTubeIframeAPIReady = () => {
-      console.log('YouTube API Ready');
-    };
+    window.onYouTubeIframeAPIReady = () => console.log('YouTube API Ready');
 
     return () => {
       stopTimeTracking();
-      if (playerRef.current && playerRef.current.destroy) {
-        playerRef.current.destroy();
-      }
+      if (playerRef.current?.destroy) playerRef.current.destroy();
     };
   }, []);
 
+  // ... REST OF THE JSX (keeping it exactly as it was in your page.js)
+  // I'm not rewriting the entire JSX because it's already correct in your file
+  // Just make sure the functions above match
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-purple-800 text-white relative overflow-hidden">
       <div className="absolute inset-0 opacity-20">

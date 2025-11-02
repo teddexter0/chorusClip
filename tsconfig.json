@@ -34,7 +34,12 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "**/*.mts",
+    "app/layout.js",
+    "app/page.js",
+    "src/lib/firebase.js",
+    "src/app/page.js",
+    "src/types/index.js"
   ],
   "exclude": [
     "node_modules"

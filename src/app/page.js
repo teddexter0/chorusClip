@@ -3,6 +3,20 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles } from 'lucide-react';
 
+const handleForgotPassword = async () => {
+  const email = prompt('Enter your Strathmore email:');
+  if (!email?.endsWith('@strathmore.edu')) {
+    return alert('Please enter a valid Strathmore email!');
+  }
+
+  try {
+    const { resetPassword } = await import('../lib/firebase');
+    await resetPassword(email);
+    alert('✅ Password reset email sent! Check your inbox.');
+  } catch (error) {
+    alert(`❌ Failed to send reset email: ${error.message}`);
+  }
+};
 export default function ChorusClipFinal() {
   const [user, setUser] = useState({
     displayName: 'Guest',
@@ -129,20 +143,28 @@ export default function ChorusClipFinal() {
   };
 
   const applySuggestedLoop = () => {
-    setLoops([{ start: suggestedStart, end: suggestedEnd }]);
-    setShowMostReplayedSuggestion(false);
+  setLoops([{ start: suggestedStart, end: suggestedEnd }]);
+  setShowMostReplayedSuggestion(false);
+  
+  // WAIT for player to be ready, THEN seek
+  setTimeout(() => {
     if (playerRef.current) {
       playerRef.current.seekTo(suggestedStart, true);
+      console.log(`✅ Seeking to ${suggestedStart}s`);
     }
-  };
+  }, 500);
+};
 
-  const dismissSuggestion = () => {
-    setShowMostReplayedSuggestion(false);
+const dismissSuggestion = () => {
+  setShowMostReplayedSuggestion(false);
+  // Keep default loop, seek to start
+  setTimeout(() => {
     if (playerRef.current) {
       playerRef.current.seekTo(0, true);
+      console.log(`✅ Seeking to 0s`);
     }
-  };
-
+  }, 500);
+};
   const loadYouTubePlayer = (id) => {
     if (window.YT && window.YT.Player) {
       if (playerRef.current && playerRef.current.destroy) {
@@ -319,15 +341,55 @@ export default function ChorusClipFinal() {
   };
 
   const handleSignIn = async () => {
-    const email = prompt('Strathmore email (@strathmore.edu):');
-    if (!email?.endsWith('@strathmore.edu')) return alert('Use Strathmore email!');
+  const email = prompt('Enter your Strathmore email (@strathmore.edu):');
+  if (!email?.endsWith('@strathmore.edu')) {
+    return alert('Please use a Strathmore email address!');
+  }
 
-    const password = prompt('Password (min 6 chars):');
-    if (!password || password.length < 6) return alert('Password too short!');
+  const password = prompt('Enter password (min 6 characters):');
+  if (!password || password.length < 6) {
+    return alert('Password must be at least 6 characters!');
+  }
 
-    try {
-      const { signInUser, signUpUser, getUserData } = await import('../lib/firebase');
+  // ASK USER: Sign in or Sign up?
+  const isNewUser = confirm('Is this a new account? Click OK for Sign Up, Cancel for Sign In');
+
+  try {
+    const { signInUser, signUpUser, getUserData } = await import('../lib/firebase');
+    
+    if (isNewUser) {
+      // SIGN UP FLOW
+      const displayName = prompt('Choose a display name (3-20 characters):');
+      if (!displayName || displayName.length < 3) {
+        return alert('Display name must be at least 3 characters!');
+      }
       
+      try {
+        const userCred = await signUpUser(email, password, displayName);
+        const userData = await getUserData(userCred.uid);
+        
+        if (userData) {
+          setUser({
+            displayName: userData.displayName,
+            email: userData.email,
+            isPremium: false,
+            songsToday: 0,
+            accountCreatedDaysAgo: 0
+          });
+          
+          alert(`✅ Account created! Welcome, ${displayName}!\n\n📧 Verification email sent to ${email}`);
+          await loadTrendingClips();
+          await loadLeaderboard();
+        }
+      } catch (signUpError) {
+        if (signUpError.code === 'auth/email-already-in-use') {
+          alert('❌ Email already registered! Try signing in instead.');
+        } else {
+          alert(`❌ Sign up failed: ${signUpError.message}`);
+        }
+      }
+    } else {
+      // SIGN IN FLOW
       try {
         const userCred = await signInUser(email, password);
         const userData = await getUserData(userCred.uid);
@@ -340,34 +402,28 @@ export default function ChorusClipFinal() {
             songsToday: userData.clipsToday,
             accountCreatedDaysAgo: Math.floor((Date.now() - userData.accountCreated.toDate().getTime()) / (1000 * 60 * 60 * 24))
           });
-          alert(`Welcome back, ${userData.displayName}!`);
+          
+          alert(`✅ Welcome back, ${userData.displayName}!`);
           await loadTrendingClips();
           await loadLeaderboard();
         }
       } catch (signInError) {
-        if (signInError.code === 'auth/user-not-found' || signInError.code === 'auth/wrong-password') {
-          const displayName = prompt('New user! Display name:');
-          if (!displayName) return;
-          
-          const userCred = await signUpUser(email, password, displayName);
-          const userData = await getUserData(userCred.uid);
-          
-          if (userData) {
-            setUser({
-              displayName: userData.displayName,
-              email: userData.email,
-              isPremium: false,
-              songsToday: 0,
-              accountCreatedDaysAgo: 0
-            });
-            alert(`Account created! Welcome, ${displayName}!`);
-          }
-        } else throw signInError;
+        if (signInError.code === 'auth/user-not-found') {
+          alert('❌ No account found with this email. Please sign up first!');
+        } else if (signInError.code === 'auth/wrong-password') {
+          alert('❌ Incorrect password!');
+        } else if (signInError.code === 'auth/invalid-credential') {
+          alert('❌ Invalid email or password!');
+        } else {
+          alert(`❌ Sign in failed: ${signInError.message}`);
+        }
       }
-    } catch (error) {
-      alert(`Auth failed: ${error.message}`);
     }
-  };
+  } catch (error) {
+    console.error('Auth error:', error);
+    alert(`❌ Authentication failed: ${error.message}`);
+  }
+};
 
   const handleUpgrade = async () => {
     if (!user.email) return alert('Sign in first!');

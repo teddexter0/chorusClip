@@ -2,6 +2,7 @@
 
 **Loop your favorite song moments. Share with friends. Discover new music.**
 
+[**Try ChorusClip now**](https://chorus-clip.vercel.app/)
 ChorusClip lets you create and share 45-second loops of your favorite parts of any YouTube song. Perfect for worship music, study sessions, workouts, and more.
 
 ![ChorusClip Banner](./assets/banner.png)

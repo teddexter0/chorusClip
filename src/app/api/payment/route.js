@@ -138,58 +138,58 @@ async function queryPesapalStatus(trackingId) {
 }
 
 // Alternative: M-Pesa STK Push (Daraja API)
-export async function initiateSTKPush(request) {
-  try {
-    const { userId, amount, phone } = await request.json();
+// export async function initiateSTKPush(request) {
+//   try {
+//     const { userId, amount, phone } = await request.json();
 
-    // Get M-Pesa access token
-    const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
+//     // Get M-Pesa access token
+//     const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
     
-    const tokenResponse = await fetch('https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials', {
-      headers: {
-        'Authorization': `Basic ${auth}`
-      }
-    });
+//     const tokenResponse = await fetch('https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials', {
+//       headers: {
+//         'Authorization': `Basic ${auth}`
+//       }
+//     });
     
-    const { access_token } = await tokenResponse.json();
+//     const { access_token } = await tokenResponse.json();
 
-    // Initiate STK Push
-    const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, -3);
-    const password = Buffer.from(`${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
+//     // Initiate STK Push
+//     const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, -3);
+//     const password = Buffer.from(`${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
 
-    const stkPushResponse = await fetch('https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        BusinessShortCode: process.env.MPESA_SHORTCODE,
-        Password: password,
-        Timestamp: timestamp,
-        TransactionType: 'CustomerPayBillOnline',
-        Amount: amount,
-        PartyA: phone,
-        PartyB: process.env.MPESA_SHORTCODE,
-        PhoneNumber: phone,
-        CallBackURL: `${process.env.NEXT_PUBLIC_BASE_URL}/api/payment/mpesa-callback`,
-        AccountReference: 'ChorusClip Premium',
-        TransactionDesc: 'Premium Subscription'
-      })
-    });
+//     const stkPushResponse = await fetch('https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest', {
+//       method: 'POST',
+//       headers: {
+//         'Authorization': `Bearer ${access_token}`,
+//         'Content-Type': 'application/json'
+//       },
+//       body: JSON.stringify({
+//         BusinessShortCode: process.env.MPESA_SHORTCODE,
+//         Password: password,
+//         Timestamp: timestamp,
+//         TransactionType: 'CustomerPayBillOnline',
+//         Amount: amount,
+//         PartyA: phone,
+//         PartyB: process.env.MPESA_SHORTCODE,
+//         PhoneNumber: phone,
+//         CallBackURL: `${process.env.NEXT_PUBLIC_BASE_URL}/api/payment/mpesa-callback`,
+//         AccountReference: 'ChorusClip Premium',
+//         TransactionDesc: 'Premium Subscription'
+//       })
+//     });
 
-    const result = await stkPushResponse.json();
+//     const result = await stkPushResponse.json();
 
-    return NextResponse.json({
-      success: true,
-      checkoutRequestId: result.CheckoutRequestID
-    });
+//     return NextResponse.json({
+//       success: true,
+//       checkoutRequestId: result.CheckoutRequestID
+//     });
 
-  } catch (error) {
-    console.error('STK Push error:', error);
-    return NextResponse.json(
-      { success: false, error: error.message },
-      { status: 500 }
-    );
-  }
-}
+//   } catch (error) {
+//     console.error('STK Push error:', error);
+//     return NextResponse.json(
+//       { success: false, error: error.message },
+//       { status: 500 }
+//     );
+//   }
+// }

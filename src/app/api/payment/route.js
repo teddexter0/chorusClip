@@ -1,7 +1,6 @@
-// app/api/payment/route.js
-import * as crypto from 'crypto';
+// src/app/api/payment/route.js
 import { NextResponse } from 'next/server';
-import { createPayment, updatePaymentStatus } from '../../../lib/firebase.js';
+import crypto from 'crypto';
 
 const PESAPAL_CONSUMER_KEY = process.env.PESAPAL_CONSUMER_KEY;
 const PESAPAL_CONSUMER_SECRET = process.env.PESAPAL_CONSUMER_SECRET;
@@ -11,6 +10,9 @@ const PESAPAL_IFRAME_URL = 'https://www.pesapal.com/API/PostPesapalDirectOrderV4
 export async function POST(request) {
   try {
     const { userId, amount, email, phone } = await request.json();
+
+    // Import Firebase functions dynamically (server-side only)
+    const { createPayment } = await import('../../../lib/firebase-server.js');
 
     // Create payment record in Firebase
     const paymentId = await createPayment(userId, amount, '');
@@ -32,7 +34,6 @@ export async function POST(request) {
     const nonce = Math.random().toString(36).substring(7);
 
     // In production, use proper OAuth 1.0 signature generation
-    // For now, this is a placeholder
     const signature = generateOAuthSignature(pesapalData);
 
     // Make request to Pesapal
@@ -72,6 +73,9 @@ export async function GET(request) {
     const paymentId = searchParams.get('reference');
     const pesapalTrackingId = searchParams.get('pesapal_transaction_tracking_id');
 
+    // Import Firebase functions dynamically
+    const { updatePaymentStatus } = await import('../../../lib/firebase.js');
+
     // Query Pesapal for payment status
     const status = await queryPesapalStatus(pesapalTrackingId);
 
@@ -92,10 +96,8 @@ export async function GET(request) {
 }
 
 // Helper functions
-
 function generateOAuthSignature(data) {
   // Simplified OAuth signature generation
-  // In production, use a proper OAuth 1.0 library like 'oauth-1.0a'
   const baseString = `POST&${encodeURIComponent(PESAPAL_IFRAME_URL)}&${encodeURIComponent(JSON.stringify(data))}`;
   const signingKey = `${encodeURIComponent(PESAPAL_CONSUMER_SECRET)}&`;
   
@@ -136,60 +138,3 @@ async function queryPesapalStatus(trackingId) {
     return 'failed';
   }
 }
-
-// Alternative: M-Pesa STK Push (Daraja API)
-// export async function initiateSTKPush(request) {
-//   try {
-//     const { userId, amount, phone } = await request.json();
-
-//     // Get M-Pesa access token
-//     const auth = Buffer.from(`${process.env.MPESA_CONSUMER_KEY}:${process.env.MPESA_CONSUMER_SECRET}`).toString('base64');
-    
-//     const tokenResponse = await fetch('https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials', {
-//       headers: {
-//         'Authorization': `Basic ${auth}`
-//       }
-//     });
-    
-//     const { access_token } = await tokenResponse.json();
-
-//     // Initiate STK Push
-//     const timestamp = new Date().toISOString().replace(/[^0-9]/g, '').slice(0, -3);
-//     const password = Buffer.from(`${process.env.MPESA_SHORTCODE}${process.env.MPESA_PASSKEY}${timestamp}`).toString('base64');
-
-//     const stkPushResponse = await fetch('https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest', {
-//       method: 'POST',
-//       headers: {
-//         'Authorization': `Bearer ${access_token}`,
-//         'Content-Type': 'application/json'
-//       },
-//       body: JSON.stringify({
-//         BusinessShortCode: process.env.MPESA_SHORTCODE,
-//         Password: password,
-//         Timestamp: timestamp,
-//         TransactionType: 'CustomerPayBillOnline',
-//         Amount: amount,
-//         PartyA: phone,
-//         PartyB: process.env.MPESA_SHORTCODE,
-//         PhoneNumber: phone,
-//         CallBackURL: `${process.env.NEXT_PUBLIC_BASE_URL}/api/payment/mpesa-callback`,
-//         AccountReference: 'ChorusClip Premium',
-//         TransactionDesc: 'Premium Subscription'
-//       })
-//     });
-
-//     const result = await stkPushResponse.json();
-
-//     return NextResponse.json({
-//       success: true,
-//       checkoutRequestId: result.CheckoutRequestID
-//     });
-
-//   } catch (error) {
-//     console.error('STK Push error:', error);
-//     return NextResponse.json(
-//       { success: false, error: error.message },
-//       { status: 500 }
-//     );
-//   }
-// }

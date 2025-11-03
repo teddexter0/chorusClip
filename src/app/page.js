@@ -520,7 +520,14 @@ export default function ChorusClipModern() {
     const title = event.target.getVideoData().title;
     setVideoTitle(title);
     setArtist(extractArtist(title));
-    event.target.seekTo(loops[0].start, true);
+    
+    // Wait for video to be cued, THEN seek
+    setTimeout(() => {
+      if (playerRef.current) {
+        playerRef.current.seekTo(loops[0].start, true);
+        console.log(`✅ Seeking to ${loops[0].start}s on player ready`);
+      }
+    }, 500);
   };
 
   const onPlayerStateChange = (event) => {

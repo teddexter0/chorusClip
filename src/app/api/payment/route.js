@@ -11,6 +11,23 @@ export async function POST(request) {
   try {
     const { userId, amount, email, phone } = await request.json();
 
+    // Validate inputs
+    if (!userId || !amount || !email || !phone) {
+      return NextResponse.json(
+        { success: false, error: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    // Check if Pesapal is configured
+    if (!PESAPAL_CONSUMER_KEY || !PESAPAL_CONSUMER_SECRET) {
+      console.error('Pesapal credentials missing!');
+      return NextResponse.json(
+        { success: false, error: 'Payment gateway not configured. Contact support.' },
+        { status: 500 }
+      );
+    }
+
     // Import Firebase functions dynamically (server-side only)
     const { createPayment } = await import('../../../lib/firebase-server.js');
 
@@ -29,11 +46,9 @@ export async function POST(request) {
       callback_url: `${process.env.NEXT_PUBLIC_BASE_URL}/api/payment/callback`
     };
 
-    // Generate OAuth signature (simplified - use proper OAuth library in production)
+    // Generate OAuth signature
     const timestamp = new Date().toISOString();
     const nonce = Math.random().toString(36).substring(7);
-
-    // In production, use proper OAuth 1.0 signature generation
     const signature = generateOAuthSignature(pesapalData);
 
     // Make request to Pesapal
@@ -51,6 +66,14 @@ export async function POST(request) {
     // Extract iframe URL from response
     const iframeUrl = extractIframeUrl(result);
 
+    if (!iframeUrl) {
+      console.error('Pesapal response:', result);
+      return NextResponse.json({
+        success: false,
+        error: 'Payment gateway returned invalid response. Contact support.'
+      }, { status: 500 });
+    }
+
     return NextResponse.json({
       success: true,
       paymentId: paymentId,
@@ -60,7 +83,7 @@ export async function POST(request) {
   } catch (error) {
     console.error('Payment initiation error:', error);
     return NextResponse.json(
-      { success: false, error: error.message },
+      { success: false, error: `Payment failed: ${error.message}` },
       { status: 500 }
     );
   }
@@ -74,7 +97,7 @@ export async function GET(request) {
     const pesapalTrackingId = searchParams.get('pesapal_transaction_tracking_id');
 
     // Import Firebase functions dynamically
-    const { updatePaymentStatus } = await import('../../../lib/firebase.js');
+    const { updatePaymentStatus } = await import('../../../lib/firebase-server.js');
 
     // Query Pesapal for payment status
     const status = await queryPesapalStatus(pesapalTrackingId);
@@ -84,20 +107,19 @@ export async function GET(request) {
 
     // Redirect user based on status
     if (status === 'completed') {
-      return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/success`);
+      return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/?payment=success`);
     } else {
-      return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/failed`);
+      return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/?payment=failed`);
     }
 
   } catch (error) {
     console.error('Payment callback error:', error);
-    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/error`);
+    return NextResponse.redirect(`${process.env.NEXT_PUBLIC_BASE_URL}/?payment=error`);
   }
 }
 
 // Helper functions
 function generateOAuthSignature(data) {
-  // Simplified OAuth signature generation
   const baseString = `POST&${encodeURIComponent(PESAPAL_IFRAME_URL)}&${encodeURIComponent(JSON.stringify(data))}`;
   const signingKey = `${encodeURIComponent(PESAPAL_CONSUMER_SECRET)}&`;
   
@@ -110,13 +132,11 @@ function generateOAuthSignature(data) {
 }
 
 function extractIframeUrl(response) {
-  // Extract iframe URL from Pesapal response
   const match = response.match(/src="([^"]+)"/);
   return match ? match[1] : '';
 }
 
 async function queryPesapalStatus(trackingId) {
-  // Query Pesapal API for transaction status
   const queryUrl = `https://www.pesapal.com/api/querypaymentstatus?pesapal_merchant_reference=${trackingId}`;
   
   try {
@@ -128,7 +148,6 @@ async function queryPesapalStatus(trackingId) {
     
     const result = await response.text();
     
-    // Parse status from response
     if (result.includes('COMPLETED')) return 'completed';
     if (result.includes('FAILED')) return 'failed';
     return 'pending';

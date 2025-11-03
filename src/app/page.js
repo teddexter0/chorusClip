@@ -336,7 +336,8 @@ export default function ChorusClipModern() {
   const [videoTitle, setVideoTitle] = useState('');
   const [artist, setArtist] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [loops, setLoops] = useState([{ start: 0, end: 30 }]);
+  const [loops, setLoops] = useState([{ start: 20, end: 50 }]); // DEFAULT: 20s to 50s (30 sec loop)
+  const [userHasManuallyAdjusted, setUserHasManuallyAdjusted] = useState(false);
   const [currentLoopIndex, setCurrentLoopIndex] = useState(0);
   const [loopCount, setLoopCount] = useState(0);
   const [currentLoopIteration, setCurrentLoopIteration] = useState(0);
@@ -466,7 +467,9 @@ export default function ChorusClipModern() {
     const id = extractVideoId(youtubeUrl);
     if (id) {
       setVideoId(id);
-      setLoops([{ start: 0, end: 30 }]);
+      // Reset to default: 20-50s loop
+      setLoops([{ start: 20, end: 50 }]);
+      setUserHasManuallyAdjusted(false);
       setCurrentLoopIndex(0);
       setCurrentLoopIteration(0);
       await fetchMostReplayed();
@@ -483,23 +486,32 @@ export default function ChorusClipModern() {
   };
 
   const applySuggestedLoop = () => {
+    // User clicked "Use This Section" - use suggested times
     setLoops([{ start: suggestedStart, end: suggestedEnd }]);
+    setUserHasManuallyAdjusted(false); // Reset flag since we're using suggestion
     setShowMostReplayedSuggestion(false);
     
     setTimeout(() => {
-      if (playerRef.current) {
+      if (playerRef.current && playerRef.current.seekTo) {
         playerRef.current.seekTo(suggestedStart, true);
+        playerRef.current.playVideo();
+        console.log(`✅ Applied suggested loop: ${suggestedStart}s - ${suggestedEnd}s`);
       }
-    }, 500);
+    }, 800);
   };
 
   const dismissSuggestion = () => {
+    // User clicked "Choose Manually" - keep default 20-50s
+    setUserHasManuallyAdjusted(true); // User wants manual control
     setShowMostReplayedSuggestion(false);
+    
     setTimeout(() => {
-      if (playerRef.current) {
-        playerRef.current.seekTo(0, true);
+      if (playerRef.current && playerRef.current.seekTo) {
+        // Start at 20 seconds (our default)
+        playerRef.current.seekTo(20, true);
+        console.log(`✅ Manual mode: Starting at 20s`);
       }
-    }, 500);
+    }, 800);
   };
 
   const loadYouTubePlayer = (id) => {
@@ -521,13 +533,14 @@ export default function ChorusClipModern() {
     setVideoTitle(title);
     setArtist(extractArtist(title));
     
-    // Wait for video to be cued, THEN seek
+    // Seek to current loop start (respects user's choice or default 20s)
     setTimeout(() => {
       if (playerRef.current) {
-        playerRef.current.seekTo(loops[0].start, true);
-        console.log(`✅ Seeking to ${loops[0].start}s on player ready`);
+        const startTime = loops[0].start;
+        playerRef.current.seekTo(startTime, true);
+        console.log(`✅ Player ready, seeking to ${startTime}s`);
       }
-    }, 500);
+    }, 800);
   };
 
   const onPlayerStateChange = (event) => {
@@ -611,6 +624,9 @@ export default function ChorusClipModern() {
     const newLoops = [...loops];
     const numValue = Number(value);
     
+    // Mark that user has manually adjusted
+    setUserHasManuallyAdjusted(true);
+    
     if (field === 'start') {
       newLoops[index].start = Math.max(0, numValue);
       if (newLoops[index].end <= newLoops[index].start) {
@@ -627,8 +643,12 @@ export default function ChorusClipModern() {
     }
     
     setLoops(newLoops);
-    if (playerRef.current && index === currentLoopIndex) {
-      playerRef.current.seekTo(newLoops[index][field], true);
+    
+    // IMMEDIATE seek when user adjusts sliders (ALWAYS respect user input)
+    if (playerRef.current && index === currentLoopIndex && playerRef.current.seekTo) {
+      const seekTime = newLoops[index][field];
+      playerRef.current.seekTo(seekTime, true);
+      console.log(`✅ User manually adjusted ${field} to ${seekTime}s, seeking immediately`);
     }
   };
 
@@ -716,7 +736,6 @@ export default function ChorusClipModern() {
       return;
     }
 
-    // Check if already liked
     if (user.likedClips.includes(clipId)) {
       showNotification('You already liked this clip!', 'info');
       return;
@@ -726,12 +745,10 @@ export default function ChorusClipModern() {
       const { db } = await import('../lib/firebase');
       const { doc, updateDoc, increment, setDoc, arrayUnion } = await import('firebase/firestore');
       
-      // Update clip likes
       await updateDoc(doc(db, 'clips', clipId), {
         likes: increment(1)
       });
 
-      // Track user likes
       await setDoc(doc(db, 'userLikes', user.uid), {
         likedClips: arrayUnion(clipId)
       }, { merge: true });
@@ -745,6 +762,64 @@ export default function ChorusClipModern() {
     } catch (error) {
       showNotification('Failed to like. Check your permissions.', 'error');
       console.error('Like error:', error);
+    }
+  };
+
+  const handlePlayClip = async (clipId, videoId, startTime) => {
+    try {
+      const { db } = await import('../lib/firebase');
+      const { doc, updateDoc, increment } = await import('firebase/firestore');
+      
+      // Increment play count
+      await updateDoc(doc(db, 'clips', clipId), {
+        plays: increment(1)
+      });
+
+      // Load the clip's video
+      setYoutubeUrl(`https://youtube.com/watch?v=${videoId}`);
+      setVideoId(videoId);
+      setLoops([{ start: startTime, end: startTime + 30 }]);
+      loadYouTubePlayer(videoId);
+      
+      showNotification('▶️ Playing clip...', 'info');
+    } catch (error) {
+      console.error('Play error:', error);
+    }
+  };
+
+  const handleShareClip = async (clip) => {
+    const shareUrl = `${window.location.origin}?clip=${clip.id}`;
+    const shareText = `Check out this ${clip.title} loop on ChorusClip!`;
+    
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: clip.title,
+          text: shareText,
+          url: shareUrl
+        });
+        
+        // Track share
+        const { db } = await import('../lib/firebase');
+        const { doc, updateDoc, increment } = await import('firebase/firestore');
+        await updateDoc(doc(db, 'clips', clip.id), {
+          shares: increment(1)
+        });
+        
+        showNotification('📤 Shared!', 'success');
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          console.error('Share error:', error);
+        }
+      }
+    } else {
+      // Fallback: Copy to clipboard
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        showNotification('🔗 Link copied to clipboard!', 'success');
+      } catch (error) {
+        showNotification('Failed to copy link', 'error');
+      }
     }
   };
 
@@ -1169,6 +1244,25 @@ export default function ChorusClipModern() {
                   <span>Download audio loops (Premium)</span>
                 </li>
               </ul>
+            </div>
+
+            <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-red-700 border-opacity-50">
+              <h3 className="font-black text-lg mb-4 flex items-center gap-2">
+                <AlertCircle size={20} className="text-red-400" />
+                Need Help?
+              </h3>
+              <p className="text-sm text-purple-200 mb-4">
+                Experiencing issues? Have feedback? We'd love to hear from you!
+              </p>
+              <a 
+                href="mailto:ted.sande@strathmore.edu?subject=ChorusClip Support Request"
+                className="block w-full py-3 bg-gradient-to-r from-red-600 to-pink-600 rounded-xl font-bold text-center hover:shadow-xl transition"
+              >
+                📧 Contact Support
+              </a>
+              <p className="text-xs text-purple-400 text-center mt-3">
+                Response time: 24-48 hours
+              </p>
             </div>
           </div>
 

@@ -453,8 +453,11 @@ export default function ChorusClipModern() {
   };
 
   const fetchMostReplayed = async () => {
-    setSuggestedStart(0);
-    setSuggestedEnd(30);
+    // TODO: In production, use YouTube API to get actual most replayed section
+    // For now, suggest a smart default based on typical song structure
+    // Most songs have chorus around 60-90 seconds
+    setSuggestedStart(60);
+    setSuggestedEnd(90);
     setShowMostReplayedSuggestion(true);
   };
 
@@ -644,11 +647,22 @@ export default function ChorusClipModern() {
     
     setLoops(newLoops);
     
-    // IMMEDIATE seek when user adjusts sliders (ALWAYS respect user input)
-    if (playerRef.current && index === currentLoopIndex && playerRef.current.seekTo) {
-      const seekTime = newLoops[index][field];
-      playerRef.current.seekTo(seekTime, true);
-      console.log(`✅ User manually adjusted ${field} to ${seekTime}s, seeking immediately`);
+    // CRITICAL FIX: Seek ONLY when user releases slider (onMouseUp/onTouchEnd)
+    // For now, seek on every change but throttle it
+    if (playerRef.current && playerRef.current.seekTo && index === currentLoopIndex) {
+      // Clear any pending seek
+      if (window.seekTimeout) clearTimeout(window.seekTimeout);
+      
+      // Seek after 200ms of no slider movement
+      window.seekTimeout = setTimeout(() => {
+        const seekTime = numValue;
+        try {
+          playerRef.current.seekTo(seekTime, true);
+          console.log(`✅ Seeking to ${seekTime}s (${field})`);
+        } catch (error) {
+          console.error('Seek error:', error);
+        }
+      }, 200);
     }
   };
 
@@ -1016,15 +1030,15 @@ export default function ChorusClipModern() {
       {showMostReplayedSuggestion && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500">
-            <h3 className="text-2xl font-bold mb-4">🎯 Suggested Loop Section!</h3>
-            <p className="text-purple-200 mb-4">Start from: {Math.floor(suggestedStart/60)}:{(suggestedStart%60).toString().padStart(2,'0')} - {Math.floor(suggestedEnd/60)}:{(suggestedEnd%60).toString().padStart(2,'0')}</p>
-            <p className="text-sm text-purple-300 mb-6">You can adjust the loop points using the sliders below</p>
+            <h3 className="text-2xl font-bold mb-4">🎯 Smart Loop Suggestion!</h3>
+            <p className="text-purple-200 mb-2 text-lg">Suggested section: {Math.floor(suggestedStart/60)}:{(suggestedStart%60).toString().padStart(2,'0')} - {Math.floor(suggestedEnd/60)}:{(suggestedEnd%60).toString().padStart(2,'0')}</p>
+            <p className="text-sm text-purple-300 mb-6">This is typically where the chorus/hook is. You can adjust using the sliders below.</p>
             <div className="space-y-3">
-              <button onClick={applySuggestedLoop} className="w-full py-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition pulse-glow">
+              <button onClick={applySuggestedLoop} className="w-full py-4 text-lg bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition pulse-glow">
                 Use This Section ✨
               </button>
-              <button onClick={dismissSuggestion} className="w-full py-3 bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
-                Choose Manually
+              <button onClick={dismissSuggestion} className="w-full py-3 text-base bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
+                I'll Choose Manually
               </button>
             </div>
           </div>
@@ -1109,11 +1123,11 @@ export default function ChorusClipModern() {
                   )}
 
                   <div className="bg-purple-900 bg-opacity-30 p-5 rounded-2xl border border-purple-700 border-opacity-50">
-                    <label className="block text-sm font-bold text-purple-300 mb-3">Loop Repetitions</label>
+                    <label className="block text-base font-bold text-purple-300 mb-3">Loop Repetitions</label>
                     <select
                       value={loopCount}
                       onChange={(e) => setLoopCount(Number(e.target.value))}
-                      className="w-full px-4 py-3 bg-purple-950 bg-opacity-70 border border-purple-600 rounded-xl text-white font-semibold focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      className="w-full px-4 py-3 bg-purple-950 bg-opacity-70 border border-purple-600 rounded-xl text-white text-base font-semibold focus:outline-none focus:ring-2 focus:ring-purple-500"
                     >
                       <option value={0}>∞ Infinite Loop</option>
                       <option value={1}>1 time</option>
@@ -1123,7 +1137,7 @@ export default function ChorusClipModern() {
                       <option value={10}>10 times</option>
                     </select>
                     {loopCount > 0 && currentLoopIteration > 0 && (
-                      <p className="text-purple-300 text-sm mt-2">
+                      <p className="text-purple-300 text-base mt-2">
                         Playing: {currentLoopIteration}/{loopCount}
                       </p>
                     )}
@@ -1132,17 +1146,17 @@ export default function ChorusClipModern() {
                   {loops.map((loop, idx) => (
                     <div key={idx} className="bg-purple-900 bg-opacity-30 p-5 rounded-2xl border border-purple-700 border-opacity-50">
                       <div className="flex justify-between items-center mb-4">
-                        <h4 className="font-bold text-lg">Loop {idx + 1} {idx === currentLoopIndex && isPlaying && '🔄'}</h4>
+                        <h4 className="font-bold text-xl">Loop {idx + 1} {idx === currentLoopIndex && isPlaying && '🔄'}</h4>
                         {loops.length > 1 && (
-                          <button onClick={() => removeLoop(idx)} className="text-red-400 hover:text-red-300">
-                            <X size={20} />
+                          <button onClick={() => removeLoop(idx)} className="text-red-400 hover:text-red-300 transition">
+                            <X size={24} />
                           </button>
                         )}
                       </div>
                       
-                      <div className="space-y-4">
+                      <div className="space-y-5">
                         <div>
-                          <label className="block text-sm font-bold text-purple-300 mb-2">
+                          <label className="block text-base font-bold text-purple-300 mb-3">
                             Start: {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')}
                           </label>
                           <input
@@ -1157,9 +1171,9 @@ export default function ChorusClipModern() {
                         </div>
                         
                         <div>
-                          <label className="block text-sm font-bold text-purple-300 mb-2">
+                          <label className="block text-base font-bold text-purple-300 mb-3">
                             End: {Math.floor(loop.end/60)}:{(loop.end%60).toString().padStart(2,'0')}
-                            <span className="text-xs ml-2 text-yellow-400">
+                            <span className="text-sm ml-2 text-yellow-400">
                               (Duration: {Math.max(0, loop.end - loop.start)}s / Max 45s)
                             </span>
                           </label>
@@ -1177,42 +1191,42 @@ export default function ChorusClipModern() {
                     </div>
                   ))}
 
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 flex-wrap">
                     <button
                       onClick={togglePlayPause}
-                      className="flex-1 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl flex items-center justify-center gap-2 font-bold hover:shadow-xl transition"
+                      className="flex-1 min-w-[200px] py-4 text-lg bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl flex items-center justify-center gap-2 font-bold hover:shadow-xl transition"
                     >
-                      {isPlaying ? <Pause size={20} /> : <Play size={20} />}
+                      {isPlaying ? <Pause size={24} /> : <Play size={24} />}
                       {isPlaying ? 'Pause' : 'Play'}
                     </button>
                     <button
                       onClick={handleLoopRestart}
-                      className="px-5 py-3 bg-purple-800 bg-opacity-70 hover:bg-opacity-90 rounded-xl transition"
+                      className="px-6 py-4 bg-purple-800 bg-opacity-70 hover:bg-opacity-90 rounded-xl transition"
                     >
-                      <RotateCcw size={20} />
+                      <RotateCcw size={24} />
                     </button>
                     {user.isPremium && (
                       <button
                         onClick={handleDownload}
-                        className="px-5 py-3 bg-green-700 hover:bg-green-600 rounded-xl transition"
+                        className="px-6 py-4 bg-green-700 hover:bg-green-600 rounded-xl transition"
                       >
-                        <Download size={20} />
+                        <Download size={24} />
                       </button>
                     )}
                   </div>
 
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 flex-wrap">
                     {loops.length < maxLoopsPerSong && (
                       <button
                         onClick={addLoop}
-                        className="flex-1 py-3 bg-purple-700 bg-opacity-50 hover:bg-opacity-70 rounded-xl flex items-center justify-center gap-2 font-bold transition"
+                        className="flex-1 min-w-[200px] py-4 text-base bg-purple-700 bg-opacity-50 hover:bg-opacity-70 rounded-xl flex items-center justify-center gap-2 font-bold transition"
                       >
                         <Plus size={20} /> Add Loop ({loops.length}/{maxLoopsPerSong})
                       </button>
                     )}
                     <button
                       onClick={handlePostToFeed}
-                      className="flex-1 py-3 bg-gradient-to-r from-pink-600 to-purple-600 rounded-xl font-bold hover:shadow-xl transition"
+                      className="flex-1 min-w-[200px] py-4 text-base bg-gradient-to-r from-pink-600 to-purple-600 rounded-xl font-bold hover:shadow-xl transition"
                     >
                       Post to Feed
                     </button>
@@ -1280,10 +1294,10 @@ export default function ChorusClipModern() {
                   {clips.map((clip) => (
                     <div
                       key={clip.id}
-                      className="bg-purple-900 bg-opacity-30 rounded-2xl p-4 hover:bg-opacity-50 transition cursor-pointer border border-purple-700 border-opacity-30"
+                      className="bg-purple-900 bg-opacity-30 rounded-2xl p-4 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
                     >
                       <div className="flex justify-between items-start mb-2">
-                        <div>
+                        <div className="flex-1">
                           <h3 className="font-bold text-lg">{clip.title}</h3>
                           <p className="text-sm text-purple-300">{clip.artist}</p>
                           <p className="text-xs text-purple-400 mt-1">by @{clip.createdBy}</p>
@@ -1300,10 +1314,19 @@ export default function ChorusClipModern() {
                         <span className="text-purple-400 font-semibold">
                           {Math.floor(clip.startTime/60)}:{(clip.startTime%60).toString().padStart(2,'0')} - {Math.floor(clip.endTime/60)}:{(clip.endTime%60).toString().padStart(2,'0')}
                         </span>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-3">
                           <span className="text-purple-300">{clip.likes || 0} ❤️</span>
-                          <span className="text-purple-300">{clip.plays || 0} ▶️</span>
-                          <button className="text-purple-400 hover:text-purple-300">
+                          <button 
+                            onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip.startTime)}
+                            className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
+                          >
+                            <Play size={14} fill="currentColor" />
+                            <span>{clip.plays || 0}</span>
+                          </button>
+                          <button 
+                            onClick={() => handleShareClip(clip)}
+                            className="text-purple-400 hover:text-purple-300 transition"
+                          >
                             <Share2 size={16} />
                           </button>
                         </div>

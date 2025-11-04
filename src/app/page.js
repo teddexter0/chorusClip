@@ -253,7 +253,7 @@ const PaymentModal = ({ onClose, userEmail, onSuccess }) => {
       if (data.success && data.iframeUrl) {
         window.location.href = data.iframeUrl;
       } else {
-        setError('❌ Payment initiation failed. Please try again.');
+        setError(`❌ ${data.error || 'Payment initiation failed. Please try again.'}`);
         setLoading(false);
       }
     } catch (error) {
@@ -483,8 +483,12 @@ export default function ChorusClipModern() {
     
     setTimeout(() => {
       if (playerRef.current && playerRef.current.seekTo) {
-        playerRef.current.seekTo(suggestedStart, true);
-        playerRef.current.playVideo();
+        try {
+          playerRef.current.seekTo(suggestedStart, true);
+          playerRef.current.playVideo();
+        } catch (e) {
+          console.log('Seek error (ignored):', e);
+        }
       }
     }, 800);
   };
@@ -494,7 +498,11 @@ export default function ChorusClipModern() {
     
     setTimeout(() => {
       if (playerRef.current && playerRef.current.seekTo) {
-        playerRef.current.seekTo(20, true);
+        try {
+          playerRef.current.seekTo(20, true);
+        } catch (e) {
+          console.log('Seek error (ignored):', e);
+        }
       }
     }, 800);
   };
@@ -507,7 +515,13 @@ export default function ChorusClipModern() {
       
       playerRef.current = new window.YT.Player('youtube-player', {
         videoId: id,
-        playerVars: { autoplay: 0, controls: 1, enablejsapi: 1 },
+        playerVars: { 
+          autoplay: 0, 
+          controls: 1, 
+          enablejsapi: 1,
+          origin: typeof window !== 'undefined' ? window.location.origin : '',
+          widget_referrer: typeof window !== 'undefined' ? window.location.origin : ''
+        },
         events: { 
           onReady: onPlayerReady, 
           onStateChange: onPlayerStateChange
@@ -524,7 +538,11 @@ export default function ChorusClipModern() {
     setTimeout(() => {
       if (playerRef.current) {
         const startTime = loops[0].start;
-        playerRef.current.seekTo(startTime, true);
+        try {
+          playerRef.current.seekTo(startTime, true);
+        } catch (e) {
+          console.log('Initial seek error (ignored):', e);
+        }
       }
     }, 800);
   };
@@ -544,31 +562,35 @@ export default function ChorusClipModern() {
     
     intervalRef.current = setInterval(() => {
       if (playerRef.current && playerRef.current.getCurrentTime && playerRef.current.getPlayerState) {
-        const time = playerRef.current.getCurrentTime();
-        const state = playerRef.current.getPlayerState();
-        
-        setPlayerCurrentTime(time);
-        
-        if (state === window.YT.PlayerState.PLAYING) {
-          const currentLoop = loops[currentLoopIndex];
+        try {
+          const time = playerRef.current.getCurrentTime();
+          const state = playerRef.current.getPlayerState();
           
-          if (time >= currentLoop.end - 0.1) {
-            if (loopCount > 0 && currentLoopIteration >= loopCount) {
-              playerRef.current.pauseVideo();
-              setCurrentLoopIteration(0);
-              return;
-            }
+          setPlayerCurrentTime(time);
+          
+          if (state === window.YT.PlayerState.PLAYING) {
+            const currentLoop = loops[currentLoopIndex];
+            
+            if (time >= currentLoop.end - 0.1) {
+              if (loopCount > 0 && currentLoopIteration >= loopCount) {
+                playerRef.current.pauseVideo();
+                setCurrentLoopIteration(0);
+                return;
+              }
 
-            if (currentLoopIndex < loops.length - 1) {
-              const nextIndex = currentLoopIndex + 1;
-              setCurrentLoopIndex(nextIndex);
-              playerRef.current.seekTo(loops[nextIndex].start, true);
-            } else {
-              setCurrentLoopIndex(0);
-              setCurrentLoopIteration(prev => prev + 1);
-              playerRef.current.seekTo(loops[0].start, true);
+              if (currentLoopIndex < loops.length - 1) {
+                const nextIndex = currentLoopIndex + 1;
+                setCurrentLoopIndex(nextIndex);
+                playerRef.current.seekTo(loops[nextIndex].start, true);
+              } else {
+                setCurrentLoopIndex(0);
+                setCurrentLoopIteration(prev => prev + 1);
+                playerRef.current.seekTo(loops[0].start, true);
+              }
             }
           }
+        } catch (e) {
+          // Silently ignore YouTube API errors
         }
       }
     }, 100);
@@ -583,26 +605,37 @@ export default function ChorusClipModern() {
 
   const togglePlayPause = () => {
     if (playerRef.current) {
-      if (isPlaying) {
-        playerRef.current.pauseVideo();
-      } else {
-        playerRef.current.playVideo();
+      try {
+        if (isPlaying) {
+          playerRef.current.pauseVideo();
+        } else {
+          playerRef.current.playVideo();
+        }
+      } catch (e) {
+        console.log('Play/pause error (ignored):', e);
       }
     }
   };
 
   const handleLoopRestart = () => {
     if (playerRef.current) {
-      setCurrentLoopIndex(0);
-      setCurrentLoopIteration(0);
-      playerRef.current.seekTo(loops[0].start, true);
-      playerRef.current.playVideo();
+      try {
+        setCurrentLoopIndex(0);
+        setCurrentLoopIteration(0);
+        playerRef.current.seekTo(loops[0].start, true);
+        playerRef.current.playVideo();
+      } catch (e) {
+        console.log('Restart error (ignored):', e);
+      }
     }
   };
 
   const addLoop = () => {
     if (loops.length >= maxLoopsPerSong) {
-      showNotification(`${user.isPremium ? 'Maximum 3' : 'Free tier: Only 1'} loop${user.isPremium ? 's' : ''} per song.`, 'error');
+showNotification(
+  `${user.isPremium ? 'Maximum 3' : 'Free tier: Only 1'} loop${user.isPremium ? 's' : ''} per song.`,
+  'error'
+);
       return;
     }
     setLoops([...loops, { start: 0, end: 30 }]);
@@ -629,20 +662,24 @@ export default function ChorusClipModern() {
     
     setLoops(newLoops);
     
-    // Debounced seek - only seek after user stops adjusting for 300ms
+    // FIXED: Better debouncing + error handling
     if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
     
     seekTimeoutRef.current = setTimeout(() => {
       if (playerRef.current && playerRef.current.seekTo && index === currentLoopIndex) {
         const seekTime = field === 'start' ? newLoops[index].start : newLoops[index].end;
         try {
-          playerRef.current.seekTo(seekTime, true);
-          console.log(`✅ Seeking to ${seekTime}s (${field})`);
+          // Check if player is ready
+          if (playerRef.current.getPlayerState && playerRef.current.getPlayerState() !== -1) {
+            playerRef.current.seekTo(seekTime, true);
+            console.log(`✅ Seeking to ${seekTime}s (${field})`);
+          }
         } catch (error) {
-          console.error('Seek error:', error);
+          // Silently ignore postMessage errors - they don't affect functionality
+          console.log('Seek error (ignored - normal behavior):', error.message);
         }
       }
-    }, 300);
+    }, 500); // 500ms debounce for stability
   };
 
   const removeLoop = (index) => {
@@ -849,6 +886,7 @@ export default function ChorusClipModern() {
     };
   }, []);
 
+  
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-purple-800 text-white relative overflow-hidden">
       <div className="absolute inset-0 opacity-20">
@@ -1379,4 +1417,4 @@ export default function ChorusClipModern() {
       </div>
     </div>
   );
-}
+};

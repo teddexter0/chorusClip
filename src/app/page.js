@@ -81,13 +81,6 @@ const AuthModal = ({ onClose, onSuccess }) => {
           return;
         }
 
-        const methods = await fetchSignInMethodsForEmail(auth, email);
-        if (methods.length === 0) {
-          setError('❌ No account found. Try "Forgot Password" or Sign Up!');
-          setLoading(false);
-          return;
-        }
-
         try {
   await signInUser(email, password);
   onSuccess('✅ Welcome back!');
@@ -335,7 +328,8 @@ export default function ChorusClipModern() {
   const [videoTitle, setVideoTitle] = useState('');
   const [artist, setArtist] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [loops, setLoops] = useState([{ start: 20, end: 50 }]);
+  // initial loop state
+  const [loops, setLoops] = useState([{ start: 0, end: 30 }]);
   const [currentLoopIndex, setCurrentLoopIndex] = useState(0);
   const [loopCount, setLoopCount] = useState(0);
   const [currentLoopIteration, setCurrentLoopIteration] = useState(0);
@@ -458,59 +452,54 @@ export default function ChorusClipModern() {
   };
 
   const handleUrlSubmit = async () => {
-    if (!user.isPremium && songsRemaining <= 0) {
-      showNotification('Daily song limit reached! Upgrade to Premium for unlimited songs.', 'error');
-      return;
+  if (!user.isPremium && songsRemaining <= 0) {
+    showNotification('Daily song limit reached! Upgrade to Premium for unlimited songs.', 'error');
+    return;
+  }
+
+  const id = extractVideoId(youtubeUrl);
+  if (id) {
+    setVideoId(id);
+    // DON'T reset loops here - let suggestion modal handle it
+    setCurrentLoopIndex(0);
+    setCurrentLoopIteration(0);
+    loadYouTubePlayer(id);
+    
+    // Show suggestion modal AFTER player loads
+    setTimeout(() => {
+      fetchMostReplayed();
+    }, 1000);
+    
+    const newCount = user.songsToday + 1;
+    setUser(prev => ({ ...prev, songsToday: newCount }));
+    localStorage.setItem('songsToday', newCount.toString());
+
+    if (songsRemaining === 3 && !user.isPremium) {
+      setShowSongsWarning(true);
     }
-
-    const id = extractVideoId(youtubeUrl);
-    if (id) {
-      setVideoId(id);
-      setLoops([{ start: 20, end: 50 }]);
-      setCurrentLoopIndex(0);
-      setCurrentLoopIteration(0);
-      await fetchMostReplayed();
-      loadYouTubePlayer(id);
-      
-      const newCount = user.songsToday + 1;
-      setUser(prev => ({ ...prev, songsToday: newCount }));
-      localStorage.setItem('songsToday', newCount.toString());
-
-      if (songsRemaining === 3 && !user.isPremium) {
-        setShowSongsWarning(true);
-      }
-    }
-  };
-
+  }
+};
   const applySuggestedLoop = () => {
-    setLoops([{ start: suggestedStart, end: suggestedEnd }]);
-    setShowMostReplayedSuggestion(false);
-    
-    setTimeout(() => {
-      if (playerRef.current && playerRef.current.seekTo) {
-        try {
-          playerRef.current.seekTo(suggestedStart, true);
-          playerRef.current.playVideo();
-        } catch (e) {
-          console.log('Seek error (ignored):', e);
-        }
-      }
-    }, 800);
-  };
+  const newLoops = [{ start: suggestedStart, end: suggestedEnd }];
+  setLoops(newLoops);
+  setShowMostReplayedSuggestion(false);
+  
+  // Seek immediately, no timeout
+  if (playerRef.current && playerRef.current.seekTo) {
+    try {
+      playerRef.current.seekTo(suggestedStart, true);
+      console.log(`✅ Applied suggested loop: ${suggestedStart}s - ${suggestedEnd}s`);
+    } catch (e) {
+      console.log('Seek error (ignored):', e);
+    }
+  }
+};
 
-  const dismissSuggestion = () => {
-    setShowMostReplayedSuggestion(false);
-    
-    setTimeout(() => {
-      if (playerRef.current && playerRef.current.seekTo) {
-        try {
-          playerRef.current.seekTo(20, true);
-        } catch (e) {
-          console.log('Seek error (ignored):', e);
-        }
-      }
-    }, 800);
-  };
+const dismissSuggestion = () => {
+  // Keep default 20-50s but DON'T seek - let user control
+  setShowMostReplayedSuggestion(false);
+  console.log('✅ Manual mode: User will adjust sliders');
+};
 
   const loadYouTubePlayer = (id) => {
     if (window.YT && window.YT.Player) {
@@ -783,25 +772,46 @@ showNotification(
     }
   };
 
-  const handlePlayClip = async (clipId, videoId, startTime) => {
-    try {
-      const { db } = await import('../lib/firebase');
-      const { doc, updateDoc, increment } = await import('firebase/firestore');
-      
-      await updateDoc(doc(db, 'clips', clipId), {
-        plays: increment(1)
-      });
+  const handlePlayClip = async (clipId, videoIdToPlay, startTime) => {
+  try {
+    const { db } = await import('../lib/firebase');
+    const { doc, updateDoc, increment } = await import('firebase/firestore');
+    
+    await updateDoc(doc(db, 'clips', clipId), {
+      plays: increment(1)
+    });
 
-      setYoutubeUrl(`https://youtube.com/watch?v=${videoId}`);
-      setVideoId(videoId);
-      setLoops([{ start: startTime, end: startTime + 30 }]);
-      loadYouTubePlayer(videoId);
-      
-      showNotification('▶️ Playing clip...', 'info');
-    } catch (error) {
-      console.error('Play error:', error);
+    // Set state first
+    setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
+    setVideoId(videoIdToPlay);
+    setLoops([{ start: startTime, end: startTime + 30 }]);
+    
+    // Load player and seek after it's ready
+    if (playerRef.current && playerRef.current.destroy) {
+      playerRef.current.destroy();
     }
-  };
+    
+    loadYouTubePlayer(videoIdToPlay);
+    
+    // Seek after player loads
+    setTimeout(() => {
+      if (playerRef.current && playerRef.current.seekTo) {
+        try {
+          playerRef.current.seekTo(startTime, true);
+          playerRef.current.playVideo();
+          console.log(`✅ Playing clip from ${startTime}s`);
+        } catch (e) {
+          console.log('Play clip seek error:', e);
+        }
+      }
+    }, 2000); // Wait 2 seconds for player to fully load
+    
+    showNotification('▶️ Loading clip...', 'info');
+  } catch (error) {
+    console.error('Play error:', error);
+    showNotification('Failed to play clip', 'error');
+  }
+};
 
   const handleShareClip = async (clip) => {
     const shareUrl = `${window.location.origin}?clip=${clip.id}`;

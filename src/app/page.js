@@ -118,9 +118,14 @@ if (email.startsWith('@')) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500 my-8">
-        <button onClick={onClose} className="float-right text-white hover:text-purple-300 transition">
-          <X size={32} />
-        </button>
+      
+      <button 
+  onClick={onClose} 
+  className="float-right text-white hover:text-purple-300 transition"
+  aria-label="Close dialog"
+>
+  <X size={32} aria-hidden="true" />
+</button>
         
         <h2 className="text-4xl font-black mb-6">
           {mode === 'reset' ? 'Reset Password' : mode === 'signup' ? 'Create Account' : 'Welcome Back'}
@@ -323,6 +328,29 @@ const PaymentModal = ({ onClose, userEmail, onSuccess }) => {
       </div>
     </div>
   );
+};
+
+// username change
+const handleChangeUsername = async () => {
+  const newName = prompt('Enter new display name (3-20 characters):');
+  if (!newName || newName.length < 3 || newName.length > 20) {
+    showNotification('Invalid name. Must be 3-20 characters.', 'error');
+    return;
+  }
+  
+  try {
+    const { db } = await import('../lib/firebase');
+    const { doc, updateDoc } = await import('firebase/firestore');
+    
+    await updateDoc(doc(db, 'users', user.uid), {
+      displayName: newName
+    });
+    
+    setUser(prev => ({ ...prev, displayName: newName }));
+    showNotification('✅ Username updated!', 'success');
+  } catch (error) {
+    showNotification('Failed to update username', 'error');
+  }
 };
 
 export default function ChorusClipModern() {
@@ -572,32 +600,38 @@ const startTimeTracking = () => {
           const currentLoop = loops[currentLoopIndex];
 
           // Buffer window for timing inaccuracy
-          if (time >= currentLoop.end - 0.3) {
-            console.log(`🔄 Loop end reached at ${time.toFixed(2)}s, restarting...`);
 
-            // Stop looping when max count is hit
-            if (loopCount > 0 && currentLoopIteration >= loopCount - 1) {
-              player.pauseVideo();
-              setCurrentLoopIteration(0);
-              console.log('✅ Loop count reached, stopping.');
-              clearInterval(intervalRef.current);
-              return;
-            }
-
-            // Move to next loop, or restart from first
-            if (currentLoopIndex < loops.length - 1) {
-              const nextIndex = currentLoopIndex + 1;
-              setCurrentLoopIndex(nextIndex);
-              player.seekTo(loops[nextIndex].start, true);
-              console.log(`✅ Moving to loop ${nextIndex + 1}/${loops.length}`);
-            } else {
-              const newIteration = currentLoopIteration + 1;
-              setCurrentLoopIteration(newIteration);
-              setCurrentLoopIndex(0);
-              player.seekTo(loops[0].start, true);
-              console.log(`✅ Restarting from loop 1, iteration ${newIteration}/${loopCount || '∞'}`);
-            }
-          }
+          // In startTimeTracking, fix this:
+if (time >= currentLoop.end - 0.3) {
+  console.log(`🔄 Loop ${currentLoopIndex + 1} end reached at ${time}s`);
+  
+  // Check if we're on the LAST loop of the sequence
+  if (currentLoopIndex < loops.length - 1) {
+    // Move to next loop in sequence
+    const nextIndex = currentLoopIndex + 1;
+    setCurrentLoopIndex(nextIndex);
+    playerRef.current.seekTo(loops[nextIndex].start, true);
+    console.log(`✅ Moving to loop ${nextIndex + 1}/${loops.length}`);
+  } else {
+    // We finished all loops, increment iteration
+    const newIteration = currentLoopIteration + 1;
+    
+    // Check if we hit the limit BEFORE incrementing
+    if (loopCount > 0 && newIteration >= loopCount) {
+      playerRef.current.pauseVideo();
+      setCurrentLoopIteration(0);
+      setCurrentLoopIndex(0);
+      console.log(`✅ Completed ${loopCount} iterations, stopping`);
+      return;
+    }
+    
+    // Go back to first loop
+    setCurrentLoopIteration(newIteration);
+    setCurrentLoopIndex(0);
+    playerRef.current.seekTo(loops[0].start, true);
+    console.log(`✅ Iteration ${newIteration}/${loopCount}, restarting from loop 1`);
+  }
+}
         }
       } catch (e) {
         console.warn('⚠️ Tracking error (ignored):', e.message);
@@ -728,38 +762,39 @@ showNotification(
     }
   };
 
-  const handlePostToFeed = async () => {
-    if (!videoId) {
-      showNotification('Load a song first!', 'error');
-      return;
-    }
-    if (!user.uid) {
-      showNotification('Sign in to post!', 'error');
-      setShowAuthModal(true);
-      return;
-    }
+  // Update handlePostToFeed function (around line 740):
+const handlePostToFeed = async () => {
+  if (!videoId) {
+    showNotification('Load a song first!', 'error');
+    return;
+  }
+  if (!user.uid) {
+    showNotification('Sign in to post!', 'error');
+    setShowAuthModal(true);
+    return;
+  }
 
-    const loop = loops[0];
-    const clipData = {
-      title: videoTitle,
-      artist,
-      youtubeVideoId: videoId,
-      startTime: loop.start,
-      endTime: loop.end,
-      userId: user.uid,
-      createdBy: user.displayName,
-      likes: 0,
-      plays: 0
-    };
-
-    try {
-      const { createClip } = await import('../lib/firebase');
-      await createClip(clipData);
-      showNotification('✅ Posted to feed!', 'success');
-    } catch (error) {
-      showNotification('Failed to post. Try again.', 'error');
-    }
+  // Save ALL loops, not just first one
+  const clipData = {
+    title: videoTitle,
+    artist,
+    youtubeVideoId: videoId,
+    loops: loops.map(loop => ({ start: loop.start, end: loop.end })), // Save all loops
+    userId: user.uid,
+    createdBy: user.displayName,
+    likes: 0,
+    plays: 0,
+    loopCount: loopCount // Save desired repetitions
   };
+
+  try {
+    const { createClip } = await import('../lib/firebase');
+    await createClip(clipData);
+    showNotification('✅ Posted all loops to feed!', 'success');
+  } catch (error) {
+    showNotification('Failed to post. Try again.', 'error');
+  }
+};
 
   const handleLikeClip = async (clipId) => {
     if (!user.uid) {
@@ -797,7 +832,18 @@ showNotification(
     }
   };
 
-  const handlePlayClip = async (clipId, videoIdToPlay, startTime) => {
+  const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
+
+  const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+  
+  // If user is not premium and clip has more than 1 loop
+  if (!user.isPremium && loopsToLoad.length > 1) {
+    showNotification('🔒 This clip has multiple loops! Upgrade to Premium to use multi-loop features.', 'info');
+    // Only load first loop for free users
+    setLoops([loopsToLoad[0]]);
+  } else {
+    setLoops(loopsToLoad);
+  }
   try {
     // Increment play count
     const { db } = await import('../lib/firebase');
@@ -816,21 +862,25 @@ showNotification(
       }
     }
 
-    // Update state
+    // Load ALL loops from the clip, not just first one
+    const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+    
+    // Update state with ALL loops
     setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
     setVideoId(videoIdToPlay);
-    setLoops([{ start: startTime, end: startTime + 30 }]);
+    setLoops(loopsToLoad); // Load all loops
+    setLoopCount(clipData.loopCount || 0); // Load loop count
     setCurrentLoopIndex(0);
     setCurrentLoopIteration(0);
     
-    showNotification('⏳ Loading clip...', 'info');
+    showNotification('⏳ Loading clip with all loops...', 'info');
     
     // Load new player
     if (window.YT && window.YT.Player) {
       playerRef.current = new window.YT.Player('youtube-player', {
         videoId: videoIdToPlay,
         playerVars: { 
-          autoplay: 1, // Auto-play when ready
+          autoplay: 1,
           controls: 1, 
           enablejsapi: 1,
           origin: typeof window !== 'undefined' ? window.location.origin : '',
@@ -842,13 +892,12 @@ showNotification(
             setVideoTitle(title);
             setArtist(extractArtist(title));
             
-            // Seek to clip start time
             setTimeout(() => {
               try {
-                event.target.seekTo(startTime, true);
+                event.target.seekTo(loopsToLoad[0].start, true);
                 event.target.playVideo();
-                showNotification('▶️ Playing clip!', 'success');
-                console.log(`✅ Playing clip from ${startTime}s`);
+                showNotification(`▶️ Playing ${loopsToLoad.length} loop(s)!`, 'success');
+                console.log(`✅ Loaded ${loopsToLoad.length} loops starting at ${loopsToLoad[0].start}s`);
               } catch (e) {
                 console.log('Seek error:', e);
               }
@@ -993,10 +1042,53 @@ const handleUnlikeClip = async (clipId) => {
       if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
     };
   }, []);
-
+const handleChangeUsername = async () => {
+  if (!user.uid) {
+    showNotification('Please sign in first!', 'error');
+    return;
+  }
+  
+  const newName = prompt('Enter new display name (3-20 characters):');
+  
+  if (!newName) return; // User cancelled
+  
+  if (newName.length < 3 || newName.length > 20) {
+    showNotification('Invalid name. Must be 3-20 characters.', 'error');
+    return;
+  }
+  
+  // Check for valid characters
+  const validPattern = /^[a-zA-Z0-9_\s]+$/;
+  if (!validPattern.test(newName)) {
+    showNotification('Only letters, numbers, underscores, and spaces allowed.', 'error');
+    return;
+  }
+  
+  try {
+    const { db } = await import('../lib/firebase');
+    const { doc, updateDoc } = await import('firebase/firestore');
+    
+    await updateDoc(doc(db, 'users', user.uid), {
+      displayName: newName
+    });
+    
+    setUser(prev => ({ ...prev, displayName: newName }));
+    showNotification('✅ Username updated!', 'success');
+  } catch (error) {
+    console.error('Username update error:', error);
+    showNotification('❌ Failed to update username', 'error');
+  }
+};
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-purple-800 text-white relative overflow-hidden">
+          {/* Skip to main content link for screen readers */}
+    <a 
+      href="#main-content" 
+      className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-purple-600 focus:rounded"
+    >
+      Skip to main content
+    </a>
       <div className="absolute inset-0 opacity-20">
         <div className="absolute top-20 left-20 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl animate-blob"></div>
         <div className="absolute top-40 right-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-2000"></div>
@@ -1167,40 +1259,69 @@ const handleUnlikeClip = async (clipId) => {
         </div>
       )}
 
-      <header className="border-b border-purple-700 border-opacity-50 bg-black bg-opacity-20 backdrop-blur-md relative z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 flex flex-wrap justify-between items-center gap-4">
-          <h1 className="text-4xl sm:text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent tracking-tight">
-            ChorusClip
-          </h1>
-          <div className="flex flex-wrap gap-3 items-center">
-            <span className="text-sm bg-purple-700 bg-opacity-50 backdrop-blur px-4 py-2 rounded-full border border-purple-500 font-semibold">
-              Strathmore Exclusive
+<header className="border-b border-purple-700 border-opacity-50 bg-black bg-opacity-20 backdrop-blur-md relative z-10 sticky top-0">
+  <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
+    {/* Top row: Logo and Auth */}
+    <div className="flex justify-between items-center mb-3 sm:mb-0">
+      <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent tracking-tight">
+        ChorusClip
+      </h1>
+      
+      {/* Auth section */}
+      <div className="flex items-center gap-2">
+        {user.uid ? (
+          <>
+            <span className="text-sm sm:text-base font-semibold hidden md:inline truncate max-w-[150px]">
+              Hi, {user.displayName}!
             </span>
-            {!user.isPremium && user.uid && (
-              <span className="text-sm bg-gradient-to-r from-purple-600 to-pink-600 px-4 py-2 rounded-full font-bold">
-                {songsRemaining} songs left today
-              </span>
-            )}
-            {user.isPremium && (
-              <span className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-5 py-2 rounded-full text-sm font-bold flex items-center gap-1">
-                <Sparkles size={16} /> PREMIUM
-              </span>
-            )}
-            {user.uid ? (
-              <div className="flex items-center gap-2">
-                <span className="text-base font-semibold hidden sm:inline">Hi, {user.displayName}!</span>
-                <button onClick={handleSignOut} className="px-5 py-2.5 text-base bg-red-600 hover:bg-red-700 rounded-xl font-semibold transition flex items-center gap-2">
-                  <LogOut size={18} /> <span className="hidden sm:inline">Sign Out</span>
-                </button>
-              </div>
-            ) : (
-              <button onClick={() => setShowAuthModal(true)} className="px-6 py-2.5 text-base bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold hover:shadow-lg transition">
-                Sign In
-              </button>
-            )}
-          </div>
-        </div>
-      </header>
+            <button 
+              onClick={handleChangeUsername}
+              className="text-xs sm:text-sm text-purple-300 hover:text-purple-200 transition hidden sm:inline"
+              aria-label="Change username"
+            >
+              Edit
+            </button>
+            <button 
+              onClick={handleSignOut} 
+              className="px-3 sm:px-5 py-2 text-sm sm:text-base bg-red-600 hover:bg-red-700 rounded-xl font-semibold transition flex items-center gap-1 sm:gap-2"
+              aria-label="Sign out"
+            >
+              <LogOut size={16} className="sm:w-[18px] sm:h-[18px]" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </button>
+          </>
+        ) : (
+          <button 
+            onClick={() => setShowAuthModal(true)} 
+            className="px-4 sm:px-6 py-2 text-sm sm:text-base bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold hover:shadow-lg transition"
+            aria-label="Sign in to ChorusClip"
+          >
+            Sign In
+          </button>
+        )}
+      </div>
+    </div>
+    
+    {/* Bottom row: Badges */}
+    <div className="flex flex-wrap items-center gap-2 justify-center sm:justify-start mt-3 sm:mt-0">
+      <span className="text-xs sm:text-sm bg-purple-700 bg-opacity-50 backdrop-blur px-3 py-1.5 rounded-full border border-purple-500 font-semibold whitespace-nowrap">
+        Strathmore Exclusive
+      </span>
+      
+      {!user.isPremium && user.uid && (
+        <span className="text-xs sm:text-sm bg-gradient-to-r from-purple-600 to-pink-600 px-3 py-1.5 rounded-full font-bold whitespace-nowrap">
+          {songsRemaining} songs left today
+        </span>
+      )}
+      
+      {user.isPremium && (
+        <span className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-1 whitespace-nowrap">
+          <Sparkles size={14} /> PREMIUM
+        </span>
+      )}
+    </div>
+  </div>
+</header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 relative z-10">
         <div className="grid lg:grid-cols-2 gap-8">
@@ -1249,18 +1370,20 @@ const handleUnlikeClip = async (clipId) => {
 
                   <div className="bg-purple-900 bg-opacity-30 p-6 rounded-2xl border border-purple-700 border-opacity-50">
                     <label className="block text-lg font-bold text-purple-300 mb-3">Loop Repetitions</label>
-                    <select
-                      value={loopCount}
-                      onChange={(e) => setLoopCount(Number(e.target.value))}
-                      className="w-full px-5 py-4 text-lg bg-purple-950 bg-opacity-70 border border-purple-600 rounded-xl text-white font-semibold focus:outline-none focus:ring-2 focus:ring-purple-500"
-                    >
-                      <option value={0}>Infinite Loop</option>
-                      <option value={1}>1 time</option>
-                      <option value={2}>2 times</option>
-                      <option value={3}>3 times</option>
-                      <option value={5}>5 times</option>
-                      <option value={10}>10 times</option>
-                    </select>
+             
+             <select
+  value={loopCount}
+  onChange={(e) => setLoopCount(Number(e.target.value))}
+  className="w-full px-5 py-4 text-lg bg-purple-950 bg-opacity-70 border border-purple-600 rounded-xl text-white font-semibold focus:outline-none focus:ring-2 focus:ring-purple-500"
+  aria-label="Number of loop repetitions"
+>
+  <option value={0}>Infinite Loop</option>
+  <option value={1}>1 time</option>
+  <option value={2}>2 times</option>
+  <option value={3}>3 times</option>
+  <option value={5}>5 times</option>
+  <option value={10}>10 times</option>
+</select>
                     {loopCount > 0 && currentLoopIteration > 0 && (
                       <p className="text-purple-300 text-lg mt-3">
                         Playing: {currentLoopIteration}/{loopCount}
@@ -1285,14 +1408,34 @@ const handleUnlikeClip = async (clipId) => {
                             Start: {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')}
                           </label>
                           <input
-                            type="range"
-                            min="0"
-                            max="300"
-                            step="1"
-                            value={loop.start}
-                            onChange={(e) => updateLoop(idx, 'start', e.target.value)}
-                            className="w-full"
-                          />
+  type="range"
+  min="0"
+  max="600"
+  step="1"
+  value={loop.start}
+  onChange={(e) => updateLoop(idx, 'start', e.target.value)}
+  className="w-full"
+  aria-label={`Loop ${idx + 1} start time: ${Math.floor(loop.start/60)} minutes ${loop.start%60} seconds`}
+  aria-valuemin={0}
+  aria-valuemax={600}
+  aria-valuenow={loop.start}
+  aria-valuetext={`${Math.floor(loop.start/60)}:${(loop.start%60).toString().padStart(2,'0')}`}
+/>
+
+<input
+  type="range"
+  min={loop.start + 1}
+  max={Math.min(600, loop.start + 45)}
+  step="1"
+  value={loop.end}
+  onChange={(e) => updateLoop(idx, 'end', e.target.value)}
+  className="w-full"
+  aria-label={`Loop ${idx + 1} end time: ${Math.floor(loop.end/60)} minutes ${loop.end%60} seconds`}
+  aria-valuemin={loop.start + 1}
+  aria-valuemax={Math.min(600, loop.start + 45)}
+  aria-valuenow={loop.end}
+  aria-valuetext={`${Math.floor(loop.end/60)}:${(loop.end%60).toString().padStart(2,'0')}`}
+/>
                         </div>
                         
                         <div>
@@ -1318,26 +1461,31 @@ const handleUnlikeClip = async (clipId) => {
 
                   <div className="flex gap-3 flex-wrap">
                     <button
-                      onClick={togglePlayPause}
-                      className="flex-1 min-w-[200px] py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl flex items-center justify-center gap-2 font-bold hover:shadow-xl transition"
-                    >
-                      {isPlaying ? <Pause size={28} /> : <Play size={28} />}
-                      {isPlaying ? 'Pause' : 'Play'}
-                    </button>
-                    <button
-                      onClick={handleLoopRestart}
-                      className="px-7 py-5 bg-purple-800 bg-opacity-70 hover:bg-opacity-90 rounded-xl transition"
-                    >
-                      <RotateCcw size={28} />
-                    </button>
-                    {user.isPremium && (
-                      <button
-                        onClick={handleDownload}
-                        className="px-7 py-5 bg-green-700 hover:bg-green-600 rounded-xl transition"
-                      >
-                        <Download size={28} />
-                      </button>
-                    )}
+  onClick={togglePlayPause}
+  className="flex-1 min-w-[200px] py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl flex items-center justify-center gap-2 font-bold hover:shadow-xl transition"
+  aria-label={isPlaying ? 'Pause playback' : 'Play loop'}
+  aria-pressed={isPlaying}
+>
+  {isPlaying ? <Pause size={28} aria-hidden="true" /> : <Play size={28} aria-hidden="true" />}
+  {isPlaying ? 'Pause' : 'Play'}
+</button>
+<button
+  onClick={handleLoopRestart}
+  className="px-7 py-5 bg-purple-800 bg-opacity-70 hover:bg-opacity-90 rounded-xl transition"
+  aria-label="Restart loop from beginning"
+>
+  <RotateCcw size={28} aria-hidden="true" />
+</button>
+                   
+                   {user.isPremium && (
+  <button
+    onClick={handleDownload}
+    className="px-7 py-5 bg-green-700 hover:bg-green-600 rounded-xl transition"
+    aria-label="Download loop as MP3"
+  >
+    <Download size={28} aria-hidden="true" />
+  </button>
+)}
                   </div>
 
                   <div className="flex gap-3 flex-wrap">
@@ -1449,58 +1597,75 @@ const handleUnlikeClip = async (clipId) => {
               ) : (
                 <div className="space-y-4">
        
-       {clips.map((clip) => (
-  <div
-    key={clip.id}
-    className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
-  >
-    <div className="flex justify-between items-start mb-3">
-      <div className="flex-1">
-        <h3 className="font-bold text-xl">{clip.title}</h3>
-        <p className="text-base text-purple-300">{clip.artist}</p>
-        <p className="text-sm text-purple-400 mt-1">by @{clip.createdBy}</p>
+       {clips.map((clip) => {
+  const clipLoops = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30 }];
+  const firstLoop = clipLoops[0];
+  
+  return (
+    // Add to clip cards to make them keyboard accessible:
+<div
+  key={clip.id}
+  className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
+  role="article"
+  aria-label={`${clip.title} by ${clip.artist}`}
+>
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex-1">
+          <h3 className="font-bold text-xl">{clip.title}</h3>
+          <p className="text-base text-purple-300">{clip.artist}</p>
+          <p className="text-sm text-purple-400 mt-1">
+            by @{clip.createdBy} • {clipLoops.length} loop{clipLoops.length > 1 ? 's' : ''}
+            {clip.loopCount > 0 && ` • ${clip.loopCount}x`}
+          </p>
+        </div>
+        {/* Like/delete buttons */}
       </div>
-      <div className="flex items-center gap-2">
-        <button 
-          onClick={() => user.likedClips.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id)}
-          className={`transition transform hover:scale-110 ${user.likedClips.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
-        >
-          <Heart size={24} fill={user.likedClips.includes(clip.id) ? "currentColor" : "none"} />
-        </button>
-        {clip.userId === user.uid && (
+      
+      {/* Show ALL loop timestamps */}
+      <div className="mb-3 space-y-1">
+        {clipLoops.map((loop, idx) => (
+          <div key={idx} className="text-sm text-purple-400">
+            Loop {idx + 1}: {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')} - {Math.floor(loop.end/60)}:{(loop.end%60).toString().padStart(2,'0')}
+          </div>
+        ))}
+      </div>
+      
+      <div className="flex justify-between items-center text-base">
+        <span className="text-purple-400 font-semibold">
+          Duration: {Math.max(0, firstLoop.end - firstLoop.start)}s per loop
+        </span>
+        <div className="flex items-center gap-4">
+          <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
           <button 
-            onClick={() => handleDeleteClip(clip.id)}
-            className="text-red-400 hover:text-red-300 transition"
-            title="Delete clip"
-          >
-            <X size={20} />
-          </button>
-        )}
+  onClick={() => user.likedClips.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id)}
+  className={`transition transform hover:scale-110 ${user.likedClips.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
+  aria-label={user.likedClips.includes(clip.id) ? `Unlike ${clip.title}` : `Like ${clip.title}`}
+  aria-pressed={user.likedClips.includes(clip.id)}
+>
+  <Heart size={24} fill={user.likedClips.includes(clip.id) ? "currentColor" : "none"} aria-hidden="true" />
+</button>
+
+<button 
+  onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+  className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
+  aria-label={`Play ${clip.title} by ${clip.artist}`}
+>
+  <Play size={16} fill="currentColor" aria-hidden="true" />
+  <span>{clip.plays || 0}</span>
+</button>
+
+<button 
+  onClick={() => handleShareClip(clip)}
+  className="text-purple-400 hover:text-purple-300 transition"
+  aria-label={`Share ${clip.title}`}
+>
+  <Share2 size={18} aria-hidden="true" />
+</button>
+        </div>
       </div>
     </div>
-    <div className="flex justify-between items-center text-base">
-      <span className="text-purple-400 font-semibold">
-        {Math.floor(clip.startTime/60)}:{(clip.startTime%60).toString().padStart(2,'0')} - {Math.floor(clip.endTime/60)}:{(clip.endTime%60).toString().padStart(2,'0')}
-      </span>
-      <div className="flex items-center gap-4">
-        <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
-        <button 
-          onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip.startTime)}
-          className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
-        >
-          <Play size={16} fill="currentColor" />
-          <span>{clip.plays || 0}</span>
-        </button>
-        <button 
-          onClick={() => handleShareClip(clip)}
-          className="text-purple-400 hover:text-purple-300 transition"
-        >
-          <Share2 size={18} />
-        </button>
-      </div>
-    </div>
-  </div>
-))}
+  );
+})}
                 </div>
               )}
 

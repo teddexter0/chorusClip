@@ -63,12 +63,43 @@ export const getLeaderboard = async (limitCount = 3) => {
       query(collection(db, 'users'), orderBy('clipsToday', 'desc'), limit(limitCount))
     );
     
-    return usersSnapshot.docs.map((doc, index) => ({
-      rank: index + 1,
-      name: doc.data().displayName,
-      songs: doc.data().clipsToday,
-      artist: 'Various'
-    }));
+    // For each user, find their most posted artist
+    const leaderboardPromises = usersSnapshot.docs.map(async (userDoc, index) => {
+      const userData = userDoc.data();
+      
+      // Get all clips by this user
+      const userClipsQuery = query(
+        collection(db, 'clips'),
+        where('userId', '==', userDoc.id)
+      );
+      const clipsSnapshot = await getDocs(userClipsQuery);
+      
+      // Count artists
+      const artistCounts = {};
+      clipsSnapshot.docs.forEach(clipDoc => {
+        const artist = clipDoc.data().artist || 'Unknown';
+        artistCounts[artist] = (artistCounts[artist] || 0) + 1;
+      });
+      
+      // Find top artist
+      let topArtist = 'Various';
+      let maxCount = 0;
+      Object.entries(artistCounts).forEach(([artist, count]) => {
+        if (count > maxCount) {
+          maxCount = count;
+          topArtist = artist;
+        }
+      });
+      
+      return {
+        rank: index + 1,
+        name: userData.displayName || 'Anonymous',
+        songs: userData.clipsToday || 0,
+        artist: topArtist
+      };
+    });
+    
+    return await Promise.all(leaderboardPromises);
   } catch (error) {
     console.error('Leaderboard error:', error);
     return [];

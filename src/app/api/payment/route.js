@@ -101,26 +101,27 @@ export async function POST(request) {
       }
     };
 
-    // Submit order
-    const orderResponse = await fetch(`${PESAPAL_API_URL}/api/Transactions/SubmitOrderRequest`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(orderData)
-    });
+    // In payment/route.js, update the POST function:
+const orderResponse = await fetch(`${PESAPAL_API_URL}/api/Transactions/SubmitOrderRequest`, {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'Authorization': `Bearer ${token}`
+  },
+  body: JSON.stringify(orderData)
+});
 
-    const result = await orderResponse.json();
+const result = await orderResponse.json();
+console.log('Pesapal full response:', JSON.stringify(result, null, 2)); // ADD THIS LINE
 
-    if (!result.redirect_url) {
-      console.error('Pesapal error:', result);
-      return NextResponse.json({
-        success: false,
-        error: result.error?.message || 'Payment gateway error. Please try again or contact support.'
-      }, { status: 500 });
-    }
+if (!result.redirect_url) {
+  console.error('Pesapal error details:', result);
+  return NextResponse.json({
+    success: false,
+    error: `Pesapal says: ${JSON.stringify(result)}` // Show actual error
+  }, { status: 500 });
+}
 
     return NextResponse.json({
       success: true,

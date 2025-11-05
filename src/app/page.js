@@ -37,11 +37,20 @@ const AuthModal = ({ onClose, onSuccess }) => {
     setError('');
     setLoading(true);
 
-    if (!email.endsWith('@strathmore.edu')) {
-      setError('Please use a Strathmore email (@strathmore.edu)');
-      setLoading(false);
-      return;
-    }
+    // Bulletproof email validation - must END with @strathmore.edu
+const emailPattern = /^[a-zA-Z0-9._%+-]+@strathmore\.edu$/i;
+if (!emailPattern.test(email)) {
+  setError('Please use a valid Strathmore email ending with @strathmore.edu');
+  setLoading(false);
+  return;
+}
+
+// Additional check - email cannot START with @strathmore.edu
+if (email.startsWith('@')) {  
+  setError('Please use a valid Strathmore email ending with @strathmore.edu');
+  setLoading(false);
+  return;
+}
 
     try {
       const { signInUser, signUpUser, resetPassword, auth } = await import('../lib/firebase');
@@ -545,50 +554,58 @@ const dismissSuggestion = () => {
       stopTimeTracking();
     }
   };
-
-  const startTimeTracking = () => {
+const startTimeTracking = () => {
+  // Clear any existing interval first
   if (intervalRef.current) clearInterval(intervalRef.current);
-  
+
   intervalRef.current = setInterval(() => {
-    if (playerRef.current && playerRef.current.getCurrentTime && playerRef.current.getPlayerState) {
+    const player = playerRef.current;
+
+    if (player && player.getCurrentTime && player.getPlayerState) {
       try {
-        const time = playerRef.current.getCurrentTime();
-        const state = playerRef.current.getPlayerState();
-        
+        const time = player.getCurrentTime();
+        const state = player.getPlayerState();
         setPlayerCurrentTime(time);
-        
+
+        // Only run logic while video is playing
         if (state === window.YT.PlayerState.PLAYING) {
           const currentLoop = loops[currentLoopIndex];
-          
-          if (time >= currentLoop.end - 0.3) { // Changed from 0.1 to 0.3 for more reliable detection
-            console.log(`🔄 Loop end reached at ${time}s, restarting...`);
-            
-            if (loopCount > 0 && currentLoopIteration >= loopCount) {
-              playerRef.current.pauseVideo();
+
+          // Buffer window for timing inaccuracy
+          if (time >= currentLoop.end - 0.3) {
+            console.log(`🔄 Loop end reached at ${time.toFixed(2)}s, restarting...`);
+
+            // Stop looping when max count is hit
+            if (loopCount > 0 && currentLoopIteration >= loopCount - 1) {
+              player.pauseVideo();
               setCurrentLoopIteration(0);
-              console.log('✅ Loop count reached, stopping');
+              console.log('✅ Loop count reached, stopping.');
+              clearInterval(intervalRef.current);
               return;
             }
 
+            // Move to next loop, or restart from first
             if (currentLoopIndex < loops.length - 1) {
               const nextIndex = currentLoopIndex + 1;
               setCurrentLoopIndex(nextIndex);
-              playerRef.current.seekTo(loops[nextIndex].start, true);
-              console.log(`✅ Moving to loop ${nextIndex + 1}`);
+              player.seekTo(loops[nextIndex].start, true);
+              console.log(`✅ Moving to loop ${nextIndex + 1}/${loops.length}`);
             } else {
+              const newIteration = currentLoopIteration + 1;
+              setCurrentLoopIteration(newIteration);
               setCurrentLoopIndex(0);
-              setCurrentLoopIteration(prev => prev + 1);
-              playerRef.current.seekTo(loops[0].start, true);
-              console.log(`✅ Restarting loop, iteration ${currentLoopIteration + 1}`);
+              player.seekTo(loops[0].start, true);
+              console.log(`✅ Restarting from loop 1, iteration ${newIteration}/${loopCount || '∞'}`);
             }
           }
         }
       } catch (e) {
-        console.log('Tracking error (ignored):', e.message);
+        console.warn('⚠️ Tracking error (ignored):', e.message);
       }
     }
-  }, 200); // Changed from 100ms to 200ms for better performance
+  }, 200); // updates every 0.2s for efficiency
 };
+
   const stopTimeTracking = () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
@@ -1431,7 +1448,8 @@ const handleUnlikeClip = async (clipId) => {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {clips.map((clip) => (
+       
+       {clips.map((clip) => (
   <div
     key={clip.id}
     className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
@@ -1460,7 +1478,27 @@ const handleUnlikeClip = async (clipId) => {
         )}
       </div>
     </div>
-    {/* Rest of clip card... */}
+    <div className="flex justify-between items-center text-base">
+      <span className="text-purple-400 font-semibold">
+        {Math.floor(clip.startTime/60)}:{(clip.startTime%60).toString().padStart(2,'0')} - {Math.floor(clip.endTime/60)}:{(clip.endTime%60).toString().padStart(2,'0')}
+      </span>
+      <div className="flex items-center gap-4">
+        <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
+        <button 
+          onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip.startTime)}
+          className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
+        >
+          <Play size={16} fill="currentColor" />
+          <span>{clip.plays || 0}</span>
+        </button>
+        <button 
+          onClick={() => handleShareClip(clip)}
+          className="text-purple-400 hover:text-purple-300 transition"
+        >
+          <Share2 size={18} />
+        </button>
+      </div>
+    </div>
   </div>
 ))}
                 </div>

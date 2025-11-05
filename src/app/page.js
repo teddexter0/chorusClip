@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Mail, Lock, User, Phone, CheckCircle, XCircle } from 'lucide-react';
-
+import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Mail, Lock, User, Phone, CheckCircle, XCircle, Users } from 'lucide-react';
 // NOTIFICATION COMPONENT
 const Notification = ({ message, type, onClose }) => {
   const bgColor = type === 'success' ? 'from-green-600 to-green-700' : type === 'error' ? 'from-red-600 to-red-700' : 'from-blue-600 to-blue-700';
@@ -74,32 +73,37 @@ const AuthModal = ({ onClose, onSuccess }) => {
         await signUpUser(email, password, displayName);
         onSuccess(`✅ Account created! Verification email sent to ${email}. Check spam folder!`);
         onClose();
-      } else {
-        if (!password || password.length < 6) {
-          setError('Password must be at least 6 characters');
-          setLoading(false);
-          return;
-        }
+} else {
+  // Sign in
+  if (!password || password.length < 6) {
+    setError('Password must be at least 6 characters');
+    setLoading(false);
+    return;
+  }
 
-        try {
-  await signInUser(email, password);
-  onSuccess('✅ Welcome back!');
-  onClose();
-} catch (error) {
-  console.error('Sign in error:', error);
-  throw error; // Re-throw to be caught by outer try-catch
-}
-      }
-    } catch (error) {
-      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        setError('❌ Incorrect password! Use "Forgot Password" to reset.');
-      } else if (error.code === 'auth/too-many-requests') {
-        setError('❌ Too many attempts. Use "Forgot Password" to reset.');
-      } else {
-        setError(`❌ ${error.message}`);
-      }
-      setLoading(false);
+  try {
+    await signInUser(email, password);
+    onSuccess('✅ Welcome back!');
+    onClose();
+  } catch (signInError) {
+    console.error('Sign in error:', signInError);
+    
+    if (signInError.code === 'auth/invalid-credential' || signInError.code === 'auth/wrong-password') {
+      setError('❌ Incorrect email or password! Try "Forgot Password".');
+    } else if (signInError.code === 'auth/user-not-found') {
+      setError('❌ No account found. Please sign up first!');
+    } else if (signInError.code === 'auth/too-many-requests') {
+      setError('❌ Too many attempts. Use "Forgot Password" to reset.');
+    } else {
+      setError(`❌ Sign in failed: ${signInError.message}`);
     }
+    setLoading(false);
+    return; // Don't throw, just show error
+  }
+}
+    } catch (error) {
+      console.error('Auth error:', error);
+}
   };
 
   return (
@@ -543,44 +547,48 @@ const dismissSuggestion = () => {
   };
 
   const startTimeTracking = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    
-    intervalRef.current = setInterval(() => {
-      if (playerRef.current && playerRef.current.getCurrentTime && playerRef.current.getPlayerState) {
-        try {
-          const time = playerRef.current.getCurrentTime();
-          const state = playerRef.current.getPlayerState();
+  if (intervalRef.current) clearInterval(intervalRef.current);
+  
+  intervalRef.current = setInterval(() => {
+    if (playerRef.current && playerRef.current.getCurrentTime && playerRef.current.getPlayerState) {
+      try {
+        const time = playerRef.current.getCurrentTime();
+        const state = playerRef.current.getPlayerState();
+        
+        setPlayerCurrentTime(time);
+        
+        if (state === window.YT.PlayerState.PLAYING) {
+          const currentLoop = loops[currentLoopIndex];
           
-          setPlayerCurrentTime(time);
-          
-          if (state === window.YT.PlayerState.PLAYING) {
-            const currentLoop = loops[currentLoopIndex];
+          if (time >= currentLoop.end - 0.3) { // Changed from 0.1 to 0.3 for more reliable detection
+            console.log(`🔄 Loop end reached at ${time}s, restarting...`);
             
-            if (time >= currentLoop.end - 0.1) {
-              if (loopCount > 0 && currentLoopIteration >= loopCount) {
-                playerRef.current.pauseVideo();
-                setCurrentLoopIteration(0);
-                return;
-              }
+            if (loopCount > 0 && currentLoopIteration >= loopCount) {
+              playerRef.current.pauseVideo();
+              setCurrentLoopIteration(0);
+              console.log('✅ Loop count reached, stopping');
+              return;
+            }
 
-              if (currentLoopIndex < loops.length - 1) {
-                const nextIndex = currentLoopIndex + 1;
-                setCurrentLoopIndex(nextIndex);
-                playerRef.current.seekTo(loops[nextIndex].start, true);
-              } else {
-                setCurrentLoopIndex(0);
-                setCurrentLoopIteration(prev => prev + 1);
-                playerRef.current.seekTo(loops[0].start, true);
-              }
+            if (currentLoopIndex < loops.length - 1) {
+              const nextIndex = currentLoopIndex + 1;
+              setCurrentLoopIndex(nextIndex);
+              playerRef.current.seekTo(loops[nextIndex].start, true);
+              console.log(`✅ Moving to loop ${nextIndex + 1}`);
+            } else {
+              setCurrentLoopIndex(0);
+              setCurrentLoopIteration(prev => prev + 1);
+              playerRef.current.seekTo(loops[0].start, true);
+              console.log(`✅ Restarting loop, iteration ${currentLoopIteration + 1}`);
             }
           }
-        } catch (e) {
-          // Silently ignore YouTube API errors
         }
+      } catch (e) {
+        console.log('Tracking error (ignored):', e.message);
       }
-    }, 100);
-  };
-
+    }
+  }, 200); // Changed from 100ms to 200ms for better performance
+};
   const stopTimeTracking = () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
@@ -774,6 +782,7 @@ showNotification(
 
   const handlePlayClip = async (clipId, videoIdToPlay, startTime) => {
   try {
+    // Increment play count
     const { db } = await import('../lib/firebase');
     const { doc, updateDoc, increment } = await import('firebase/firestore');
     
@@ -781,38 +790,63 @@ showNotification(
       plays: increment(1)
     });
 
-    // Set state first
+    // Destroy existing player
+    if (playerRef.current && playerRef.current.destroy) {
+      try {
+        playerRef.current.destroy();
+      } catch (e) {
+        console.log('Destroy error (ignored):', e);
+      }
+    }
+
+    // Update state
     setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
     setVideoId(videoIdToPlay);
     setLoops([{ start: startTime, end: startTime + 30 }]);
+    setCurrentLoopIndex(0);
+    setCurrentLoopIteration(0);
     
-    // Load player and seek after it's ready
-    if (playerRef.current && playerRef.current.destroy) {
-      playerRef.current.destroy();
+    showNotification('⏳ Loading clip...', 'info');
+    
+    // Load new player
+    if (window.YT && window.YT.Player) {
+      playerRef.current = new window.YT.Player('youtube-player', {
+        videoId: videoIdToPlay,
+        playerVars: { 
+          autoplay: 1, // Auto-play when ready
+          controls: 1, 
+          enablejsapi: 1,
+          origin: typeof window !== 'undefined' ? window.location.origin : '',
+          widget_referrer: typeof window !== 'undefined' ? window.location.origin : ''
+        },
+        events: { 
+          onReady: (event) => {
+            const title = event.target.getVideoData().title;
+            setVideoTitle(title);
+            setArtist(extractArtist(title));
+            
+            // Seek to clip start time
+            setTimeout(() => {
+              try {
+                event.target.seekTo(startTime, true);
+                event.target.playVideo();
+                showNotification('▶️ Playing clip!', 'success');
+                console.log(`✅ Playing clip from ${startTime}s`);
+              } catch (e) {
+                console.log('Seek error:', e);
+              }
+            }, 500);
+          }, 
+          onStateChange: onPlayerStateChange
+        }
+      });
     }
     
-    loadYouTubePlayer(videoIdToPlay);
-    
-    // Seek after player loads
-    setTimeout(() => {
-      if (playerRef.current && playerRef.current.seekTo) {
-        try {
-          playerRef.current.seekTo(startTime, true);
-          playerRef.current.playVideo();
-          console.log(`✅ Playing clip from ${startTime}s`);
-        } catch (e) {
-          console.log('Play clip seek error:', e);
-        }
-      }
-    }, 2000); // Wait 2 seconds for player to fully load
-    
-    showNotification('▶️ Loading clip...', 'info');
   } catch (error) {
-    console.error('Play error:', error);
-    showNotification('Failed to play clip', 'error');
+    console.error('Play clip error:', error);
+    showNotification('❌ Failed to play clip', 'error');
   }
 };
-
   const handleShareClip = async (clip) => {
     const shareUrl = `${window.location.origin}?clip=${clip.id}`;
     const shareText = `Check out this ${clip.title} loop on ChorusClip!`;
@@ -847,6 +881,65 @@ showNotification(
     }
   };
 
+  const handleDeleteClip = async (clipId) => {
+  if (!user.uid) {
+    showNotification('Sign in to delete clips!', 'error');
+    return;
+  }
+
+  const confirmDelete = window.confirm('Delete this clip? This cannot be undone.');
+  if (!confirmDelete) return;
+
+  try {
+    const { db } = await import('../lib/firebase');
+    const { doc, deleteDoc, getDoc } = await import('firebase/firestore');
+    
+    // Check if user owns this clip
+    const clipDoc = await getDoc(doc(db, 'clips', clipId));
+    if (!clipDoc.exists()) {
+      showNotification('Clip not found', 'error');
+      return;
+    }
+    
+    const clipData = clipDoc.data();
+    if (clipData.userId !== user.uid) {
+      showNotification('You can only delete your own clips!', 'error');
+      return;
+    }
+    
+    await deleteDoc(doc(db, 'clips', clipId));
+    showNotification('🗑️ Clip deleted!', 'success');
+  } catch (error) {
+    console.error('Delete error:', error);
+    showNotification('Failed to delete clip', 'error');
+  }
+};
+
+const handleUnlikeClip = async (clipId) => {
+  if (!user.uid) return;
+  
+  try {
+    const { db } = await import('../lib/firebase');
+    const { doc, updateDoc, increment, arrayRemove, setDoc } = await import('firebase/firestore');
+    
+    await updateDoc(doc(db, 'clips', clipId), {
+      likes: increment(-1)
+    });
+
+    await setDoc(doc(db, 'userLikes', user.uid), {
+      likedClips: arrayRemove(clipId)
+    }, { merge: true });
+
+    setUser(prev => ({
+      ...prev,
+      likedClips: prev.likedClips.filter(id => id !== clipId)
+    }));
+
+    showNotification('💔 Unliked!', 'info');
+  } catch (error) {
+    console.error('Unlike error:', error);
+  }
+};
   const handleSignOut = async () => {
     try {
       const { auth } = await import('../lib/firebase');
@@ -1255,6 +1348,38 @@ showNotification(
                 <Sparkles size={24} className="text-yellow-400" />
                 Why ChorusClip?
               </h3>
+              <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-blue-700 border-opacity-50">
+  <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+    <Users size={24} className="text-blue-400" />
+    Who Is This For?
+  </h3>
+  <ul className="space-y-3 text-base text-purple-200">
+    <li className="flex items-start gap-2">
+      <span className="text-blue-400 text-lg">💒</span>
+      <span><strong>Weddings:</strong> Practice walking down the aisle to your perfect song moment</span>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-blue-400 text-lg">🎤</span>
+      <span><strong>Choirs:</strong> Master tricky vocal parts by looping specific sections</span>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-blue-400 text-lg">🙏</span>
+      <span><strong>Worship:</strong> Meditate on powerful worship moments endlessly</span>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-blue-400 text-lg">💪</span>
+      <span><strong>Workouts:</strong> Loop your most motivating beat drops</span>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-blue-400 text-lg">📚</span>
+      <span><strong>Study:</strong> Focus music on repeat without interruption</span>
+    </li>
+    <li className="flex items-start gap-2">
+      <span className="text-blue-400 text-lg">🎵</span>
+      <span><strong>Music Lovers:</strong> Obsess over that ONE perfect 6-second kick!</span>
+    </li>
+  </ul>
+</div>
               <ul className="space-y-3 text-base text-purple-200">
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">✨</span>
@@ -1307,47 +1432,37 @@ showNotification(
               ) : (
                 <div className="space-y-4">
                   {clips.map((clip) => (
-                    <div
-                      key={clip.id}
-                      className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="flex-1">
-                          <h3 className="font-bold text-xl">{clip.title}</h3>
-                          <p className="text-base text-purple-300">{clip.artist}</p>
-                          <p className="text-sm text-purple-400 mt-1">by @{clip.createdBy}</p>
-                        </div>
-                        <button 
-                          onClick={() => handleLikeClip(clip.id)}
-                          className={`transition transform hover:scale-110 ${user.likedClips.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
-                          disabled={user.likedClips.includes(clip.id)}
-                        >
-                          <Heart size={24} fill={user.likedClips.includes(clip.id) ? "currentColor" : "none"} />
-                        </button>
-                      </div>
-                      <div className="flex justify-between items-center text-base">
-                        <span className="text-purple-400 font-semibold">
-                          {Math.floor(clip.startTime/60)}:{(clip.startTime%60).toString().padStart(2,'0')} - {Math.floor(clip.endTime/60)}:{(clip.endTime%60).toString().padStart(2,'0')}
-                        </span>
-                        <div className="flex items-center gap-4">
-                          <span className="text-purple-300 text-base">{clip.likes || 0}</span>
-                          <button 
-                            onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip.startTime)}
-                            className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
-                          >
-                            <Play size={16} fill="currentColor" />
-                            <span>{clip.plays || 0}</span>
-                          </button>
-                          <button 
-                            onClick={() => handleShareClip(clip)}
-                            className="text-purple-400 hover:text-purple-300 transition"
-                          >
-                            <Share2 size={18} />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+  <div
+    key={clip.id}
+    className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
+  >
+    <div className="flex justify-between items-start mb-3">
+      <div className="flex-1">
+        <h3 className="font-bold text-xl">{clip.title}</h3>
+        <p className="text-base text-purple-300">{clip.artist}</p>
+        <p className="text-sm text-purple-400 mt-1">by @{clip.createdBy}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <button 
+          onClick={() => user.likedClips.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id)}
+          className={`transition transform hover:scale-110 ${user.likedClips.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
+        >
+          <Heart size={24} fill={user.likedClips.includes(clip.id) ? "currentColor" : "none"} />
+        </button>
+        {clip.userId === user.uid && (
+          <button 
+            onClick={() => handleDeleteClip(clip.id)}
+            className="text-red-400 hover:text-red-300 transition"
+            title="Delete clip"
+          >
+            <X size={20} />
+          </button>
+        )}
+      </div>
+    </div>
+    {/* Rest of clip card... */}
+  </div>
+))}
                 </div>
               )}
 

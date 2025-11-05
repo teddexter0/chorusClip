@@ -88,9 +88,14 @@ const AuthModal = ({ onClose, onSuccess }) => {
           return;
         }
 
-        await signInUser(email, password);
-        onSuccess('✅ Welcome back!');
-        onClose();
+        try {
+  await signInUser(email, password);
+  onSuccess('✅ Welcome back!');
+  onClose();
+} catch (error) {
+  console.error('Sign in error:', error);
+  throw error; // Re-throw to be caught by outer try-catch
+}
       }
     } catch (error) {
       if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
@@ -531,21 +536,12 @@ export default function ChorusClipModern() {
   };
 
   const onPlayerReady = (event) => {
-    const title = event.target.getVideoData().title;
-    setVideoTitle(title);
-    setArtist(extractArtist(title));
-    
-    setTimeout(() => {
-      if (playerRef.current) {
-        const startTime = loops[0].start;
-        try {
-          playerRef.current.seekTo(startTime, true);
-        } catch (e) {
-          console.log('Initial seek error (ignored):', e);
-        }
-      }
-    }, 800);
-  };
+  const title = event.target.getVideoData().title;
+  setVideoTitle(title);
+  setArtist(extractArtist(title));
+  // REMOVED: No longer auto-seeking to loop start
+  // User will manually seek or let it play from beginning
+};
 
   const onPlayerStateChange = (event) => {
     if (event.data === window.YT.PlayerState.PLAYING) {
@@ -642,45 +638,37 @@ showNotification(
   };
 
   const updateLoop = (index, field, value) => {
-    const newLoops = [...loops];
-    const numValue = Number(value);
-    
-    if (field === 'start') {
-      newLoops[index].start = Math.max(0, numValue);
-      if (newLoops[index].end <= newLoops[index].start) {
-        newLoops[index].end = Math.min(newLoops[index].start + 30, 300);
-      }
-      if (newLoops[index].end - newLoops[index].start > 45) {
-        newLoops[index].end = newLoops[index].start + 45;
-      }
-    } else if (field === 'end') {
-      newLoops[index].end = Math.max(newLoops[index].start + 1, numValue);
-      if (newLoops[index].end - newLoops[index].start > 45) {
-        newLoops[index].end = newLoops[index].start + 45;
-      }
+  const newLoops = [...loops];
+  const numValue = Number(value);
+  
+  if (field === 'start') {
+    newLoops[index].start = Math.max(0, numValue);
+    if (newLoops[index].end <= newLoops[index].start) {
+      newLoops[index].end = Math.min(newLoops[index].start + 30, 300);
     }
-    
-    setLoops(newLoops);
-    
-    // FIXED: Better debouncing + error handling
-    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-    
-    seekTimeoutRef.current = setTimeout(() => {
-      if (playerRef.current && playerRef.current.seekTo && index === currentLoopIndex) {
-        const seekTime = field === 'start' ? newLoops[index].start : newLoops[index].end;
-        try {
-          // Check if player is ready
-          if (playerRef.current.getPlayerState && playerRef.current.getPlayerState() !== -1) {
-            playerRef.current.seekTo(seekTime, true);
-            console.log(`✅ Seeking to ${seekTime}s (${field})`);
-          }
-        } catch (error) {
-          // Silently ignore postMessage errors - they don't affect functionality
-          console.log('Seek error (ignored - normal behavior):', error.message);
-        }
-      }
-    }, 500); // 500ms debounce for stability
-  };
+    if (newLoops[index].end - newLoops[index].start > 45) {
+      newLoops[index].end = newLoops[index].start + 45;
+    }
+  } else if (field === 'end') {
+    newLoops[index].end = Math.max(newLoops[index].start + 1, numValue);
+    if (newLoops[index].end - newLoops[index].start > 45) {
+      newLoops[index].end = newLoops[index].start + 45;
+    }
+  }
+  
+  setLoops(newLoops);
+  
+  // CRITICAL FIX: Seek IMMEDIATELY on every slider change
+  if (playerRef.current && playerRef.current.seekTo) {
+    const seekTime = numValue;
+    try {
+      playerRef.current.seekTo(seekTime, true);
+      console.log(`✅ INSTANT SEEK to ${seekTime}s (${field})`);
+    } catch (error) {
+      console.log('Seek error (normal):', error.message);
+    }
+  }
+};
 
   const removeLoop = (index) => {
     if (loops.length === 1) return;
@@ -994,28 +982,28 @@ showNotification(
             </h2>
             <div className="bg-black bg-opacity-50 rounded-2xl p-6 sm:p-8 mb-6 flex flex-col items-center justify-center aspect-video">
               <Video size={72} className="text-purple-400 mb-4" />
-              <p className="text-purple-300 text-center text-base sm:text-lg">Quick tutorial:<br/>1. Paste YouTube link<br/>2. Adjust loop points<br/>3. Play & enjoy!</p>
+              <p className="text-purple-300 text-center text-base sm:text-lg">Quick tutorial:<br/>1. Paste YouTube link<br/>2. Adjust loop points<br/>3. Play and enjoy!</p>
             </div>
             <div className="grid sm:grid-cols-2 gap-4 text-base mb-6">
               <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">🎵 Step 1</p>
+                <p className="font-semibold mb-2 text-lg">Step 1</p>
                 <p className="text-purple-200">Paste YouTube link</p>
               </div>
               <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">⏱️ Step 2</p>
+                <p className="font-semibold mb-2 text-lg">Step 2</p>
                 <p className="text-purple-200">Auto-detect best part</p>
               </div>
               <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">🔄 Step 3</p>
+                <p className="font-semibold mb-2 text-lg">Step 3</p>
                 <p className="text-purple-200">Loop endlessly!</p>
               </div>
               <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">💎 Premium</p>
+                <p className="font-semibold mb-2 text-lg">Premium</p>
                 <p className="text-purple-200">3 loops, playlists, downloads</p>
               </div>
             </div>
             <button onClick={() => setShowTutorial(false)} className="w-full py-5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-xl hover:shadow-2xl transition pulse-glow">
-              Let's Go! 🚀
+              Lets Go!
             </button>
           </div>
         </div>
@@ -1044,12 +1032,12 @@ showNotification(
       {showMostReplayedSuggestion && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500">
-            <h3 className="text-3xl font-bold mb-4">🎯 Smart Loop Suggestion!</h3>
+            <h3 className="text-3xl font-bold mb-4">Smart Loop Suggestion!</h3>
             <p className="text-purple-200 mb-2 text-xl">Suggested section: {Math.floor(suggestedStart/60)}:{(suggestedStart%60).toString().padStart(2,'0')} - {Math.floor(suggestedEnd/60)}:{(suggestedEnd%60).toString().padStart(2,'0')}</p>
             <p className="text-base text-purple-300 mb-6">This is typically where the chorus/hook is. You can adjust using the sliders below.</p>
             <div className="space-y-3">
               <button onClick={applySuggestedLoop} className="w-full py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition pulse-glow">
-                Use This Section ✨
+                Use This Section
               </button>
               <button onClick={dismissSuggestion} className="w-full py-4 text-lg bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
                 I'll Choose Manually
@@ -1146,7 +1134,7 @@ showNotification(
                       onChange={(e) => setLoopCount(Number(e.target.value))}
                       className="w-full px-5 py-4 text-lg bg-purple-950 bg-opacity-70 border border-purple-600 rounded-xl text-white font-semibold focus:outline-none focus:ring-2 focus:ring-purple-500"
                     >
-                      <option value={0}>∞ Infinite Loop</option>
+                      <option value={0}>Infinite Loop</option>
                       <option value={1}>1 time</option>
                       <option value={2}>2 times</option>
                       <option value={3}>3 times</option>
@@ -1163,7 +1151,7 @@ showNotification(
                   {loops.map((loop, idx) => (
                     <div key={idx} className="bg-purple-900 bg-opacity-30 p-6 rounded-2xl border border-purple-700 border-opacity-50">
                       <div className="flex justify-between items-center mb-5">
-                        <h4 className="font-bold text-2xl">Loop {idx + 1} {idx === currentLoopIndex && isPlaying && '🔄'}</h4>
+                        <h4 className="font-bold text-2xl">Loop {idx + 1} {idx === currentLoopIndex && isPlaying && 'Playing'}</h4>
                         {loops.length > 1 && (
                           <button onClick={() => removeLoop(idx)} className="text-red-400 hover:text-red-300 transition">
                             <X size={28} />
@@ -1289,7 +1277,7 @@ showNotification(
                 href="mailto:ted.sande@strathmore.edu?subject=ChorusClip Support Request"
                 className="block w-full py-4 text-lg bg-gradient-to-r from-red-600 to-pink-600 rounded-xl font-bold text-center hover:shadow-xl transition"
               >
-                📧 Contact Support
+                Contact Support
               </a>
               <p className="text-sm text-purple-400 text-center mt-3">
                 Response time: 24-48 hours
@@ -1299,12 +1287,12 @@ showNotification(
 
           <div className="space-y-6">
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 sm:p-8 border border-purple-700 border-opacity-50">
-              <h2 className="text-3xl font-black tracking-tight mb-6">🔥 Trending Clips</h2>
+              <h2 className="text-3xl font-black tracking-tight mb-6">Trending Clips</h2>
               
               {clips.length === 0 ? (
                 <div className="text-center py-12 text-purple-300">
                   <p className="text-xl mb-2">No clips yet!</p>
-                  <p className="text-base">Be the first to post a loop 🎵</p>
+                  <p className="text-base">Be the first to post a loop</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -1332,7 +1320,7 @@ showNotification(
                           {Math.floor(clip.startTime/60)}:{(clip.startTime%60).toString().padStart(2,'0')} - {Math.floor(clip.endTime/60)}:{(clip.endTime%60).toString().padStart(2,'0')}
                         </span>
                         <div className="flex items-center gap-4">
-                          <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
+                          <span className="text-purple-300 text-base">{clip.likes || 0}</span>
                           <button 
                             onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip.startTime)}
                             className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
@@ -1378,7 +1366,7 @@ showNotification(
                     </li>
                   </ul>
                   <button onClick={() => setShowPaymentModal(true)} className="w-full px-6 py-5 text-xl bg-gradient-to-r from-yellow-400 to-orange-500 text-black rounded-xl font-bold hover:shadow-2xl transition pulse-glow">
-                    Upgrade Now 🚀
+                    Upgrade Now
                   </button>
                 </div>
               )}
@@ -1386,7 +1374,7 @@ showNotification(
 
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
               <h3 className="font-black text-xl mb-4 flex items-center gap-2">
-                🏆 Strathmore Leaderboard
+                Strathmore Leaderboard
               </h3>
               <p className="text-sm text-purple-300 mb-4">Top clip creators this week</p>
               {leaderboard.length === 0 ? (

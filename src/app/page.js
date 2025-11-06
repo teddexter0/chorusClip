@@ -582,62 +582,71 @@ const dismissSuggestion = () => {
       stopTimeTracking();
     }
   };
-const startTimeTracking = () => {
-  // Clear any existing interval first
-  if (intervalRef.current) clearInterval(intervalRef.current);
-
-  intervalRef.current = setInterval(() => {
-    const player = playerRef.current;
-
-    if (player && player.getCurrentTime && player.getPlayerState) {
-      try {
-        const time = player.getCurrentTime();
-        const state = player.getPlayerState();
-        setPlayerCurrentTime(time);
-
-        // Only run logic while video is playing
-        if (state === window.YT.PlayerState.PLAYING) {
-          const currentLoop = loops[currentLoopIndex];
-
-          // Buffer window for timing inaccuracy
-
-          // In startTimeTracking, fix this:
-if (time >= currentLoop.end - 0.3) {
-  console.log(`🔄 Loop ${currentLoopIndex + 1} end reached at ${time}s`);
   
-  // Check if we're on the LAST loop of the sequence
-  if (currentLoopIndex < loops.length - 1) {
-    // Move to next loop in sequence
-    const nextIndex = currentLoopIndex + 1;
-    setCurrentLoopIndex(nextIndex);
-    playerRef.current.seekTo(loops[nextIndex].start, true);
-    console.log(`✅ Moving to loop ${nextIndex + 1}/${loops.length}`);
-  } else {
-    // We finished all loops, increment iteration
-    const newIteration = currentLoopIteration + 1;
-    
-    // Check if we hit the limit BEFORE incrementing
-    if (loopCount > 0 && newIteration >= loopCount) {
-      playerRef.current.pauseVideo();
-      setCurrentLoopIteration(0);
-      setCurrentLoopIndex(0);
-      console.log(`✅ Completed ${loopCount} iterations, stopping`);
+  const startTimeTracking = () => {
+  if (intervalRef.current) clearInterval(intervalRef.current);
+  
+  intervalRef.current = setInterval(() => {
+    if (!playerRef.current || !playerRef.current.getCurrentTime || !playerRef.current.getPlayerState) {
       return;
     }
     
-    // Go back to first loop
-    setCurrentLoopIteration(newIteration);
-    setCurrentLoopIndex(0);
-    playerRef.current.seekTo(loops[0].start, true);
-    console.log(`✅ Iteration ${newIteration}/${loopCount}, restarting from loop 1`);
-  }
-}
-        }
-      } catch (e) {
-        console.warn('⚠️ Tracking error (ignored):', e.message);
+    try {
+      const time = playerRef.current.getCurrentTime();
+      const state = playerRef.current.getPlayerState();
+      
+      setPlayerCurrentTime(time);
+      
+      // CRITICAL: Only track when actually playing
+      if (state !== window.YT.PlayerState.PLAYING) {
+        return;
       }
+      
+      // Get current loop
+      if (!loops[currentLoopIndex]) {
+        console.error('No loop at index', currentLoopIndex);
+        return;
+      }
+      
+      const currentLoop = loops[currentLoopIndex];
+      
+      // Check if we've reached the END of current loop
+      // Use 0.5s buffer to catch it reliably
+      if (time >= currentLoop.end - 0.5) {
+        console.log(`🔄 Loop ${currentLoopIndex + 1}/${loops.length} ended at ${time.toFixed(1)}s`);
+        
+        // Are we on the last loop in the sequence?
+        if (currentLoopIndex < loops.length - 1) {
+          // Move to NEXT loop
+          const nextIndex = currentLoopIndex + 1;
+          setCurrentLoopIndex(nextIndex);
+          playerRef.current.seekTo(loops[nextIndex].start, true);
+          console.log(`✅ Moving to loop ${nextIndex + 1}/${loops.length} at ${loops[nextIndex].start}s`);
+        } else {
+          // We finished ALL loops in sequence
+          const newIteration = currentLoopIteration + 1;
+          console.log(`📊 Completed sequence. Iteration ${newIteration}/${loopCount || '∞'}`);
+          
+          // Check if we hit the repeat limit
+          if (loopCount > 0 && newIteration >= loopCount) {
+            console.log(`✅ Reached ${loopCount} iterations. STOPPING.`);
+            playerRef.current.pauseVideo();
+            setCurrentLoopIteration(0);
+            setCurrentLoopIndex(0);
+            return;
+          }
+          
+          // Go back to FIRST loop
+          setCurrentLoopIteration(newIteration);
+          setCurrentLoopIndex(0);
+          playerRef.current.seekTo(loops[0].start, true);
+          console.log(`🔁 Restarting sequence from loop 1 at ${loops[0].start}s`);
+        }
+      }
+    } catch (e) {
+      console.log('Tracking error:', e.message);
     }
-  }, 200); // updates every 0.2s for efficiency
+  }, 250); // Check every 250ms for reliable detection
 };
 
   const stopTimeTracking = () => {
@@ -763,7 +772,8 @@ showNotification(
   };
 
   // Update handlePostToFeed function (around line 740):
-const handlePostToFeed = async () => {
+  
+  const handlePostToFeed = async () => {
   if (!videoId) {
     showNotification('Load a song first!', 'error');
     return;
@@ -774,24 +784,38 @@ const handlePostToFeed = async () => {
     return;
   }
 
-  // Save ALL loops, not just first one
+  // Validate loops
+  if (!loops || loops.length === 0) {
+    showNotification('No loops to post!', 'error');
+    return;
+  }
+
   const clipData = {
     title: videoTitle,
     artist,
     youtubeVideoId: videoId,
-    loops: loops.map(loop => ({ start: loop.start, end: loop.end })), // Save all loops
+    // CRITICAL: Save ALL loops as array
+    loops: loops.map(loop => ({
+      start: Number(loop.start),
+      end: Number(loop.end)
+    })),
+    loopCount: loopCount || 0,
     userId: user.uid,
     createdBy: user.displayName,
     likes: 0,
     plays: 0,
-    loopCount: loopCount // Save desired repetitions
+    shares: 0,
+    createdAt: new Date()
   };
+
+  console.log('Posting clip with data:', clipData);
 
   try {
     const { createClip } = await import('../lib/firebase');
     await createClip(clipData);
-    showNotification('✅ Posted all loops to feed!', 'success');
+    showNotification(`✅ Posted ${loops.length} loop(s) to feed!`, 'success');
   } catch (error) {
+    console.error('Post error:', error);
     showNotification('Failed to post. Try again.', 'error');
   }
 };
@@ -833,25 +857,18 @@ const handlePostToFeed = async () => {
   };
 
   const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
-
-  const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+  console.log('Playing clip:', clipData);
   
-  // If user is not premium and clip has more than 1 loop
-  if (!user.isPremium && loopsToLoad.length > 1) {
-    showNotification('🔒 This clip has multiple loops! Upgrade to Premium to use multi-loop features.', 'info');
-    // Only load first loop for free users
-    setLoops([loopsToLoad[0]]);
-  } else {
-    setLoops(loopsToLoad);
-  }
   try {
-    // Increment play count
-    const { db } = await import('../lib/firebase');
-    const { doc, updateDoc, increment } = await import('firebase/firestore');
-    
-    await updateDoc(doc(db, 'clips', clipId), {
-      plays: increment(1)
-    });
+    // Only increment play count if signed in
+    if (user.uid) {
+      const { db } = await import('../lib/firebase');
+      const { doc, updateDoc, increment } = await import('firebase/firestore');
+      
+      await updateDoc(doc(db, 'clips', clipId), {
+        plays: increment(1)
+      });
+    }
 
     // Destroy existing player
     if (playerRef.current && playerRef.current.destroy) {
@@ -862,20 +879,25 @@ const handlePostToFeed = async () => {
       }
     }
 
-    // Load ALL loops from the clip, not just first one
-    const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+    // Extract loops from clip data
+    const loopsToLoad = clipData.loops || [{ 
+      start: clipData.startTime || 0, 
+      end: clipData.endTime || 30 
+    }];
     
-    // Update state with ALL loops
+    console.log('Loading loops:', loopsToLoad);
+
+    // Update state
     setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
     setVideoId(videoIdToPlay);
-    setLoops(loopsToLoad); // Load all loops
-    setLoopCount(clipData.loopCount || 0); // Load loop count
+    setLoops(loopsToLoad); // Load ALL loops
+    setLoopCount(clipData.loopCount || 0);
     setCurrentLoopIndex(0);
     setCurrentLoopIteration(0);
     
-    showNotification('⏳ Loading clip with all loops...', 'info');
+    showNotification(`⏳ Loading ${loopsToLoad.length} loop(s)...`, 'info');
     
-    // Load new player
+    // Load player
     if (window.YT && window.YT.Player) {
       playerRef.current = new window.YT.Player('youtube-player', {
         videoId: videoIdToPlay,
@@ -892,12 +914,13 @@ const handlePostToFeed = async () => {
             setVideoTitle(title);
             setArtist(extractArtist(title));
             
+            // Seek to FIRST loop start
             setTimeout(() => {
               try {
                 event.target.seekTo(loopsToLoad[0].start, true);
                 event.target.playVideo();
                 showNotification(`▶️ Playing ${loopsToLoad.length} loop(s)!`, 'success');
-                console.log(`✅ Loaded ${loopsToLoad.length} loops starting at ${loopsToLoad[0].start}s`);
+                console.log(`✅ Started at ${loopsToLoad[0].start}s`);
               } catch (e) {
                 console.log('Seek error:', e);
               }
@@ -910,7 +933,12 @@ const handlePostToFeed = async () => {
     
   } catch (error) {
     console.error('Play clip error:', error);
-    showNotification('❌ Failed to play clip', 'error');
+    
+    if (error.code === 'permission-denied') {
+      showNotification('⚠️ Some features require sign in. You can still watch clips!', 'info');
+    } else {
+      showNotification('❌ Failed to play clip', 'error');
+    }
   }
 };
   const handleShareClip = async (clip) => {
@@ -1272,7 +1300,7 @@ const handleChangeUsername = async () => {
         {user.uid ? (
           <>
             <span className="text-sm sm:text-base font-semibold hidden md:inline truncate max-w-[150px]">
-              Hi, {user.displayName}!
+              Hey there, {user.displayName}!
             </span>
             <button 
               onClick={handleChangeUsername}

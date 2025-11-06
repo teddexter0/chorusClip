@@ -33,87 +33,35 @@ const AuthModal = ({ onClose, onSuccess }) => {
   const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    // Bulletproof email validation - must END with @strathmore.edu
-const emailPattern = /^[a-zA-Z0-9._%+-]+@strathmore\.edu$/i;
-if (!emailPattern.test(email)) {
-  setError('Please use a valid Strathmore email ending with @strathmore.edu');
-  setLoading(false);
-  return;
-}
-
-// Additional check - email cannot START with @strathmore.edu
-if (email.startsWith('@')) {  
-  setError('Please use a valid Strathmore email ending with @strathmore.edu');
-  setLoading(false);
-  return;
-}
-
-    try {
-      const { signInUser, signUpUser, resetPassword, auth } = await import('../lib/firebase');
-      const { fetchSignInMethodsForEmail } = await import('firebase/auth');
-
-      if (mode === 'reset') {
-        await resetPassword(email);
-        onSuccess('✅ Password reset email sent! Check your inbox (and spam folder).');
-        onClose();
-      } else if (mode === 'signup') {
-        if (!displayName || displayName.length < 3) {
-          setError('Display name must be at least 3 characters');
-          setLoading(false);
-          return;
-        }
-        if (!password || password.length < 6) {
-          setError('Password must be at least 6 characters');
-          setLoading(false);
-          return;
-        }
-
-        const methods = await fetchSignInMethodsForEmail(auth, email);
-        if (methods.length > 0) {
-          setError('❌ Email already registered! Use "Forgot Password" to reset your password.');
-          setLoading(false);
-          return;
-        }
-
-        await signUpUser(email, password, displayName);
-        onSuccess(`✅ Account created! Verification email sent to ${email}. Check spam folder!`);
-        onClose();
-} else {
-  // Sign in
-  if (!password || password.length < 6) {
-    setError('Password must be at least 6 characters');
-    setLoading(false);
-    return;
-  }
-
+  e.preventDefault();
+  setLoading(true);
+  
+  // TEMPORARY: Manual premium activation (REMOVE BEFORE PRODUCTION!)
   try {
-    await signInUser(email, password);
-    onSuccess('✅ Welcome back!');
-    onClose();
-  } catch (signInError) {
-    console.error('Sign in error:', signInError);
+    const { db } = await import('../lib/firebase');
+    const { doc, updateDoc } = await import('firebase/firestore');
     
-    if (signInError.code === 'auth/invalid-credential' || signInError.code === 'auth/wrong-password') {
-      setError('❌ Incorrect email or password! Try "Forgot Password".');
-    } else if (signInError.code === 'auth/user-not-found') {
-      setError('❌ No account found. Please sign up first!');
-    } else if (signInError.code === 'auth/too-many-requests') {
-      setError('❌ Too many attempts. Use "Forgot Password" to reset.');
-    } else {
-      setError(`❌ Sign in failed: ${signInError.message}`);
+    if (!user.uid) {
+      setError('Please sign in first!');
+      setLoading(false);
+      return;
     }
-    setLoading(false);
-    return; // Don't throw, just show error
+    
+    // ⚠️ DANGER: This grants premium WITHOUT payment!
+    await updateDoc(doc(db, 'users', user.uid), {
+      isPremium: true,
+      premiumSince: new Date(),
+      premiumExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+    });
+    
+    onSuccess('✅ Premium activated! (Payment integration coming soon)');
+    onClose();
+  } catch (error) {
+    setError('Failed to activate premium');
   }
-}
-    } catch (error) {
-      console.error('Auth error:', error);
-}
-  };
+  
+  setLoading(false);
+};
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">
@@ -941,6 +889,7 @@ showNotification(
     }
   }
 };
+
   const handleShareClip = async (clip) => {
     const shareUrl = `${window.location.origin}?clip=${clip.id}`;
     const shareText = `Check out this ${clip.title} loop on ChorusClip!`;
@@ -1647,6 +1596,8 @@ const handleChangeUsername = async () => {
           </p>
         </div>
         {/* Like/delete buttons */}
+
+
       </div>
       
       {/* Show ALL loop timestamps */}

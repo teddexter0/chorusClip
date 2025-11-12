@@ -203,3 +203,75 @@ export const updatePaymentStatus = async (paymentId, status) => {
     });
   }
 };
+
+export const checkAndResetDailyLimit = async (uid) => {
+  const userRef = doc(db, 'users', uid);
+  const userDoc = await getDoc(userRef);
+  
+  if (!userDoc.exists()) return;
+  
+  const userData = userDoc.data();
+  const lastReset = userData.lastClipReset?.toDate() || new Date(0);
+  const now = new Date();
+  
+  // Check if it's a new day
+  const isSameDay = 
+    lastReset.getDate() === now.getDate() &&
+    lastReset.getMonth() === now.getMonth() &&
+    lastReset.getFullYear() === now.getFullYear();
+  
+  if (!isSameDay) {
+    // Reset counter
+    await updateDoc(userRef, {
+      clipsToday: 0,
+      lastClipReset: now
+    });
+    return 0; // Return new count
+  }
+  
+  return userData.clipsToday || 0;
+};
+
+// Add to firebase.js:
+
+export const getTrendingClipsByPlays = async (limitCount = 5) => {
+  try {
+    const q = query(
+      collection(db, 'clips'), 
+      orderBy('plays', 'desc'), 
+      limit(limitCount)
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+  } catch (error) {
+    console.error('Trending clips error:', error);
+    return [];
+  }
+};
+
+export const getTopArtists = async (limitCount = 5) => {
+  try {
+    const clipsSnapshot = await getDocs(collection(db, 'clips'));
+    
+    // Count clips per artist
+    const artistCounts = {};
+    clipsSnapshot.docs.forEach(doc => {
+      const artist = doc.data().artist || 'Unknown';
+      artistCounts[artist] = (artistCounts[artist] || 0) + 1;
+    });
+    
+    // Sort by count
+    const sortedArtists = Object.entries(artistCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limitCount)
+      .map(([artist, count]) => ({ artist, clips: count }));
+    
+    return sortedArtists;
+  } catch (error) {
+    console.error('Top artists error:', error);
+    return [];
+  }
+};

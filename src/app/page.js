@@ -23,9 +23,23 @@ const Notification = ({ message, type, onClose }) => {
   );
 };
 
+const [trendingByPlays, setTrendingByPlays] = useState([]);
+const [topArtists, setTopArtists] = useState([]);
+
+
+// In useEffect or when loading data:
+const loadTrendingData = async () => {
+  const { getTrendingClipsByPlays, getTopArtists } = await import('../lib/firebase');
+  const trending = await getTrendingClipsByPlays(5);
+  const artists = await getTopArtists(5);
+  setTrendingByPlays(trending);
+  setTopArtists(artists);
+};
+
 // AUTH MODAL COMPONENT
+
 const AuthModal = ({ onClose, onSuccess }) => {
-  const [mode, setMode] = useState('signin');
+  const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'reset'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -33,48 +47,42 @@ const AuthModal = ({ onClose, onSuccess }) => {
   const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
-  e.preventDefault();
-  setLoading(true);
-  
-  // TEMPORARY: Manual premium activation (REMOVE BEFORE PRODUCTION!)
-  try {
-    const { db } = await import('../lib/firebase');
-    const { doc, updateDoc } = await import('firebase/firestore');
-    
-    if (!user.uid) {
-      setError('Please sign in first!');
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+
+    try {
+      if (mode === 'signin') {
+        await signInUser(email, password);
+        onSuccess?.('✅ Welcome back!');
+        onClose();
+      } else if (mode === 'signup') {
+        await signUpUser(email, password, displayName);
+        onSuccess?.('🎉 Account created! Welcome!');
+        onClose();
+      } else if (mode === 'reset') {
+        await sendPasswordResetEmail(email);
+        onSuccess?.('✉️ Check your inbox for reset link!');
+      }
+    } catch (err) {
+      console.error('Auth error:', err);
+      setError(err.message || 'Something went wrong!');
+    } finally {
       setLoading(false);
-      return;
     }
-    
-    // ⚠️ DANGER: This grants premium WITHOUT payment!
-    await updateDoc(doc(db, 'users', user.uid), {
-      isPremium: true,
-      premiumSince: new Date(),
-      premiumExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    });
-    
-    onSuccess('✅ Premium activated! (Payment integration coming soon)');
-    onClose();
-  } catch (error) {
-    setError('Failed to activate premium');
-  }
-  
-  setLoading(false);
-};
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500 my-8">
-      
-      <button 
-  onClick={onClose} 
-  className="float-right text-white hover:text-purple-300 transition"
-  aria-label="Close dialog"
->
-  <X size={32} aria-hidden="true" />
-</button>
-        
+      <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500 my-8 relative">
+        <button 
+          onClick={onClose} 
+          className="absolute top-4 right-4 text-white hover:text-purple-300 transition"
+          aria-label="Close dialog"
+        >
+          <X size={32} aria-hidden="true" />
+        </button>
+
         <h2 className="text-4xl font-black mb-6">
           {mode === 'reset' ? 'Reset Password' : mode === 'signup' ? 'Create Account' : 'Welcome Back'}
         </h2>
@@ -140,21 +148,26 @@ const AuthModal = ({ onClose, onSuccess }) => {
             disabled={loading}
             className="w-full py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition disabled:opacity-50"
           >
-            {loading ? 'Loading...' : mode === 'reset' ? 'Send Reset Link' : mode === 'signup' ? 'Create Account' : 'Sign In'}
+            {loading
+              ? 'Loading...'
+              : mode === 'reset'
+              ? 'Send Reset Link'
+              : mode === 'signup'
+              ? 'Create Account'
+              : 'Sign In'}
           </button>
         </form>
 
         <div className="mt-6 text-center space-y-3">
           {mode !== 'reset' && (
-            <>
-              <button
-                onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-                className="text-purple-300 hover:text-purple-200 text-base font-semibold"
-              >
-                {mode === 'signin' ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
-              </button>
-              <br />
-            </>
+            <button
+              onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
+              className="text-purple-300 hover:text-purple-200 text-base font-semibold"
+            >
+              {mode === 'signin'
+                ? "Don't have an account? Sign Up"
+                : 'Already have an account? Sign In'}
+            </button>
           )}
           <button
             onClick={() => setMode(mode === 'reset' ? 'signin' : 'reset')}
@@ -358,47 +371,61 @@ export default function ChorusClipModern() {
 
       loadTrendingClips();
       loadLeaderboard();
+      loadTrendingData();
       checkAuthState();
     }
   }, []);
+const checkAuthState = async () => {
+  try {
+    const { auth, getUserData, db, checkAndResetDailyLimit } = await import('../lib/firebase');
+    const { onAuthStateChanged } = await import('firebase/auth');
+    const { doc, getDoc } = await import('firebase/firestore');
 
-  const checkAuthState = async () => {
-    try {
-      const { auth, getUserData, db } = await import('../lib/firebase');
-      const { onAuthStateChanged } = await import('firebase/auth');
-      const { doc, getDoc } = await import('firebase/firestore');
-      
-      onAuthStateChanged(auth, async (firebaseUser) => {
-        if (firebaseUser) {
-          const userData = await getUserData(firebaseUser.uid);
-          
-          let likedClips = [];
-          try {
-            const likesDoc = await getDoc(doc(db, 'userLikes', firebaseUser.uid));
-            if (likesDoc.exists()) {
-              likedClips = likesDoc.data().likedClips || [];
-            }
-          } catch (e) {}
-          
-          if (userData) {
-            setUser({
-              uid: firebaseUser.uid,
-              displayName: userData.displayName,
-              email: userData.email,
-              isPremium: userData.isPremium || false,
-              songsToday: userData.clipsToday || 0,
-              accountCreatedDaysAgo: Math.floor((Date.now() - userData.accountCreated.toDate().getTime()) / (1000 * 60 * 60 * 24)),
-              likedClips
-            });
-            loadTrendingClips();
-            loadLeaderboard();
-          }
+    onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) return setUser(null);
+
+      try {
+        // Fetch user data
+        const userData = await getUserData(firebaseUser.uid);
+
+        // Fetch liked clips
+        let likedClips = [];
+        try {
+          const likesDoc = await getDoc(doc(db, 'userLikes', firebaseUser.uid));
+          if (likesDoc.exists()) likedClips = likesDoc.data().likedClips || [];
+        } catch (e) {
+          console.error('Failed to fetch liked clips:', e);
         }
-      });
-    } catch (error) {
-      console.log('Auth check failed:', error);
-    }
-  };
+
+        // Check and reset daily limit
+        const songsToday = await checkAndResetDailyLimit(firebaseUser.uid);
+
+        if (userData) {
+          setUser({
+            uid: firebaseUser.uid,
+            displayName: userData.displayName,
+            email: userData.email,
+            isPremium: userData.isPremium || false,
+            songsToday,
+            accountCreatedDaysAgo: Math.floor(
+              (Date.now() - userData.accountCreated.toDate().getTime()) / (1000 * 60 * 60 * 24)
+            ),
+            likedClips
+          });
+
+          // Load UI stuff
+          loadTrendingClips();
+          loadLeaderboard();
+        }
+      } catch (error) {
+        console.error('Auth state handling failed:', error);
+      }
+    });
+  } catch (error) {
+    console.error('Auth check failed:', error);
+  }
+};
+
 
   const loadTrendingClips = async () => {
     try {
@@ -439,8 +466,11 @@ export default function ChorusClipModern() {
     setSuggestedEnd(90);
     setShowMostReplayedSuggestion(true);
   };
-
-  const handleUrlSubmit = async () => {
+const handleUrlSubmit = async () => {
+  if (!window.YT || !window.YT.Player) {
+    showNotification('⏳ YouTube player loading... Try again in 2 seconds', 'info');
+    return;
+  }
   if (!user.isPremium && songsRemaining <= 0) {
     showNotification('Daily song limit reached! Upgrade to Premium for unlimited songs.', 'error');
     return;
@@ -531,7 +561,9 @@ const dismissSuggestion = () => {
     }
   };
   
-  const startTimeTracking = () => {
+  // COMPLETE REPLACEMENT for startTimeTracking function:
+
+const startTimeTracking = () => {
   if (intervalRef.current) clearInterval(intervalRef.current);
   
   intervalRef.current = setInterval(() => {
@@ -545,56 +577,60 @@ const dismissSuggestion = () => {
       
       setPlayerCurrentTime(time);
       
-      // CRITICAL: Only track when actually playing
+      // Only track when actually PLAYING
       if (state !== window.YT.PlayerState.PLAYING) {
         return;
       }
       
-      // Get current loop
-      if (!loops[currentLoopIndex]) {
-        console.error('No loop at index', currentLoopIndex);
+      // Validate we have loops
+      if (!loops || loops.length === 0 || !loops[currentLoopIndex]) {
+        console.error('No valid loops to track');
         return;
       }
       
       const currentLoop = loops[currentLoopIndex];
       
-      // Check if we've reached the END of current loop
-      // Use 0.5s buffer to catch it reliably
-      if (time >= currentLoop.end - 0.5) {
+      // Check if we've passed the END of current loop
+      if (time >= currentLoop.end - 0.3) {
         console.log(`🔄 Loop ${currentLoopIndex + 1}/${loops.length} ended at ${time.toFixed(1)}s`);
         
-        // Are we on the last loop in the sequence?
+        // Are we on the LAST loop in the sequence?
         if (currentLoopIndex < loops.length - 1) {
           // Move to NEXT loop
           const nextIndex = currentLoopIndex + 1;
           setCurrentLoopIndex(nextIndex);
           playerRef.current.seekTo(loops[nextIndex].start, true);
-          console.log(`✅ Moving to loop ${nextIndex + 1}/${loops.length} at ${loops[nextIndex].start}s`);
+          console.log(`➡️ Moving to loop ${nextIndex + 1} at ${loops[nextIndex].start}s`);
         } else {
-          // We finished ALL loops in sequence
+          // We finished ALL loops - check if we should repeat
           const newIteration = currentLoopIteration + 1;
-          console.log(`📊 Completed sequence. Iteration ${newIteration}/${loopCount || '∞'}`);
           
-          // Check if we hit the repeat limit
-          if (loopCount > 0 && newIteration >= loopCount) {
-            console.log(`✅ Reached ${loopCount} iterations. STOPPING.`);
+          // If loopCount is 0, loop forever
+          if (loopCount === 0) {
+            console.log(`🔁 Infinite loop - restarting sequence (iteration ${newIteration})`);
+            setCurrentLoopIteration(newIteration);
+            setCurrentLoopIndex(0);
+            playerRef.current.seekTo(loops[0].start, true);
+          } else if (newIteration < loopCount) {
+            // Haven't reached limit yet
+            console.log(`🔁 Iteration ${newIteration}/${loopCount} - restarting`);
+            setCurrentLoopIteration(newIteration);
+            setCurrentLoopIndex(0);
+            playerRef.current.seekTo(loops[0].start, true);
+          } else {
+            // Reached the limit - STOP
+            console.log(`✅ Completed ${loopCount} iterations - STOPPING`);
             playerRef.current.pauseVideo();
             setCurrentLoopIteration(0);
             setCurrentLoopIndex(0);
-            return;
+            stopTimeTracking();
           }
-          
-          // Go back to FIRST loop
-          setCurrentLoopIteration(newIteration);
-          setCurrentLoopIndex(0);
-          playerRef.current.seekTo(loops[0].start, true);
-          console.log(`🔁 Restarting sequence from loop 1 at ${loops[0].start}s`);
         }
       }
     } catch (e) {
-      console.log('Tracking error:', e.message);
+      console.error('Tracking error:', e);
     }
-  }, 250); // Check every 250ms for reliable detection
+  }, 200); // Check every 200ms
 };
 
   const stopTimeTracking = () => {
@@ -806,20 +842,19 @@ showNotification(
 
   const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
   console.log('Playing clip:', clipData);
-  
+
   try {
-    // Only increment play count if signed in
+    // Increment play count only if user is signed in
     if (user.uid) {
       const { db } = await import('../lib/firebase');
       const { doc, updateDoc, increment } = await import('firebase/firestore');
-      
-      await updateDoc(doc(db, 'clips', clipId), {
-        plays: increment(1)
-      });
+      await updateDoc(doc(db, 'clips', clipId), { plays: increment(1) });
+    } else {
+      console.log('Unsigned user - skipping play count');
     }
 
-    // Destroy existing player
-    if (playerRef.current && playerRef.current.destroy) {
+    // Destroy existing player if present
+    if (playerRef.current?.destroy) {
       try {
         playerRef.current.destroy();
       } catch (e) {
@@ -827,42 +862,37 @@ showNotification(
       }
     }
 
-    // Extract loops from clip data
-    const loopsToLoad = clipData.loops || [{ 
-      start: clipData.startTime || 0, 
-      end: clipData.endTime || 30 
-    }];
-    
+    // Setup loops
+    const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
     console.log('Loading loops:', loopsToLoad);
 
     // Update state
     setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
     setVideoId(videoIdToPlay);
-    setLoops(loopsToLoad); // Load ALL loops
+    setLoops(loopsToLoad);
     setLoopCount(clipData.loopCount || 0);
     setCurrentLoopIndex(0);
     setCurrentLoopIteration(0);
-    
+
     showNotification(`⏳ Loading ${loopsToLoad.length} loop(s)...`, 'info');
-    
-    // Load player
-    if (window.YT && window.YT.Player) {
+
+    // Load YouTube player
+    if (window.YT?.Player) {
       playerRef.current = new window.YT.Player('youtube-player', {
         videoId: videoIdToPlay,
-        playerVars: { 
+        playerVars: {
           autoplay: 1,
-          controls: 1, 
+          controls: 1,
           enablejsapi: 1,
           origin: typeof window !== 'undefined' ? window.location.origin : '',
           widget_referrer: typeof window !== 'undefined' ? window.location.origin : ''
         },
-        events: { 
+        events: {
           onReady: (event) => {
             const title = event.target.getVideoData().title;
             setVideoTitle(title);
             setArtist(extractArtist(title));
-            
-            // Seek to FIRST loop start
+
             setTimeout(() => {
               try {
                 event.target.seekTo(loopsToLoad[0].start, true);
@@ -873,15 +903,14 @@ showNotification(
                 console.log('Seek error:', e);
               }
             }, 500);
-          }, 
+          },
           onStateChange: onPlayerStateChange
         }
       });
     }
-    
   } catch (error) {
     console.error('Play clip error:', error);
-    
+
     if (error.code === 'permission-denied') {
       showNotification('⚠️ Some features require sign in. You can still watch clips!', 'info');
     } else {
@@ -889,6 +918,7 @@ showNotification(
     }
   }
 };
+
 
   const handleShareClip = async (clip) => {
     const shareUrl = `${window.location.origin}?clip=${clip.id}`;
@@ -1333,8 +1363,17 @@ const handleChangeUsername = async () => {
 
               {videoId && (
                 <div className="mt-6 space-y-6">
-                  <div id="youtube-player" className="w-full aspect-video bg-black rounded-2xl overflow-hidden border border-purple-700"></div>
-                  
+// In page.js, replace the player div:
+<div id="youtube-player" className="w-full aspect-video bg-black rounded-2xl overflow-hidden border border-purple-700 hidden"></div>
+
+// Add below it:
+<div className="w-full aspect-video bg-gradient-to-br from-purple-900 to-pink-900 rounded-2xl flex items-center justify-center border border-purple-700">
+  <div className="text-center">
+    <Music size={64} className="mx-auto mb-4 text-purple-400" />
+    <p className="text-xl font-bold">Audio Only Mode</p>
+    <p className="text-purple-300">Video hidden to maintain focus</p>
+  </div>
+</div>                  
                   {videoTitle && (
                     <div className="text-center">
                       <p className="font-bold text-2xl">{videoTitle}</p>
@@ -1379,60 +1418,103 @@ const handleChangeUsername = async () => {
                         )}
                       </div>
                       
-                      <div className="space-y-6">
-                        <div>
-                          <label className="block text-lg font-bold text-purple-300 mb-3">
-                            Start: {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')}
-                          </label>
-                          <input
-  type="range"
-  min="0"
-  max="600"
-  step="1"
-  value={loop.start}
-  onChange={(e) => updateLoop(idx, 'start', e.target.value)}
-  className="w-full"
-  aria-label={`Loop ${idx + 1} start time: ${Math.floor(loop.start/60)} minutes ${loop.start%60} seconds`}
-  aria-valuemin={0}
-  aria-valuemax={600}
-  aria-valuenow={loop.start}
-  aria-valuetext={`${Math.floor(loop.start/60)}:${(loop.start%60).toString().padStart(2,'0')}`}
-/>
-
-<input
-  type="range"
-  min={loop.start + 1}
-  max={Math.min(600, loop.start + 45)}
-  step="1"
-  value={loop.end}
-  onChange={(e) => updateLoop(idx, 'end', e.target.value)}
-  className="w-full"
-  aria-label={`Loop ${idx + 1} end time: ${Math.floor(loop.end/60)} minutes ${loop.end%60} seconds`}
-  aria-valuemin={loop.start + 1}
-  aria-valuemax={Math.min(600, loop.start + 45)}
-  aria-valuenow={loop.end}
-  aria-valuetext={`${Math.floor(loop.end/60)}:${(loop.end%60).toString().padStart(2,'0')}`}
-/>
-                        </div>
-                        
-                        <div>
-                          <label className="block text-lg font-bold text-purple-300 mb-3">
-                            End: {Math.floor(loop.end/60)}:{(loop.end%60).toString().padStart(2,'0')}
-                            <span className="text-base ml-2 text-yellow-400">
-                              (Duration: {Math.max(0, loop.end - loop.start)}s / Max 45s)
-                            </span>
-                          </label>
-                          <input
-                            type="range"
-                            min={loop.start + 1}
-                            max={Math.min(300, loop.start + 45)}
-                            step="1"
-                            value={loop.end}
-                            onChange={(e) => updateLoop(idx, 'end', e.target.value)}
-                            className="w-full"
-                          />
-                        </div>
-                      </div>
+<div className="space-y-6">
+  {/* START TIME */}
+  <div>
+    <label className="block text-lg font-bold text-purple-300 mb-3">
+      Start: {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')}
+    </label>
+    
+    {/* Slider */}
+    <input
+      type="range"
+      min="0"
+      max="600"
+      step="1"
+      value={loop.start}
+      onChange={(e) => updateLoop(idx, 'start', e.target.value)}
+      className="w-full mb-2"
+    />
+    
+    {/* Manual Input */}
+    <div className="flex gap-2 items-center">
+      <input
+        type="number"
+        min="0"
+        max="10"
+        placeholder="Min"
+        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+        onChange={(e) => {
+          const minutes = parseInt(e.target.value) || 0;
+          const seconds = loop.start % 60;
+          updateLoop(idx, 'start', minutes * 60 + seconds);
+        }}
+      />
+      <span className="text-purple-300">:</span>
+      <input
+        type="number"
+        min="0"
+        max="59"
+        placeholder="Sec"
+        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+        onChange={(e) => {
+          const minutes = Math.floor(loop.start / 60);
+          const seconds = parseInt(e.target.value) || 0;
+          updateLoop(idx, 'start', minutes * 60 + seconds);
+        }}
+      />
+      <span className="text-sm text-purple-400 ml-2">Type exact time</span>
+    </div>
+  </div>
+  
+  {/* END TIME - Same pattern */}
+  <div>
+    <label className="block text-lg font-bold text-purple-300 mb-3">
+      End: {Math.floor(loop.end/60)}:{(loop.end%60).toString().padStart(2,'0')}
+      <span className="text-base ml-2 text-yellow-400">
+        (Duration: {Math.max(0, loop.end - loop.start)}s / Max 45s)
+      </span>
+    </label>
+    
+    <input
+      type="range"
+      min={loop.start + 1}
+      max={Math.min(600, loop.start + 45)}
+      step="1"
+      value={loop.end}
+      onChange={(e) => updateLoop(idx, 'end', e.target.value)}
+      className="w-full mb-2"
+    />
+    
+    <div className="flex gap-2 items-center">
+      <input
+        type="number"
+        min="0"
+        max="10"
+        placeholder="Min"
+        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+        onChange={(e) => {
+          const minutes = parseInt(e.target.value) || 0;
+          const seconds = loop.end % 60;
+          updateLoop(idx, 'end', minutes * 60 + seconds);
+        }}
+      />
+      <span className="text-purple-300">:</span>
+      <input
+        type="number"
+        min="0"
+        max="59"
+        placeholder="Sec"
+        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+        onChange={(e) => {
+          const minutes = Math.floor(loop.end / 60);
+          const seconds = parseInt(e.target.value) || 0;
+          updateLoop(idx, 'end', minutes * 60 + seconds);
+        }}
+      />
+    </div>
+  </div>
+</div>
                     </div>
                   ))}
 
@@ -1707,6 +1789,38 @@ const handleChangeUsername = async () => {
                 </div>
               )}
             </div>
+
+            
+<div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mb-6">
+  <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+    <TrendingUp size={24} className="text-green-400" />
+    Most Played Clips
+  </h3>
+  {trendingByPlays.map((clip, idx) => (
+    <div key={clip.id} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl mb-2">
+      <div>
+        <p className="font-bold">{idx + 1}. {clip.title}</p>
+        <p className="text-sm text-purple-300">{clip.artist}</p>
+      </div>
+      <span className="text-green-400 font-bold">{clip.plays || 0} plays</span>
+    </div>
+  ))}
+</div>
+
+<div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
+  <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+    <Music size={24} className="text-pink-400" />
+    Top Artists
+  </h3>
+  {topArtists.map((item, idx) => (
+    <div key={idx} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl mb-2">
+      <div>
+        <p className="font-bold">{idx + 1}. {item.artist}</p>
+      </div>
+      <span className="text-pink-400 font-bold">{item.clips} clips</span>
+    </div>
+  ))}
+</div>
           </div>
         </div>
       </div>

@@ -23,12 +23,13 @@ const Notification = ({ message, type, onClose }) => {
   );
 };
 
-const [trendingByPlays, setTrendingByPlays] = useState([]);
-const [topArtists, setTopArtists] = useState([]);
-
 
 // In useEffect or when loading data:
 const loadTrendingData = async () => {
+
+const [trendingByPlays, setTrendingByPlays] = useState([]);
+const [topArtists, setTopArtists] = useState([]);
+
   const { getTrendingClipsByPlays, getTopArtists } = await import('../lib/firebase');
   const trending = await getTrendingClipsByPlays(5);
   const artists = await getTopArtists(5);

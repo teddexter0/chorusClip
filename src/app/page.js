@@ -23,20 +23,6 @@ const Notification = ({ message, type, onClose }) => {
   );
 };
 
-
-// In useEffect or when loading data:
-const loadTrendingData = async () => {
-
-const [trendingByPlays, setTrendingByPlays] = useState([]);
-const [topArtists, setTopArtists] = useState([]);
-
-  const { getTrendingClipsByPlays, getTopArtists } = await import('../lib/firebase');
-  const trending = await getTrendingClipsByPlays(5);
-  const artists = await getTopArtists(5);
-  setTrendingByPlays(trending);
-  setTopArtists(artists);
-};
-
 // AUTH MODAL COMPONENT
 
 const AuthModal = ({ onClose, onSuccess }) => {
@@ -348,7 +334,17 @@ export default function ChorusClipModern() {
 
   const [notification, setNotification] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
-  const [clips, setClips] = useState([]);
+  const [clips, setClips] = useState([]); 
+const [trendingByPlays, setTrendingByPlays] = useState([]);
+const [topArtists, setTopArtists] = useState([]);
+
+const loadTrendingData = async () => {
+  const { getTrendingClipsByPlays, getTopArtists } = await import('../lib/firebase');
+  const trending = await getTrendingClipsByPlays(5);
+  const artists = await getTopArtists(5);
+  setTrendingByPlays(trending);
+  setTopArtists(artists);
+};
 
   const playerRef = useRef(null);
   const intervalRef = useRef(null);

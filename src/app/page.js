@@ -327,8 +327,8 @@ const loadTrendingData = async () => {
   const intervalRef = useRef(null);
   const seekTimeoutRef = useRef(null);
 
-  const songsLimit = user.accountCreatedDaysAgo < 7 ? 10 : 3;
-  const songsRemaining = songsLimit - user.songsToday;
+const songsLimit = user?.accountCreatedDaysAgo < 7 ? 10 : 3;
+const songsRemaining = user ? songsLimit - user.songsToday : 0;
   const maxLoopsPerSong = user.isPremium ? 3 : 1;
 
   const showNotification = (message, type = 'info') => {
@@ -413,16 +413,18 @@ const checkAuthState = async () => {
   };
 
   const loadLeaderboard = async () => {
-    try {
-      const { getLeaderboard } = await import('../lib/firebase');
-      const leaders = await getLeaderboard(3);
-      if (leaders && leaders.length > 0) {
-        setLeaderboard(leaders);
-      }
-    } catch (error) {
-      console.log('Using demo leaderboard');
+  try {
+    const { getLeaderboard } = await import('../lib/firebase');
+    const leaders = await getLeaderboard(3);
+    if (leaders && leaders.length > 0) {
+      setLeaderboard(leaders);
     }
-  };
+  } catch (error) {
+    console.log('Leaderboard unavailable for unsigned users');
+    // Set empty leaderboard instead of crashing
+    setLeaderboard([]);
+  }
+};
 
   const extractVideoId = (url) => {
     const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
@@ -1288,11 +1290,11 @@ const handleUnlikeClip = async (clipId) => {
         Strathmore Exclusive
       </span>
       
-      {!user.isPremium && user.uid && (
-        <span className="text-xs sm:text-sm bg-gradient-to-r from-purple-600 to-pink-600 px-3 py-1.5 rounded-full font-bold whitespace-nowrap">
-          {songsRemaining} songs left today
-        </span>
-      )}
+      {!user?.isPremium && user?.uid && (
+  <span className="text-xs sm:text-sm bg-gradient-to-r from-purple-600 to-pink-600 px-3 py-1.5 rounded-full font-bold whitespace-nowrap">
+    {songsRemaining} songs left today
+  </span>
+)}
       
       {user.isPremium && (
         <span className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-1 whitespace-nowrap">

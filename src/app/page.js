@@ -329,7 +329,7 @@ const loadTrendingData = async () => {
 
 const songsLimit = user?.accountCreatedDaysAgo < 7 ? 10 : 3;
 const songsRemaining = user ? songsLimit - user.songsToday : 0;
-  const maxLoopsPerSong = user.isPremium ? 3 : 1;
+  const maxLoopsPerSong = user?.isPremium ? 3 : 1;
 
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type });
@@ -354,48 +354,22 @@ const checkAuthState = async () => {
     const { auth, getUserData, db, checkAndResetDailyLimit } = await import('../lib/firebase');
     const { onAuthStateChanged } = await import('firebase/auth');
     const { doc, getDoc } = await import('firebase/firestore');
-
-    onAuthStateChanged(auth, async (firebaseUser) => {
-      if (!firebaseUser) return setUser(null);
-
-      try {
-        // Fetch user data
-        const userData = await getUserData(firebaseUser.uid);
-
-        // Fetch liked clips
-        let likedClips = [];
-        try {
-          const likesDoc = await getDoc(doc(db, 'userLikes', firebaseUser.uid));
-          if (likesDoc.exists()) likedClips = likesDoc.data().likedClips || [];
-        } catch (e) {
-          console.error('Failed to fetch liked clips:', e);
-        }
-
-        // Check and reset daily limit
-        const songsToday = await checkAndResetDailyLimit(firebaseUser.uid);
-
-        if (userData) {
-          setUser({
-            uid: firebaseUser.uid,
-            displayName: userData.displayName,
-            email: userData.email,
-            isPremium: userData.isPremium || false,
-            songsToday,
-            accountCreatedDaysAgo: Math.floor(
-              (Date.now() - userData.accountCreated.toDate().getTime()) / (1000 * 60 * 60 * 24)
-            ),
-            likedClips
-          });
-
-          // Load UI stuff
-          loadTrendingClips();
-          loadLeaderboard();
-        }
-      } catch (error) {
-        console.error('Auth state handling failed:', error);
-      }
+onAuthStateChanged(auth, async (firebaseUser) => {
+  if (!firebaseUser) {
+    return setUser({
+      uid: null,
+      displayName: 'Guest',
+      email: '',
+      isPremium: false,
+      songsToday: 0,
+      accountCreatedDaysAgo: 0,
+      likedClips: []
     });
-  } catch (error) {
+  }
+  }
+  );
+  }
+  catch (error) {
     console.error('Auth check failed:', error);
   }
 };
@@ -447,7 +421,7 @@ const handleUrlSubmit = async () => {
     showNotification('⏳ YouTube player loading... Try again in 2 seconds', 'info');
     return;
   }
-  if (!user.isPremium && songsRemaining <= 0) {
+  if (!user?.isPremium && songsRemaining <= 0) {
     showNotification('Daily song limit reached! Upgrade to Premium for unlimited songs.', 'error');
     return;
   }
@@ -469,7 +443,7 @@ const handleUrlSubmit = async () => {
     setUser(prev => ({ ...prev, songsToday: newCount }));
     localStorage.setItem('songsToday', newCount.toString());
 
-    if (songsRemaining === 3 && !user.isPremium) {
+    if (songsRemaining === 3 && !user?.isPremium) {
       setShowSongsWarning(true);
     }
   }
@@ -646,7 +620,7 @@ const startTimeTracking = () => {
   const addLoop = () => {
     if (loops.length >= maxLoopsPerSong) {
 showNotification(
-  `${user.isPremium ? 'Maximum 3' : 'Free tier: Only 1'} loop${user.isPremium ? 's' : ''} per song.`,
+  `${user?.isPremium ? 'Maximum 3' : 'Free tier: Only 1'} loop${user?.isPremium ? 's' : ''} per song.`,
   'error'
 );
       return;
@@ -694,7 +668,7 @@ showNotification(
   };
 
   const handleDownload = async () => {
-    if (!user.isPremium) {
+    if (!user?.isPremium) {
       showNotification('Downloads are Premium only!', 'error');
       return;
     }
@@ -738,7 +712,7 @@ showNotification(
     showNotification('Load a song first!', 'error');
     return;
   }
-  if (!user.uid) {
+  if (!user?.uid) {
     showNotification('Sign in to post!', 'error');
     setShowAuthModal(true);
     return;
@@ -760,7 +734,7 @@ showNotification(
       end: Number(loop.end)
     })),
     loopCount: loopCount || 0,
-    userId: user.uid,
+    userId: user?.uid,
     createdBy: user.displayName,
     likes: 0,
     plays: 0,
@@ -781,13 +755,13 @@ showNotification(
 };
 
   const handleLikeClip = async (clipId) => {
-    if (!user.uid) {
+    if (!user?.uid) {
       showNotification('Sign in to like clips!', 'error');
       setShowAuthModal(true);
       return;
     }
 
-    if (user.likedClips.includes(clipId)) {
+    if (user.likedClips?.includes(clipId)) {
       showNotification('You already liked this clip!', 'info');
       return;
     }
@@ -800,7 +774,7 @@ showNotification(
         likes: increment(1)
       });
 
-      await setDoc(doc(db, 'userLikes', user.uid), {
+      await setDoc(doc(db, 'userLikes', user?.uid), {
         likedClips: arrayUnion(clipId)
       }, { merge: true });
 
@@ -821,7 +795,7 @@ showNotification(
 
   try {
     // Increment play count only if user is signed in
-    if (user.uid) {
+    if (user?.uid) {
       const { db } = await import('../lib/firebase');
       const { doc, updateDoc, increment } = await import('firebase/firestore');
       await updateDoc(doc(db, 'clips', clipId), { plays: increment(1) });
@@ -931,7 +905,7 @@ showNotification(
   };
 
   const handleDeleteClip = async (clipId) => {
-  if (!user.uid) {
+  if (!user?.uid) {
     showNotification('Sign in to delete clips!', 'error');
     return;
   }
@@ -951,7 +925,7 @@ showNotification(
     }
     
     const clipData = clipDoc.data();
-    if (clipData.userId !== user.uid) {
+    if (clipData.userId !== user?.uid) {
       showNotification('You can only delete your own clips!', 'error');
       return;
     }
@@ -965,7 +939,7 @@ showNotification(
 };
 
 const handleUnlikeClip = async (clipId) => {
-  if (!user.uid) return;
+  if (!user?.uid) return;
   
   try {
     const { db } = await import('../lib/firebase');
@@ -975,7 +949,7 @@ const handleUnlikeClip = async (clipId) => {
       likes: increment(-1)
     });
 
-    await setDoc(doc(db, 'userLikes', user.uid), {
+    await setDoc(doc(db, 'userLikes', user?.uid), {
       likedClips: arrayRemove(clipId)
     }, { merge: true });
 
@@ -1010,7 +984,7 @@ const handleUnlikeClip = async (clipId) => {
   };
 
   const handleChangeUsername = async () => {
-  if (!user.uid) {
+  if (!user?.uid) {
     showNotification('Please sign in first!', 'error');
     return;
   }
@@ -1034,7 +1008,7 @@ const handleUnlikeClip = async (clipId) => {
     const { db } = await import('../lib/firebase');
     const { doc, updateDoc } = await import('firebase/firestore');
     
-    await updateDoc(doc(db, 'users', user.uid), {
+    await updateDoc(doc(db, 'users', user?.uid), {
       displayName: newName
     });
     
@@ -1251,7 +1225,7 @@ const handleUnlikeClip = async (clipId) => {
       
       {/* Auth section */}
       <div className="flex items-center gap-2">
-        {user.uid ? (
+        {user?.uid ? (
           <>
             <span className="text-sm sm:text-base font-semibold hidden md:inline truncate max-w-[150px]">
               Hey there, {user.displayName}!
@@ -1296,7 +1270,7 @@ const handleUnlikeClip = async (clipId) => {
   </span>
 )}
       
-      {user.isPremium && (
+      {user?.isPremium && (
         <span className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-1 whitespace-nowrap">
           <Sparkles size={14} /> PREMIUM
         </span>
@@ -1511,7 +1485,7 @@ const handleUnlikeClip = async (clipId) => {
   <RotateCcw size={28} aria-hidden="true" />
 </button>
                    
-                   {user.isPremium && (
+                   {user?.isPremium && (
   <button
     onClick={handleDownload}
     className="px-7 py-5 bg-green-700 hover:bg-green-600 rounded-xl transition"
@@ -1654,7 +1628,7 @@ const handleUnlikeClip = async (clipId) => {
       </div>
 
       {/* Delete button if user owns the clip */}
-      {clip.userId === user.uid && (
+      {clip.userId === user?.uid && (
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -1739,7 +1713,7 @@ const handleUnlikeClip = async (clipId) => {
                 </div>
               )}
 
-              {!user.isPremium && (
+              {!user?.isPremium && (
                 <div className="mt-6 p-6 bg-gradient-to-br from-purple-800 to-pink-800 rounded-2xl text-center border border-purple-500">
                   <div className="flex justify-center mb-4">
                     <Sparkles className="text-yellow-400" size={36} />

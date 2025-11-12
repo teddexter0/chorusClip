@@ -1661,71 +1661,105 @@ const handleChangeUsername = async () => {
   const firstLoop = clipLoops[0];
   
   return (
-    // Add to clip cards to make them keyboard accessible:
-<div
-  key={clip.id}
-  className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
-  role="article"
-  aria-label={`${clip.title} by ${clip.artist}`}
->
-      <div className="flex justify-between items-start mb-3">
-        <div className="flex-1">
-          <h3 className="font-bold text-xl">{clip.title}</h3>
-          <p className="text-base text-purple-300">{clip.artist}</p>
-          <p className="text-sm text-purple-400 mt-1">
-            by @{clip.createdBy} • {clipLoops.length} loop{clipLoops.length > 1 ? 's' : ''}
-            {clip.loopCount > 0 && ` • ${clip.loopCount}x`}
-          </p>
-        </div>
-        {/* Like/delete buttons */}
-
-
+  <div
+    key={clip.id}
+    className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
+    role="article"
+    aria-label={`${clip.title} by ${clip.artist}`}
+  >
+    {/* Header: title, artist, loops, delete button */}
+    <div className="flex justify-between items-start mb-3">
+      <div className="flex-1">
+        <h3 className="font-bold text-xl">{clip.title}</h3>
+        <p className="text-base text-purple-300">{clip.artist}</p>
+        <p className="text-sm text-purple-400 mt-1">
+          by @{clip.createdBy} • {clipLoops.length} loop{clipLoops.length > 1 ? 's' : ''}
+          {clip.loopCount > 0 && ` • ${clip.loopCount}x`}
+        </p>
       </div>
-      
-      {/* Show ALL loop timestamps */}
-      <div className="mb-3 space-y-1">
-        {clipLoops.map((loop, idx) => (
-          <div key={idx} className="text-sm text-purple-400">
-            Loop {idx + 1}: {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')} - {Math.floor(loop.end/60)}:{(loop.end%60).toString().padStart(2,'0')}
-          </div>
-        ))}
-      </div>
-      
-      <div className="flex justify-between items-center text-base">
-        <span className="text-purple-400 font-semibold">
-          Duration: {Math.max(0, firstLoop.end - firstLoop.start)}s per loop
-        </span>
-        <div className="flex items-center gap-4">
-          <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
-          <button 
-  onClick={() => user.likedClips.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id)}
-  className={`transition transform hover:scale-110 ${user.likedClips.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
-  aria-label={user.likedClips.includes(clip.id) ? `Unlike ${clip.title}` : `Like ${clip.title}`}
-  aria-pressed={user.likedClips.includes(clip.id)}
->
-  <Heart size={24} fill={user.likedClips.includes(clip.id) ? "currentColor" : "none"} aria-hidden="true" />
-</button>
 
-<button 
-  onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-  className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
-  aria-label={`Play ${clip.title} by ${clip.artist}`}
->
-  <Play size={16} fill="currentColor" aria-hidden="true" />
-  <span>{clip.plays || 0}</span>
-</button>
+      {/* Delete button if user owns the clip */}
+      {clip.userId === user.uid && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDeleteClip(clip.id);
+          }}
+          className="text-red-400 hover:text-red-300 transition ml-2"
+          title="Delete clip"
+        >
+          <X size={20} />
+        </button>
+      )}
+    </div>
 
-<button 
-  onClick={() => handleShareClip(clip)}
-  className="text-purple-400 hover:text-purple-300 transition"
-  aria-label={`Share ${clip.title}`}
->
-  <Share2 size={18} aria-hidden="true" />
-</button>
+    {/* Loop timestamps */}
+    <div className="mb-3 space-y-1">
+      {clipLoops.map((loop, idx) => (
+        <div key={idx} className="text-sm text-purple-400">
+          Loop {idx + 1}: {Math.floor(loop.start / 60)}:{(loop.start % 60).toString().padStart(2, '0')} -{' '}
+          {Math.floor(loop.end / 60)}:{(loop.end % 60).toString().padStart(2, '0')}
         </div>
+      ))}
+    </div>
+
+    {/* Footer: duration, like/play/share */}
+    <div className="flex justify-between items-center text-base">
+      <span className="text-purple-400 font-semibold">
+        Duration: {Math.max(0, firstLoop.end - firstLoop.start)}s per loop
+      </span>
+      <div className="flex items-center gap-4">
+        <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
+
+        {/* Like / Unlike */}
+        <button
+          onClick={() =>
+            user.likedClips.includes(clip.id)
+              ? handleUnlikeClip(clip.id)
+              : handleLikeClip(clip.id)
+          }
+          className={`transition transform hover:scale-110 ${
+            user.likedClips.includes(clip.id)
+              ? 'text-pink-500'
+              : 'text-pink-400 hover:text-pink-300'
+          }`}
+          aria-label={
+            user.likedClips.includes(clip.id)
+              ? `Unlike ${clip.title}`
+              : `Like ${clip.title}`
+          }
+          aria-pressed={user.likedClips.includes(clip.id)}
+        >
+          <Heart
+            size={24}
+            fill={user.likedClips.includes(clip.id) ? 'currentColor' : 'none'}
+            aria-hidden="true"
+          />
+        </button>
+
+        {/* Play */}
+        <button
+          onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+          className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
+          aria-label={`Play ${clip.title} by ${clip.artist}`}
+        >
+          <Play size={16} fill="currentColor" aria-hidden="true" />
+          <span>{clip.plays || 0}</span>
+        </button>
+
+        {/* Share */}
+        <button
+          onClick={() => handleShareClip(clip)}
+          className="text-purple-400 hover:text-purple-300 transition"
+          aria-label={`Share ${clip.title}`}
+        >
+          <Share2 size={18} aria-hidden="true" />
+        </button>
       </div>
     </div>
-  );
+  </div>
+);
+
 })}
                 </div>
               )}

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Mail, Lock, User, Phone, CheckCircle, XCircle, Users } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Mail, Lock, User, Phone, CheckCircle, XCircle, Users, TrendingUp, Music } from 'lucide-react';
 // NOTIFICATION COMPONENT
 const Notification = ({ message, type, onClose }) => {
   const bgColor = type === 'success' ? 'from-green-600 to-green-700' : type === 'error' ? 'from-red-600 to-red-700' : 'from-blue-600 to-blue-700';
@@ -276,29 +276,6 @@ const PaymentModal = ({ onClose, userEmail, onSuccess }) => {
       </div>
     </div>
   );
-};
-
-// username change
-const handleChangeUsername = async () => {
-  const newName = prompt('Enter new display name (3-20 characters):');
-  if (!newName || newName.length < 3 || newName.length > 20) {
-    showNotification('Invalid name. Must be 3-20 characters.', 'error');
-    return;
-  }
-  
-  try {
-    const { db } = await import('../lib/firebase');
-    const { doc, updateDoc } = await import('firebase/firestore');
-    
-    await updateDoc(doc(db, 'users', user.uid), {
-      displayName: newName
-    });
-    
-    setUser(prev => ({ ...prev, displayName: newName }));
-    showNotification('✅ Username updated!', 'success');
-  } catch (error) {
-    showNotification('Failed to update username', 'error');
-  }
 };
 
 export default function ChorusClipModern() {
@@ -1030,23 +1007,7 @@ const handleUnlikeClip = async (clipId) => {
     }
   };
 
-  useEffect(() => {
-    const tag = document.createElement('script');
-    tag.src = 'https://www.youtube.com/iframe_api';
-    const firstScriptTag = document.getElementsByTagName('script')[0];
-    if (firstScriptTag?.parentNode) {
-      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-    }
-
-    window.onYouTubeIframeAPIReady = () => console.log('YouTube API Ready');
-
-    return () => {
-      stopTimeTracking();
-      if (playerRef.current?.destroy) playerRef.current.destroy();
-      if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-    };
-  }, []);
-const handleChangeUsername = async () => {
+  const handleChangeUsername = async () => {
   if (!user.uid) {
     showNotification('Please sign in first!', 'error');
     return;
@@ -1061,7 +1022,6 @@ const handleChangeUsername = async () => {
     return;
   }
   
-  // Check for valid characters
   const validPattern = /^[a-zA-Z0-9_\s]+$/;
   if (!validPattern.test(newName)) {
     showNotification('Only letters, numbers, underscores, and spaces allowed.', 'error');
@@ -1083,6 +1043,22 @@ const handleChangeUsername = async () => {
     showNotification('❌ Failed to update username', 'error');
   }
 };
+  useEffect(() => {
+    const tag = document.createElement('script');
+    tag.src = 'https://www.youtube.com/iframe_api';
+    const firstScriptTag = document.getElementsByTagName('script')[0];
+    if (firstScriptTag?.parentNode) {
+      firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    }
+
+    window.onYouTubeIframeAPIReady = () => console.log('YouTube API Ready');
+
+    return () => {
+      stopTimeTracking();
+      if (playerRef.current?.destroy) playerRef.current.destroy();
+      if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+    };
+  }, []); 
   
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-purple-800 text-white relative overflow-hidden">

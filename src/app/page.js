@@ -2,129 +2,37 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Mail, Lock, User, Phone, CheckCircle, XCircle, Users, TrendingUp, Music } from 'lucide-react';
-import Notification from '@/components/ui/Notification';
-import { useAuth } from '@/hooks/useAuth'; 
 
-// PAYMENT MODAL
-const PaymentModal = ({ onClose, userEmail, onSuccess }) => {
-  const [phone, setPhone] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+// Use relative imports instead of @/
+import Notification from '../components/ui/Notifications';
+import AuthModal from '../components/ui/AuthModal';
+import PaymentModal from '../components/ui/PaymentModal';
+import TutorialModal from '../components/ui/TutorialModal';
+import PlaylistModal from '../components/ui/PlaylistModal';
+import { useAuth } from '../hooks/useAuth';
 
-  const formatPhone = (value) => {
-    let cleaned = value.replace(/\D/g, '');
-    if (cleaned.startsWith('0')) {
-      cleaned = '254' + cleaned.substring(1);
-    } else if (cleaned.startsWith('7')) {
-      cleaned = '254' + cleaned;
-    } else if (cleaned.startsWith('+254')) {
-      cleaned = cleaned.substring(1);
-    } else if (!cleaned.startsWith('254')) {
-      cleaned = '254' + cleaned;
-    }
-    return cleaned.substring(0, 12);
-  };
+import AudioVisualizer from '../components/ui/AudioVisualizer';
+import BackgroundAmbience from '../components/ui/BackgroundAmbience';
+import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists } from '../utils/playlistUtils';
+import { getArtistImageWithCache } from '../utils/spotifyUtils';
+import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    const formattedPhone = formatPhone(phone);
-    if (!formattedPhone.match(/^254\d{9}$/)) {
-      setError('Invalid phone number. Use format: 0712345678 or 712345678');
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const response = await fetch('/api/payment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: userEmail,
-          amount: 299,
-          email: userEmail,
-          phone: formattedPhone
-        })
-      });
-
-      const data = await response.json();
-      
-      if (data.success && data.iframeUrl) {
-        window.location.href = data.iframeUrl;
-      } else {
-        setError(`❌ ${data.error || 'Payment initiation failed. Please try again.'}`);
-        setLoading(false);
-      }
-    } catch (error) {
-      setError('❌ Payment error. Please try again later.');
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
-      <div className="bg-gradient-to-br from-purple-900 to-pink-900 rounded-3xl p-8 max-w-md w-full border border-yellow-500">
-        <button onClick={onClose} className="float-right text-white hover:text-purple-300 transition">
-          <X size={32} />
-        </button>
-        
-        <h2 className="text-4xl font-black mb-4">Upgrade to Premium</h2>
-        <p className="text-purple-200 mb-6 text-lg">KES 299/month - Cancel anytime</p>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-base font-bold text-purple-300 mb-2">M-Pesa Phone Number</label>
-            <div className="relative">
-              <Phone className="absolute left-3 top-4 text-purple-400" size={22} />
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="0712345678"
-                className="w-full pl-12 pr-4 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                required
-              />
-            </div>
-            <p className="text-sm text-purple-300 mt-2">
-              Format: 0712345678 or 712345678 (we'll add +254)
-            </p>
-          </div>
-
-          {error && (
-            <div className="bg-red-900 bg-opacity-50 border border-red-500 rounded-xl p-4 text-base">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-5 text-xl bg-gradient-to-r from-yellow-400 to-orange-500 text-black rounded-xl font-bold hover:shadow-2xl transition disabled:opacity-50"
-          >
-            {loading ? 'Processing...' : 'Pay KES 299'}
-          </button>
-        </form>
-
-        <p className="text-sm text-purple-300 text-center mt-4">
-          You'll be redirected to Pesapal to complete payment
-        </p>
-      </div>
-    </div>
-  );
-};
 
 export default function ChorusClipModern() { 
   // Use auth hook instead of local state
   const { user, setUser, checkAuthState } = useAuth();
 
-  // Playlist states
-  const [playlists, setPlaylists] = useState([]);
+  // Playlist states 
   const [currentPlaylist, setCurrentPlaylist] = useState(null);
-  const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState(0);
-  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
-  const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]); 
+  const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState(0); 
+const [playlists, setPlaylists] = useState([]);
+const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]);
+const [showPlaylistModal, setShowPlaylistModal] = useState(false);
+const [currentPlaylistPlayer, setCurrentPlaylistPlayer] = useState(null);
+const [isPlayingPlaylist, setIsPlayingPlaylist] = useState(false);
+const [currentPlaylistInfo, setCurrentPlaylistInfo] = useState(null);
+const [artistImages, setArtistImages] = useState({});
+const [publicPlaylists, setPublicPlaylists] = useState([]);
 
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
@@ -172,20 +80,29 @@ const songsRemaining = user ? songsLimit - user.songsToday : 0;
     setNotification({ message, type });
   };
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const isFirstVisit = !localStorage.getItem('tutorialSeen');
-      if (isFirstVisit) {
-        setTimeout(() => setShowTutorial(true), 500);
-        localStorage.setItem('tutorialSeen', 'true');
-      }
-
-      loadTrendingClips();
-      loadLeaderboard();
-      loadTrendingData();
-      checkAuthState();
+  
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    const isFirstVisit = !localStorage.getItem('tutorialSeen');
+    if (isFirstVisit) {
+      setTimeout(() => setShowTutorial(true), 500);
+      localStorage.setItem('tutorialSeen', 'true');
     }
-  }, []);
+
+    loadTrendingClips();
+    loadLeaderboard();
+    loadTrendingData();
+    loadPublicPlaylists(); // ADD THIS
+    checkAuthState();
+  }
+}, []);
+
+
+useEffect(() => {
+  if (topArtists.length > 0) {
+    loadArtistImages();
+  }
+}, [topArtists]);
 
   const loadTrendingClips = async () => {
     try {
@@ -319,6 +236,109 @@ const loadYouTubePlayer = (id) => {
   }
 };
 
+
+const loadUserPlaylists = async () => {
+  if (!user?.uid) return;
+  try {
+    const userPlaylists = await getUserPlaylists(user.uid);
+    setPlaylists(userPlaylists);
+  } catch (error) {
+    console.error('Failed to load playlists:', error);
+  }
+};
+
+const loadPublicPlaylists = async () => {
+  try {
+    const publicLists = await getAllPublicPlaylists();
+    setPublicPlaylists(publicLists);
+  } catch (error) {
+    console.error('Failed to load public playlists:', error);
+  }
+};
+
+const handleCreatePlaylist = async () => {
+  const nameInput = document.getElementById('playlist-name-input');
+  const name = nameInput?.value?.trim();
+  
+  if (!name) {
+    showNotification('Enter a playlist name!', 'error');
+    return;
+  }
+  
+  if (selectedClipsForPlaylist.length === 0) {
+    showNotification('Add at least one clip!', 'error');
+    return;
+  }
+  
+  if (!user?.uid) {
+    showNotification('Sign in to create playlists!', 'error');
+    setShowAuthModal(true);
+    return;
+  }
+  
+  try {
+    await createPlaylist(user.uid, name, selectedClipsForPlaylist);
+    showNotification('🎉 Playlist created!', 'success');
+    setShowPlaylistModal(false);
+    setSelectedClipsForPlaylist([]);
+    if (nameInput) nameInput.value = '';
+    loadUserPlaylists();
+  } catch (error) {
+    console.error('Playlist creation error:', error);
+    showNotification('Failed to create playlist', 'error');
+  }
+};
+
+const handlePlayPlaylist = (playlist) => {
+  if (!playlist.clips || playlist.clips.length === 0) {
+    showNotification('This playlist is empty!', 'error');
+    return;
+  }
+
+  // Stop any existing playlist
+  if (currentPlaylistPlayer) {
+    currentPlaylistPlayer.stop();
+  }
+
+  const player = new PlaylistPlayer(playlist, playerRef, {
+    onClipChange: (clip, index, total) => {
+      setCurrentPlaylistInfo({
+        name: playlist.name,
+        currentIndex: index,
+        total: total,
+        currentClip: clip
+      });
+      setLoops(clip.loops);
+      setLoopCount(clip.loopCount || 1);
+      setVideoTitle(clip.title);
+      setArtist(clip.artist);
+    },
+    onPlaylistComplete: () => {
+      setIsPlayingPlaylist(false);
+      setCurrentPlaylistInfo(null);
+      setCurrentPlaylistPlayer(null);
+    },
+    showNotification
+  });
+
+  setCurrentPlaylistPlayer(player);
+  setIsPlayingPlaylist(true);
+  player.playNext();
+  showNotification(`▶️ Playing: ${playlist.name}`, 'success');
+};
+
+const loadArtistImages = async () => {
+  const uniqueArtists = [...new Set(topArtists.map(a => a.artist))];
+  
+  for (const artist of uniqueArtists) {
+    if (!artistImages[artist]) {
+      const imageUrl = await getArtistImageWithCache(artist);
+      setArtistImages(prev => ({ ...prev, [artist]: imageUrl }));
+    }
+  }
+};
+
+
   const onPlayerReady = (event) => {
   const title = event.target.getVideoData().title;
   setVideoTitle(title);
@@ -339,11 +359,11 @@ const loadYouTubePlayer = (id) => {
   
   // COMPLETE REPLACEMENT for startTimeTracking function:
 
-const startTimeTracking = () => {
+  const startTimeTracking = () => {
   if (intervalRef.current) clearInterval(intervalRef.current);
   
   intervalRef.current = setInterval(() => {
-    if (!playerRef.current || !playerRef.current.getCurrentTime || !playerRef.current.getPlayerState) {
+    if (!playerRef.current?.getCurrentTime || !playerRef.current?.getPlayerState) {
       return;
     }
     
@@ -353,49 +373,29 @@ const startTimeTracking = () => {
       
       setPlayerCurrentTime(time);
       
-      // Only track when actually PLAYING
-      if (state !== window.YT.PlayerState.PLAYING) {
-        return;
-      }
+      if (state !== window.YT.PlayerState.PLAYING) return;
       
-      // Validate we have loops
-      if (!loops || loops.length === 0 || !loops[currentLoopIndex]) {
-        console.error('No valid loops to track');
-        return;
-      }
+      if (!loops || loops.length === 0 || !loops[currentLoopIndex]) return;
       
       const currentLoop = loops[currentLoopIndex];
       
-      // Check if we've passed the END of current loop
-      if (time >= currentLoop.end - 0.3) {
-        console.log(`🔄 Loop ${currentLoopIndex + 1}/${loops.length} ended at ${time.toFixed(1)}s`);
+      // INCREASED BUFFER for short clips
+      const buffer = currentLoop.end - currentLoop.start < 15 ? 0.5 : 0.3;
+      
+      if (time >= currentLoop.end - buffer) {
+        console.log(`🔄 Loop ended at ${time.toFixed(1)}s`);
         
-        // Are we on the LAST loop in the sequence?
+        // Force seek with allowSeekAhead=true
+        playerRef.current.seekTo(currentLoop.start, true);
+        
         if (currentLoopIndex < loops.length - 1) {
-          // Move to NEXT loop
-          const nextIndex = currentLoopIndex + 1;
-          setCurrentLoopIndex(nextIndex);
-          playerRef.current.seekTo(loops[nextIndex].start, true);
-          console.log(`➡️ Moving to loop ${nextIndex + 1} at ${loops[nextIndex].start}s`);
+          setCurrentLoopIndex(currentLoopIndex + 1);
         } else {
-          // We finished ALL loops - check if we should repeat
           const newIteration = currentLoopIteration + 1;
-          
-          // If loopCount is 0, loop forever
-          if (loopCount === 0) {
-            console.log(`🔁 Infinite loop - restarting sequence (iteration ${newIteration})`);
+          if (loopCount === 0 || newIteration < loopCount) {
             setCurrentLoopIteration(newIteration);
             setCurrentLoopIndex(0);
-            playerRef.current.seekTo(loops[0].start, true);
-          } else if (newIteration < loopCount) {
-            // Haven't reached limit yet
-            console.log(`🔁 Iteration ${newIteration}/${loopCount} - restarting`);
-            setCurrentLoopIteration(newIteration);
-            setCurrentLoopIndex(0);
-            playerRef.current.seekTo(loops[0].start, true);
           } else {
-            // Reached the limit - STOP
-            console.log(`✅ Completed ${loopCount} iterations - STOPPING`);
             playerRef.current.pauseVideo();
             setCurrentLoopIteration(0);
             setCurrentLoopIndex(0);
@@ -406,7 +406,7 @@ const startTimeTracking = () => {
     } catch (e) {
       console.error('Tracking error:', e);
     }
-  }, 200); // Check every 200ms
+  }, 100); // Reduced from 200ms to 100ms for tighter loops
 };
 
   const stopTimeTracking = () => {
@@ -816,30 +816,32 @@ const handleUnlikeClip = async (clipId) => {
   }
   
   const newName = prompt('Enter new display name (3-20 characters):');
-  
-  if (!newName) return; // User cancelled
-  
-  if (newName.length < 3 || newName.length > 20) {
+  if (!newName || newName.length < 3 || newName.length > 20) {
     showNotification('Invalid name. Must be 3-20 characters.', 'error');
-    return;
-  }
-  
-  const validPattern = /^[a-zA-Z0-9_\s]+$/;
-  if (!validPattern.test(newName)) {
-    showNotification('Only letters, numbers, underscores, and spaces allowed.', 'error');
     return;
   }
   
   try {
     const { db } = await import('../lib/firebase');
-    const { doc, updateDoc } = await import('firebase/firestore');
+    const { doc, updateDoc, collection, query, where, getDocs, writeBatch } = await import('firebase/firestore');
     
-    await updateDoc(doc(db, 'users', user?.uid), {
+    // Update user document
+    await updateDoc(doc(db, 'users', user.uid), {
       displayName: newName
     });
     
+    // Update ALL clips by this user (BATCH UPDATE)
+    const clipsQuery = query(collection(db, 'clips'), where('userId', '==', user.uid));
+    const clipsSnapshot = await getDocs(clipsQuery);
+    
+    const batch = writeBatch(db);
+    clipsSnapshot.docs.forEach((clipDoc) => {
+      batch.update(clipDoc.ref, { createdBy: newName });
+    });
+    await batch.commit();
+    
     setUser(prev => ({ ...prev, displayName: newName }));
-    showNotification('✅ Username updated!', 'success');
+    showNotification('✅ Username updated everywhere!', 'success');
   } catch (error) {
     console.error('Username update error:', error);
     showNotification('❌ Failed to update username', 'error');
@@ -877,66 +879,152 @@ const handleUnlikeClip = async (clipId) => {
         <div className="absolute bottom-20 left-40 w-72 h-72 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-4000"></div>
       </div>
 
-      <style jsx>{`
-        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Poppins:wght@400;500;600;700;800&display=swap');
-        * { 
-          font-family: 'Poppins', 'Montserrat', sans-serif;
-          letter-spacing: -0.02em;
-        }
-        h1, h2, h3 {
-          font-family: 'Montserrat', sans-serif;
-          font-weight: 800;
-        }
-        @keyframes blob {
-          0%, 100% { transform: translate(0px, 0px) scale(1); }
-          33% { transform: translate(30px, -50px) scale(1.1); }
-          66% { transform: translate(-20px, 20px) scale(0.9); }
-        }
-        .animate-blob { animation: blob 7s infinite; }
-        .animation-delay-2000 { animation-delay: 2s; }
-        .animation-delay-4000 { animation-delay: 4s; }
-        @keyframes pulse-glow {
-          0%, 100% { box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); }
-          50% { box-shadow: 0 0 40px rgba(168, 85, 247, 0.8); }
-        }
-        .pulse-glow { animation: pulse-glow 2s infinite; }
-        @keyframes slideIn {
-          from { transform: translateX(100%); opacity: 0; }
-          to { transform: translateX(0); opacity: 1; }
-        }
-        .animate-slideIn { animation: slideIn 0.3s ease-out; }
-        
-        input[type="range"] {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 100%;
-          height: 10px;
-          background: linear-gradient(to right, #a855f7 0%, #ec4899 100%);
-          border-radius: 10px;
-          outline: none;
-          opacity: 0.9;
-        }
-        input[type="range"]::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          appearance: none;
-          width: 28px;
-          height: 28px;
-          background: #fff;
-          border: 4px solid #a855f7;
-          border-radius: 50%;
-          cursor: pointer;
-          box-shadow: 0 0 12px rgba(168, 85, 247, 0.8);
-        }
-        input[type="range"]::-moz-range-thumb {
-          width: 28px;
-          height: 28px;
-          background: #fff;
-          border: 4px solid #a855f7;
-          border-radius: 50%;
-          cursor: pointer;
-          box-shadow: 0 0 12px rgba(168, 85, 247, 0.8);
-        }
-      `}</style>
+<style jsx>{`
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+* { 
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+h1, h2, h3 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* PRIMARY BUTTON */
+.btn-primary {
+  background: rgba(255, 255, 255, 0.95);
+  color: #1a1a1a;
+  border: none;
+  padding: 14px 32px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.btn-primary:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: translateY(-2px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 14px 32px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.btn-success {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  padding: 14px 32px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2), 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+
+.btn-success:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 2px 4px rgba(16, 185, 129, 0.2), 0 8px 24px rgba(16, 185, 129, 0.4);
+}
+
+.btn-danger {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+  border: none;
+  padding: 14px 32px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(239, 68, 68, 0.2), 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 20px;
+  padding: 32px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 10px 20px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 12px rgba(0, 0, 0, 0.1), 0 16px 32px rgba(0, 0, 0, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.input {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-size: 15px;
+  color: white;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  backdrop-filter: blur(10px);
+  font-weight: 500;
+}
+
+.input::placeholder { color: rgba(255, 255, 255, 0.5); }
+
+.input:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.1);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  padding: 6px 14px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+}
+
+@keyframes blob {
+  0%, 100% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(30px, -50px) scale(1.1); }
+  66% { transform: translate(-20px, 20px) scale(0.9); }
+}
+.animate-blob { animation: blob 7s infinite; }
+.animation-delay-2000 { animation-delay: 2s; }
+.animation-delay-4000 { animation-delay: 4s; }
+`}</style>
 
       {notification && (
         <Notification 
@@ -956,52 +1044,17 @@ const handleUnlikeClip = async (clipId) => {
         />
       )}
 
-      {showPaymentModal && (
-        <PaymentModal
-          onClose={() => setShowPaymentModal(false)}
-          userEmail={user.email}
-          onSuccess={(msg) => showNotification(msg, 'success')}
-        />
-      )}
 
-      {showTutorial && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-6 sm:p-8 max-w-2xl w-full relative border border-purple-500 my-8 max-h-[90vh] overflow-y-auto">
-            <button onClick={() => setShowTutorial(false)} className="absolute top-4 right-4 text-white hover:text-purple-300 transition z-10">
-              <X size={32} />
-            </button>
-            <h2 className="text-3xl sm:text-4xl font-bold mb-6 flex items-center gap-3 pr-12">
-              <Sparkles className="text-yellow-400 flex-shrink-0" size={36} />
-              <span>Welcome to ChorusClip!</span>
-            </h2>
-            <div className="bg-black bg-opacity-50 rounded-2xl p-6 sm:p-8 mb-6 flex flex-col items-center justify-center aspect-video">
-              <Video size={72} className="text-purple-400 mb-4" />
-              <p className="text-purple-300 text-center text-base sm:text-lg">Quick tutorial:<br/>1. Paste YouTube link<br/>2. Adjust loop points<br/>3. Play and enjoy!</p>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-4 text-base mb-6">
-              <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">Step 1</p>
-                <p className="text-purple-200">Paste YouTube link</p>
-              </div>
-              <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">Step 2</p>
-                <p className="text-purple-200">Auto-detect best part</p>
-              </div>
-              <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">Step 3</p>
-                <p className="text-purple-200">Loop endlessly!</p>
-              </div>
-              <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-                <p className="font-semibold mb-2 text-lg">Premium</p>
-                <p className="text-purple-200">3 loops, playlists, downloads</p>
-              </div>
-            </div>
-            <button onClick={() => setShowTutorial(false)} className="w-full py-5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-xl hover:shadow-2xl transition pulse-glow">
-              Lets Go!
-            </button>
-          </div>
-        </div>
-      )}
+{showPaymentModal && (
+  <PaymentModal
+    onClose={() => setShowPaymentModal(false)}
+    userEmail={user?.email}
+    onSuccess={(msg) => showNotification(msg, 'success')}
+  />
+)}
+
+
+{showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
 
       {showSongsWarning && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
@@ -1022,7 +1075,28 @@ const handleUnlikeClip = async (clipId) => {
           </div>
         </div>
       )}
-
+{user?.uid && playlists.length > 0 && (
+  <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
+    <h3 className="font-black text-xl mb-4">My Playlists</h3>
+    <div className="space-y-3">
+      {playlists.map((playlist) => (
+        <div key={playlist.id} className="bg-purple-900 bg-opacity-30 p-4 rounded-xl hover:bg-opacity-50 transition">
+          <div className="flex justify-between items-center mb-2">
+            <p className="font-bold text-lg">{playlist.name}</p>
+            <span className="text-purple-300 text-sm">{playlist.clips?.length || 0} songs</span>
+          </div>
+          <button
+            onClick={() => handlePlayPlaylist(playlist)}
+            className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
+          >
+            <Play size={20} fill="currentColor" />
+            Play Playlist
+          </button>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
       {showMostReplayedSuggestion && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500">
@@ -1030,7 +1104,8 @@ const handleUnlikeClip = async (clipId) => {
             <p className="text-purple-200 mb-2 text-xl">Suggested section: {Math.floor(suggestedStart/60)}:{(suggestedStart%60).toString().padStart(2,'0')} - {Math.floor(suggestedEnd/60)}:{(suggestedEnd%60).toString().padStart(2,'0')}</p>
             <p className="text-base text-purple-300 mb-6">This is typically where the chorus/hook is. You can adjust using the sliders below.</p>
             <div className="space-y-3">
-              <button onClick={applySuggestedLoop} className="w-full py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition pulse-glow">
+              <button onClick={applySuggestedLoop} 
+className="btn-primary w-full py-5 text-xl">
                 Use This Section
               </button>
               <button onClick={dismissSuggestion} className="w-full py-4 text-lg bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
@@ -1042,65 +1117,51 @@ const handleUnlikeClip = async (clipId) => {
       )}
 
       {/* ADD PLAYLIST MODAL HERE */}
+      
       {showPlaylistModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
-          <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-2xl w-full border border-purple-500">
-            <h2 className="text-3xl font-bold mb-6">Create Playlist</h2>
-            
-            <div className="space-y-4 mb-6">
-              <input
-                type="text"
-                placeholder="Playlist name (e.g., '2010s Party Mix')"
-                className="w-full px-5 py-4 bg-purple-950 border border-purple-600 rounded-xl text-white"
-                id="playlist-name-input"
-              />
-              
-              <div className="bg-purple-900 bg-opacity-30 p-4 rounded-xl max-h-60 overflow-y-auto">
-                <p className="font-bold mb-2">Selected Clips ({selectedClipsForPlaylist.length}):</p>
-                {selectedClipsForPlaylist.map((clip, idx) => (
-                  <div key={idx} className="flex justify-between items-center py-2 border-b border-purple-700">
-                    <span>{clip.title}</span>
-                    <button
-                      onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
-                      className="text-red-400"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
+  <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
+    <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-2xl w-full border border-purple-500 max-h-[90vh] overflow-y-auto">
+      <button onClick={() => setShowPlaylistModal(false)} className="float-right text-white hover:text-purple-300">
+        <X size={32} />
+      </button>
+      
+      <h2 className="text-3xl font-bold mb-6">Create Playlist</h2>
+      
+      <input
+        type="text"
+        id="playlist-name-input"
+        placeholder="Playlist name (e.g., '2010s Party Mix')"
+ 
+className="btn-secondary px-5 py-4"     />
+      
+      <div className="bg-purple-900 bg-opacity-30 p-4 rounded-xl max-h-60 overflow-y-auto mb-6">
+        <p className="font-bold mb-3">Selected Clips ({selectedClipsForPlaylist.length}):</p>
+        {selectedClipsForPlaylist.map((clip, idx) => (
+          <div key={idx} className="flex justify-between items-center py-3 border-b border-purple-700">
+            <div className="flex-1">
+              <p className="font-semibold">{idx + 1}. {clip.title}</p>
+              <p className="text-sm text-purple-300">{clip.artist}</p>
             </div>
-            
-            <div className="flex gap-3">
-              <button
-                onClick={async () => {
-                  const name = document.getElementById('playlist-name-input').value;
-                  if (!name || selectedClipsForPlaylist.length === 0) {
-                    showNotification('Add clips and enter a name!', 'error');
-                    return;
-                  }
-                  
-                  const { createPlaylist } = await import('../lib/playlistUtils');
-                  await createPlaylist(user?.uid, name, selectedClipsForPlaylist);
-                  showNotification('🎉 Playlist created!', 'success');
-                  setShowPlaylistModal(false);
-                  setSelectedClipsForPlaylist([]);
-                }}
-                className="flex-1 py-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold"
-              >
-                Create Playlist
-              </button>
-              <button
-                onClick={() => setShowPlaylistModal(false)}
-                className="px-6 py-4 bg-purple-800 rounded-xl"
-              >
-                Cancel
-              </button>
-            </div>
+            <button
+              onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
+              className="text-red-400 hover:text-red-300 ml-3"
+            >
+              <X size={20} />
+            </button>
           </div>
-        </div>
-      )}
-
+        ))}
+      </div>
+      
+      <button
+        onClick={handleCreatePlaylist}
+        
+className="btn-primary w-full py-5 text-xl"
+      >
+        Create Playlist
+      </button>
+    </div>
+  </div>
+)}
 <header className="border-b border-purple-700 border-opacity-50 bg-black bg-opacity-20 backdrop-blur-md relative z-10 sticky top-0">
   <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
     {/* Top row: Logo and Auth */}
@@ -1165,21 +1226,12 @@ const handleUnlikeClip = async (clipId) => {
   </div>
 </header>
 
-{selectedClipsForPlaylist.length > 0 && (
-  <button
-    onClick={() => setShowPlaylistModal(true)}
-    className="fixed bottom-8 right-8 bg-gradient-to-r from-green-500 to-blue-500 text-white px-6 py-4 rounded-full shadow-2xl z-40 flex items-center gap-2 font-bold"
-  >
-    <Plus size={24} />
-    Create Playlist ({selectedClipsForPlaylist.length})
-  </button>
-)}
-
+      {/* Main content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 relative z-10">
         <div className="grid lg:grid-cols-2 gap-8">
           <div className="space-y-6">
-            <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 sm:p-8 border border-purple-700 border-opacity-50">
-              <div className="flex justify-between items-center mb-6">
+            <div 
+className="card">          <div className="flex justify-between items-center mb-6">
                 <h2 className="text-3xl font-black tracking-tight">Create Loop</h2>
                 <button onClick={() => setShowTutorial(true)} className="text-purple-400 hover:text-purple-300 transition flex items-center gap-2 text-base">
                   <Video size={22} /> Help
@@ -1195,28 +1247,36 @@ const handleUnlikeClip = async (clipId) => {
                     onChange={(e) => setYoutubeUrl(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleUrlSubmit()}
                     placeholder="https://youtube.com/watch?v=..."
-                    className="w-full px-5 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-400 transition"
-                  />
+className="input"/>
                 </div>
                 <button
                   onClick={handleUrlSubmit}
-                  className="w-full py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition pulse-glow"
-                >
+                 
+className="btn-primary w-full py-5 text-xl"            >
                   Load Song
                 </button>
               </div>
 
               {videoId && (
                 <div className="mt-6 space-y-6"> 
-<div id="youtube-player" className="w-full aspect-video bg-black rounded-2xl overflow-hidden border border-purple-700 hidden"></div>
-  
+                
+<div className="relative">
+  <div id="youtube-player" className="absolute opacity-0 pointer-events-none"></div>
+  <AudioVisualizer
+    isPlaying={isPlaying}
+    currentTime={playerCurrentTime}
+    loopDuration={loops[currentLoopIndex]?.end - loops[currentLoopIndex]?.start || 30}
+    title={videoTitle}
+  />
+</div>
+{/*   
 <div className="w-full aspect-video bg-gradient-to-br from-purple-900 to-pink-900 rounded-2xl flex items-center justify-center border border-purple-700">
   <div className="text-center">
     <Music size={64} className="mx-auto mb-4 text-purple-400" />
     <p className="text-xl font-bold">Audio Only Mode</p>
     <p className="text-purple-300">Video hidden to maintain focus</p>
   </div>
-</div>                  
+</div>                   */}
                   {videoTitle && (
                     <div className="text-center">
                       <p className="font-bold text-2xl">{videoTitle}</p>
@@ -1236,8 +1296,8 @@ const handleUnlikeClip = async (clipId) => {
              <select
   value={loopCount}
   onChange={(e) => setLoopCount(Number(e.target.value))}
-  className="w-full px-5 py-4 text-lg bg-purple-950 bg-opacity-70 border border-purple-600 rounded-xl text-white font-semibold focus:outline-none focus:ring-2 focus:ring-purple-500"
-  aria-label="Number of loop repetitions"
+  
+className="btn-secondary px-5 py-4" aria-label="Number of loop repetitions"
 >
   <option value={0}>Infinite Loop</option>
   <option value={1}>1 time</option>
@@ -1367,13 +1427,69 @@ const handleUnlikeClip = async (clipId) => {
                   <div className="flex gap-3 flex-wrap">
                     <button
   onClick={togglePlayPause}
-  className="flex-1 min-w-[200px] py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl flex items-center justify-center gap-2 font-bold hover:shadow-xl transition"
-  aria-label={isPlaying ? 'Pause playback' : 'Play loop'}
+  
+className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justify-center gap-2"
+ aria-label={isPlaying ? 'Pause playback' : 'Play loop'}
   aria-pressed={isPlaying}
 >
   {isPlaying ? <Pause size={28} aria-hidden="true" /> : <Play size={28} aria-hidden="true" />}
   {isPlaying ? 'Pause' : 'Play'}
 </button>
+{/* // 8. ADD PLAYLIST CONTROLS */}
+{isPlayingPlaylist && currentPlaylistInfo && (
+  <div className="bg-gradient-to-r from-purple-800 to-pink-800 p-6 rounded-2xl border border-purple-500">
+    <p className="text-sm font-bold text-purple-300 mb-2">NOW PLAYING PLAYLIST</p>
+    <p className="text-2xl font-black mb-1">{currentPlaylistInfo.name}</p>
+    <p className="text-lg text-purple-200 mb-4">
+      {currentPlaylistInfo.currentIndex + 1} / {currentPlaylistInfo.total}: {currentPlaylistInfo.currentClip.title}
+    </p>
+    
+    <div className="flex gap-3 flex-wrap">
+      <button
+        onClick={() => currentPlaylistPlayer?.previous()}
+        className="px-5 py-3 bg-purple-700 rounded-xl hover:bg-purple-600 transition"
+      >
+        <SkipBack size={24} />
+      </button>
+      
+      <button
+        onClick={() => currentPlaylistPlayer?.skip()}
+        className="px-5 py-3 bg-purple-700 rounded-xl hover:bg-purple-600 transition"
+      >
+        <SkipForward size={24} />
+      </button>
+      
+      <button
+        onClick={() => currentPlaylistPlayer?.shuffle()}
+        className="px-5 py-3 bg-purple-700 rounded-xl hover:bg-purple-600 transition"
+      >
+        <Shuffle size={24} />
+      </button>
+      
+      <button
+        onClick={() => currentPlaylistPlayer?.toggleRepeat()}
+        className={`px-5 py-3 rounded-xl transition ${
+          currentPlaylistPlayer?.repeatPlaylist 
+            ? 'bg-pink-600 hover:bg-pink-500' 
+            : 'bg-purple-700 hover:bg-purple-600'
+        }`}
+      >
+        <Repeat size={24} />
+      </button>
+      
+      <button
+        onClick={() => {
+          currentPlaylistPlayer?.stop();
+          setIsPlayingPlaylist(false);
+          setCurrentPlaylistInfo(null);
+        }}
+        className="px-5 py-3 bg-red-700 rounded-xl hover:bg-red-600 transition"
+      >
+        Stop Playlist
+      </button>
+    </div>
+  </div>
+)}
 <button
   onClick={handleLoopRestart}
   className="px-7 py-5 bg-purple-800 bg-opacity-70 hover:bg-opacity-90 rounded-xl transition"
@@ -1491,8 +1607,8 @@ const handleUnlikeClip = async (clipId) => {
           </div>
 
           <div className="space-y-6">
-            <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 sm:p-8 border border-purple-700 border-opacity-50">
-              <h2 className="text-3xl font-black tracking-tight mb-6">Trending Clips</h2>
+            <div 
+className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trending Clips</h2>
               
               {clips.length === 0 ? (
                 <div className="text-center py-12 text-purple-300">
@@ -1605,9 +1721,14 @@ const handleUnlikeClip = async (clipId) => {
         </button>
 
         {/* Add to Playlist */}
-<button
+        <button
   onClick={(e) => {
     e.stopPropagation();
+    if (!user?.uid) {
+      showNotification('Sign in to create playlists!', 'error');
+      setShowAuthModal(true);
+      return;
+    }
     setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
     showNotification('Added to playlist queue!', 'success');
   }}
@@ -1707,18 +1828,50 @@ const handleUnlikeClip = async (clipId) => {
     <Music size={24} className="text-pink-400" />
     Top Artists
   </h3>
-  {topArtists.map((item, idx) => (
-    <div key={idx} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl mb-2">
-      <div>
-        <p className="font-bold">{idx + 1}. {item.artist}</p>
+  <div className="space-y-3">
+    {topArtists.map((item, idx) => (
+      <div key={idx} className="flex items-center gap-4 bg-purple-900 bg-opacity-30 p-4 rounded-xl hover:bg-opacity-50 transition group">
+        <span className="text-2xl font-bold text-purple-400 w-8">{idx + 1}</span>
+        
+        {/* Artist Image */}
+        <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-purple-600 group-hover:border-yellow-400 transition flex-shrink-0">
+          {artistImages[item.artist] ? (
+            <img
+              src={artistImages[item.artist]}
+              alt={item.artist}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
+              <Music size={32} className="text-white" />
+            </div>
+          )}
+        </div>
+        
+        <div className="flex-1">
+          <p className="font-bold text-lg">{item.artist}</p>
+          <p className="text-sm text-purple-300">{item.clips} clips</p>
+        </div>
+        
+        <span className="text-pink-400 font-bold">{item.clips}</span>
       </div>
-      <span className="text-pink-400 font-bold">{item.clips} clips</span>
-    </div>
-  ))}
+    ))}
+  </div>
 </div>
           </div>
         </div>
-      </div>
+      
+      
+
+{selectedClipsForPlaylist.length > 0 && (
+  <button
+    onClick={() => setShowPlaylistModal(true)}
+    className="fixed bottom-8 right-8 bg-gradient-to-r from-green-500 to-blue-500 text-white px-6 py-4 rounded-full shadow-2xl z-40 flex items-center gap-2 font-bold animate-pulse"
+  >
+    <Plus size={24} />
+    Create Playlist ({selectedClipsForPlaylist.length})
+  </button>
+)}</div>
     </div>
   );
 };

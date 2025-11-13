@@ -16,7 +16,8 @@ export default function AuthModal({ onClose, onSuccess }) {
     setError('');
 
     try {
-      const { signInUser, signUpUser, sendPasswordResetEmail } = await import('@/lib/firebase');
+      // Use relative path
+      const { signInUser, signUpUser, sendPasswordResetEmail } = await import('../../lib/firebase');
       
       if (mode === 'signin') {
         await signInUser(email, password);
@@ -36,7 +37,7 @@ export default function AuthModal({ onClose, onSuccess }) {
     } finally {
       setLoading(false);
     }
-  };
+  }; 
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">

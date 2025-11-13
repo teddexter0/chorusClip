@@ -40,7 +40,7 @@
     "src/lib/firebase.js",
     "src/app/page.js",
     "src/types/index.js"
-  ],
+, "src/components/ui/PaymentModal.jsx"  ],
   "exclude": [
     "node_modules"
   ]

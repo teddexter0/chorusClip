@@ -11,14 +11,15 @@ export function useAuth() {
     accountCreatedDaysAgo: 0,
     likedClips: []
   });
-
+ 
   useEffect(() => {
     checkAuthState();
   }, []);
 
   const checkAuthState = async () => {
     try {
-      const { auth, getUserData, db, checkAndResetDailyLimit } = await import('@/lib/firebase');
+      // Use relative path
+      const { auth, getUserData, db, checkAndResetDailyLimit } = await import('../lib/firebase');
       const { onAuthStateChanged } = await import('firebase/auth');
       const { doc, getDoc } = await import('firebase/firestore');
 

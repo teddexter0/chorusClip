@@ -84,6 +84,11 @@ input[type="range"]::-moz-range-thumb {
   border-width: 0;
 }
 
+.grid.lg\:grid-cols-2 {
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+}
+
 .focus\:not-sr-only:focus {
   position: static;
   width: auto;

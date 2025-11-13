@@ -2,171 +2,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Mail, Lock, User, Phone, CheckCircle, XCircle, Users, TrendingUp, Music } from 'lucide-react';
-// NOTIFICATION COMPONENT
-const Notification = ({ message, type, onClose }) => {
-  const bgColor = type === 'success' ? 'from-green-600 to-green-700' : type === 'error' ? 'from-red-600 to-red-700' : 'from-blue-600 to-blue-700';
-  const Icon = type === 'success' ? CheckCircle : type === 'error' ? XCircle : AlertCircle;
-
-  useEffect(() => {
-    const timer = setTimeout(onClose, 4000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
-
-  return (
-    <div className={`fixed top-20 right-4 z-50 bg-gradient-to-r ${bgColor} text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn max-w-md`}>
-      <Icon size={28} />
-      <p className="font-semibold text-lg">{message}</p>
-      <button onClick={onClose} className="ml-4 hover:bg-white hover:bg-opacity-20 rounded-full p-1">
-        <X size={20} />
-      </button>
-    </div>
-  );
-};
-
-// AUTH MODAL COMPONENT
-
-const AuthModal = ({ onClose, onSuccess }) => {
-  const [mode, setMode] = useState('signin'); // 'signin' | 'signup' | 'reset'
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-
-    try {
-      if (mode === 'signin') {
-        await signInUser(email, password);
-        onSuccess?.('✅ Welcome back!');
-        onClose();
-      } else if (mode === 'signup') {
-        await signUpUser(email, password, displayName);
-        onSuccess?.('🎉 Account created! Welcome!');
-        onClose();
-      } else if (mode === 'reset') {
-        await sendPasswordResetEmail(email);
-        onSuccess?.('✉️ Check your inbox for reset link!');
-      }
-    } catch (err) {
-      console.error('Auth error:', err);
-      setError(err.message || 'Something went wrong!');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500 my-8 relative">
-        <button 
-          onClick={onClose} 
-          className="absolute top-4 right-4 text-white hover:text-purple-300 transition"
-          aria-label="Close dialog"
-        >
-          <X size={32} aria-hidden="true" />
-        </button>
-
-        <h2 className="text-4xl font-black mb-6">
-          {mode === 'reset' ? 'Reset Password' : mode === 'signup' ? 'Create Account' : 'Welcome Back'}
-        </h2>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === 'signup' && (
-            <div>
-              <label className="block text-base font-bold text-purple-300 mb-2">Display Name</label>
-              <div className="relative">
-                <User className="absolute left-3 top-4 text-purple-400" size={22} />
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="john_doe"
-                  className="w-full pl-12 pr-4 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                  required
-                />
-              </div>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-base font-bold text-purple-300 mb-2">Strathmore Email</label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-4 text-purple-400" size={22} />
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="your.name@strathmore.edu"
-                className="w-full pl-12 pr-4 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                required
-              />
-            </div>
-          </div>
-
-          {mode !== 'reset' && (
-            <div>
-              <label className="block text-base font-bold text-purple-300 mb-2">Password</label>
-              <div className="relative">
-                <Lock className="absolute left-3 top-4 text-purple-400" size={22} />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full pl-12 pr-4 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
-                  required
-                />
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="bg-red-900 bg-opacity-50 border border-red-500 rounded-xl p-4 text-base">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition disabled:opacity-50"
-          >
-            {loading
-              ? 'Loading...'
-              : mode === 'reset'
-              ? 'Send Reset Link'
-              : mode === 'signup'
-              ? 'Create Account'
-              : 'Sign In'}
-          </button>
-        </form>
-
-        <div className="mt-6 text-center space-y-3">
-          {mode !== 'reset' && (
-            <button
-              onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-              className="text-purple-300 hover:text-purple-200 text-base font-semibold"
-            >
-              {mode === 'signin'
-                ? "Don't have an account? Sign Up"
-                : 'Already have an account? Sign In'}
-            </button>
-          )}
-          <button
-            onClick={() => setMode(mode === 'reset' ? 'signin' : 'reset')}
-            className="text-purple-400 hover:text-purple-300 text-base"
-          >
-            {mode === 'reset' ? '← Back to Sign In' : 'Forgot Password?'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
+import Notification from '@/components/ui/Notification';
+import { useAuth } from '@/hooks/useAuth'; 
 
 // PAYMENT MODAL
 const PaymentModal = ({ onClose, userEmail, onSuccess }) => {
@@ -278,23 +115,16 @@ const PaymentModal = ({ onClose, userEmail, onSuccess }) => {
   );
 };
 
-export default function ChorusClipModern() {
-  const [user, setUser] = useState({
-    uid: null,
-    displayName: 'Guest',
-    email: '',
-    isPremium: false,
-    songsToday: 0,
-    accountCreatedDaysAgo: 0,
-    likedClips: []
-  });
+export default function ChorusClipModern() { 
+  // Use auth hook instead of local state
+  const { user, setUser, checkAuthState } = useAuth();
 
-  // new playlist feature
+  // Playlist states
   const [playlists, setPlaylists] = useState([]);
-const [currentPlaylist, setCurrentPlaylist] = useState(null);
-const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState(0);
-const [showPlaylistModal, setShowPlaylistModal] = useState(false);
-const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]);
+  const [currentPlaylist, setCurrentPlaylist] = useState(null);
+  const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState(0);
+  const [showPlaylistModal, setShowPlaylistModal] = useState(false);
+  const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]); 
 
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
@@ -356,31 +186,6 @@ const songsRemaining = user ? songsLimit - user.songsToday : 0;
       checkAuthState();
     }
   }, []);
-const checkAuthState = async () => {
-  try {
-    const { auth, getUserData, db, checkAndResetDailyLimit } = await import('../lib/firebase');
-    const { onAuthStateChanged } = await import('firebase/auth');
-    const { doc, getDoc } = await import('firebase/firestore');
-onAuthStateChanged(auth, async (firebaseUser) => {
-  if (!firebaseUser) {
-    return setUser({
-      uid: null,
-      displayName: 'Guest',
-      email: '',
-      isPremium: false,
-      songsToday: 0,
-      accountCreatedDaysAgo: 0,
-      likedClips: []
-    });
-  }
-  }
-  );
-  }
-  catch (error) {
-    console.error('Auth check failed:', error);
-  }
-};
-
 
   const loadTrendingClips = async () => {
     try {
@@ -1236,6 +1041,66 @@ const handleUnlikeClip = async (clipId) => {
         </div>
       )}
 
+      {/* ADD PLAYLIST MODAL HERE */}
+      {showPlaylistModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-2xl w-full border border-purple-500">
+            <h2 className="text-3xl font-bold mb-6">Create Playlist</h2>
+            
+            <div className="space-y-4 mb-6">
+              <input
+                type="text"
+                placeholder="Playlist name (e.g., '2010s Party Mix')"
+                className="w-full px-5 py-4 bg-purple-950 border border-purple-600 rounded-xl text-white"
+                id="playlist-name-input"
+              />
+              
+              <div className="bg-purple-900 bg-opacity-30 p-4 rounded-xl max-h-60 overflow-y-auto">
+                <p className="font-bold mb-2">Selected Clips ({selectedClipsForPlaylist.length}):</p>
+                {selectedClipsForPlaylist.map((clip, idx) => (
+                  <div key={idx} className="flex justify-between items-center py-2 border-b border-purple-700">
+                    <span>{clip.title}</span>
+                    <button
+                      onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
+                      className="text-red-400"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={async () => {
+                  const name = document.getElementById('playlist-name-input').value;
+                  if (!name || selectedClipsForPlaylist.length === 0) {
+                    showNotification('Add clips and enter a name!', 'error');
+                    return;
+                  }
+                  
+                  const { createPlaylist } = await import('../lib/playlistUtils');
+                  await createPlaylist(user?.uid, name, selectedClipsForPlaylist);
+                  showNotification('🎉 Playlist created!', 'success');
+                  setShowPlaylistModal(false);
+                  setSelectedClipsForPlaylist([]);
+                }}
+                className="flex-1 py-4 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold"
+              >
+                Create Playlist
+              </button>
+              <button
+                onClick={() => setShowPlaylistModal(false)}
+                className="px-6 py-4 bg-purple-800 rounded-xl"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 <header className="border-b border-purple-700 border-opacity-50 bg-black bg-opacity-20 backdrop-blur-md relative z-10 sticky top-0">
   <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
     {/* Top row: Logo and Auth */}
@@ -1659,19 +1524,21 @@ const handleUnlikeClip = async (clipId) => {
         </p>
       </div>
 
-      {/* Delete button if user owns the clip */}
-      {clip.userId === user?.uid && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDeleteClip(clip.id);
-          }}
-          className="text-red-400 hover:text-red-300 transition ml-2"
-          title="Delete clip"
-        >
-          <X size={20} />
-        </button>
-      )}
+     {/* Delete button if user owns the clip */}
+{clip.userId === user?.uid && (
+  <button
+    onClick={(e) => {
+      e.stopPropagation();
+      handleDeleteClip(clip.id);
+    }}
+    className="text-red-400 hover:text-red-300 transition ml-2"
+    title="Delete clip"
+    aria-label="Delete clip"
+  >
+    <X size={20} />
+  </button>
+)}
+
     </div>
 
     {/* Loop timestamps */}
@@ -1736,6 +1603,19 @@ const handleUnlikeClip = async (clipId) => {
         >
           <Share2 size={18} aria-hidden="true" />
         </button>
+
+        {/* Add to Playlist */}
+<button
+  onClick={(e) => {
+    e.stopPropagation();
+    setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
+    showNotification('Added to playlist queue!', 'success');
+  }}
+  className="text-green-400 hover:text-green-300 transition"
+  aria-label="Add to playlist"
+>
+  <Plus size={18} />
+</button>
       </div>
     </div>
   </div>
@@ -1745,7 +1625,7 @@ const handleUnlikeClip = async (clipId) => {
                 </div>
               )}
 
-              {!user?.isPremium && (
+              {!user?.isPremium && user?.uid &&(
                 <div className="mt-6 p-6 bg-gradient-to-br from-purple-800 to-pink-800 rounded-2xl text-center border border-purple-500">
                   <div className="flex justify-center mb-4">
                     <Sparkles className="text-yellow-400" size={36} />

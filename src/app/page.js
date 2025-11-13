@@ -289,6 +289,13 @@ export default function ChorusClipModern() {
     likedClips: []
   });
 
+  // new playlist feature
+  const [playlists, setPlaylists] = useState([]);
+const [currentPlaylist, setCurrentPlaylist] = useState(null);
+const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState(0);
+const [showPlaylistModal, setShowPlaylistModal] = useState(false);
+const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]);
+
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
@@ -470,28 +477,42 @@ const dismissSuggestion = () => {
   console.log('✅ Manual mode: User will adjust sliders');
 };
 
-  const loadYouTubePlayer = (id) => {
-    if (window.YT && window.YT.Player) {
-      if (playerRef.current && playerRef.current.destroy) {
-        playerRef.current.destroy();
-      }
-      
-      playerRef.current = new window.YT.Player('youtube-player', {
-        videoId: id,
-        playerVars: { 
-          autoplay: 0, 
-          controls: 1, 
-          enablejsapi: 1,
-          origin: typeof window !== 'undefined' ? window.location.origin : '',
-          widget_referrer: typeof window !== 'undefined' ? window.location.origin : ''
-        },
-        events: { 
-          onReady: onPlayerReady, 
-          onStateChange: onPlayerStateChange
-        }
-      });
+const loadYouTubePlayer = (id) => {
+  if (window.YT && window.YT.Player) {
+    if (playerRef.current && playerRef.current.destroy) {
+      playerRef.current.destroy();
     }
-  };
+    
+    playerRef.current = new window.YT.Player('youtube-player', {
+      videoId: id,
+      playerVars: { 
+        autoplay: 0, 
+        controls: 1, 
+        enablejsapi: 1,
+        origin: typeof window !== 'undefined' ? window.location.origin : '',
+        widget_referrer: typeof window !== 'undefined' ? window.location.origin : ''
+      },
+      events: { 
+        onReady: (event) => {
+          const title = event.target.getVideoData().title;
+          setVideoTitle(title);
+          setArtist(extractArtist(title));
+          
+          // CRITICAL: Seek to start immediately when ready
+          setTimeout(() => {
+            try {
+              event.target.seekTo(loops[0].start, true);
+              console.log(`✅ Player ready, seeked to ${loops[0].start}s`);
+            } catch (e) {
+              console.log('Initial seek error:', e);
+            }
+          }, 500);
+        }, 
+        onStateChange: onPlayerStateChange
+      }
+    });
+  }
+};
 
   const onPlayerReady = (event) => {
   const title = event.target.getVideoData().title;
@@ -1279,6 +1300,16 @@ const handleUnlikeClip = async (clipId) => {
   </div>
 </header>
 
+{selectedClipsForPlaylist.length > 0 && (
+  <button
+    onClick={() => setShowPlaylistModal(true)}
+    className="fixed bottom-8 right-8 bg-gradient-to-r from-green-500 to-blue-500 text-white px-6 py-4 rounded-full shadow-2xl z-40 flex items-center gap-2 font-bold"
+  >
+    <Plus size={24} />
+    Create Playlist ({selectedClipsForPlaylist.length})
+  </button>
+)}
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 relative z-10">
         <div className="grid lg:grid-cols-2 gap-8">
           <div className="space-y-6">
@@ -1311,11 +1342,9 @@ const handleUnlikeClip = async (clipId) => {
               </div>
 
               {videoId && (
-                <div className="mt-6 space-y-6">
-// In page.js, replace the player div:
+                <div className="mt-6 space-y-6"> 
 <div id="youtube-player" className="w-full aspect-video bg-black rounded-2xl overflow-hidden border border-purple-700 hidden"></div>
-
-// Add below it:
+  
 <div className="w-full aspect-video bg-gradient-to-br from-purple-900 to-pink-900 rounded-2xl flex items-center justify-center border border-purple-700">
   <div className="text-center">
     <Music size={64} className="mx-auto mb-4 text-purple-400" />
@@ -1327,9 +1356,12 @@ const handleUnlikeClip = async (clipId) => {
                     <div className="text-center">
                       <p className="font-bold text-2xl">{videoTitle}</p>
                       <p className="text-purple-300 text-xl">{artist}</p>
-                      <p className="text-purple-400 text-base mt-1">
-                        Current time: {Math.floor(playerCurrentTime/60)}:{Math.floor(playerCurrentTime%60).toString().padStart(2,'0')}
-                      </p>
+                      <div className="mt-3 bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-6 py-3 rounded-xl text-center">
+  <p className="text-sm font-bold uppercase tracking-wide">Live Playback</p>
+  <p className="text-3xl font-black">
+    {Math.floor(playerCurrentTime/60)}:{Math.floor(playerCurrentTime%60).toString().padStart(2,'0')}
+  </p>
+</div>
                     </div>
                   )}
 

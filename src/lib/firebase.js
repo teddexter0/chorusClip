@@ -2,7 +2,14 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot } from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
+import { sendPasswordResetEmail } from 'firebase/auth'; 
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail as firebaseSendPasswordReset,
+  signOut as firebaseSignOut
+} from 'firebase/auth';
+
 
 export const resetPassword = async (email) => {
   try {
@@ -104,44 +111,7 @@ export const getLeaderboard = async (limitCount = 3) => {
     console.error('Leaderboard error:', error);
     return [];
   }
-};
-
-// AUTH
-export const signUpUser = async (email, password, displayName) => {
-  if (!email.endsWith('@strathmore.edu')) {
-    throw new Error('Only Strathmore students can sign up');
-  }
-
-  const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-  const user = userCredential.user;
-
-  // SEND VERIFICATION EMAIL
-  try {
-    await sendEmailVerification(user);
-    console.log('✅ Verification email sent to:', email);
-  } catch (error) {
-    console.error('❌ Failed to send verification email:', error);
-  }
-
-  // Create user document
-  await setDoc(doc(db, 'users', user.uid), {
-    uid: user.uid,
-    email: email,
-    displayName: displayName,
-    isPremium: false,
-    clipsToday: 0,
-    clipsThisWeek: 0,
-    accountCreated: new Date(),
-    lastClipReset: new Date()
-  });
-
-  return user;
-};
-
-export const signInUser = async (email, password) => {
-  return await signInWithEmailAndPassword(auth, email, password);
-};
-
+}; 
 export const getUserData = async (uid) => {
   const userDoc = await getDoc(doc(db, 'users', uid));
   return userDoc.exists() ? userDoc.data() : null;
@@ -273,5 +243,44 @@ export const getTopArtists = async (limitCount = 5) => {
   } catch (error) {
     console.error('Top artists error:', error);
     return [];
+  }
+};
+
+// Add these functions at the end of firebase.js
+export const signInUser = async (email, password) => {
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    return userCredential.user;
+  } catch (error) {
+    throw new Error(error.message);
+  }
+};
+
+export const signUpUser = async (email, password, displayName) => {
+  try {
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const user = userCredential.user;
+    
+    // Create user document in Firestore
+    await setDoc(doc(db, 'users', user.uid), {
+      email: user.email,
+      displayName: displayName,
+      isPremium: false,
+      accountCreated: new Date(),
+      songsToday: 0,
+      lastResetDate: new Date().toDateString()
+    });
+    
+    return user;
+  } catch (error) {
+    throw new Error(error.message);
+  }
+};
+
+export const sendPasswordResetEmail = async (email) => {
+  try {
+    await firebaseSendPasswordReset(auth, email);
+  } catch (error) {
+    throw new Error(error.message);
   }
 };

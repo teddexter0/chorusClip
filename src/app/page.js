@@ -1122,28 +1122,6 @@ h1, h2, h3 {
           </div>
         </div>
       )}
-{user?.uid && playlists.length > 0 && (
-  <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
-    <h3 className="font-black text-xl mb-4">My Playlists</h3>
-    <div className="space-y-3">
-      {playlists.map((playlist) => (
-        <div key={playlist.id} className="bg-purple-900 bg-opacity-30 p-4 rounded-xl hover:bg-opacity-50 transition">
-          <div className="flex justify-between items-center mb-2">
-            <p className="font-bold text-lg">{playlist.name}</p>
-            <span className="text-purple-300 text-sm">{playlist.clips?.length || 0} songs</span>
-          </div>
-          <button
-            onClick={() => handlePlayPlaylist(playlist)}
-            className="w-full py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
-          >
-            <Play size={20} fill="currentColor" />
-            Play Playlist
-          </button>
-        </div>
-      ))}
-    </div>
-  </div>
-)}
       {showMostReplayedSuggestion && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500">
@@ -1656,9 +1634,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
 
           <div className="space-y-6">
-            <div 
-className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trending Clips</h2>
-              
+            <div className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trending Clips</h2>             
               {clips.length === 0 ? (
                 <div className="text-center py-12 text-purple-300">
                   <p className="text-xl mb-2">No clips yet!</p>
@@ -1825,11 +1801,7 @@ className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trendi
                 </div>
               )}
             </div>
-
-            <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
-              <h3 className="font-black text-xl mb-4 flex items-center gap-2">
-                Strathmore Leaderboard
-              </h3>{/* MY PLAYLISTS SECTION */}
+{/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-green-700 border-opacity-50 mt-6">
     <h3 className="font-black text-xl mb-4 flex items-center gap-2">
@@ -1855,6 +1827,12 @@ className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trendi
     </div>
   </div>
 )}
+
+            {/* STRATHMORE LEADERBOARD SECTION */}
+            <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
+              <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+                Strathmore Leaderboard
+              </h3>
               <p className="text-sm text-purple-300 mb-4">Top clip creators this week</p>
               {leaderboard.length === 0 ? (
                 <div className="text-center py-8 text-purple-300">

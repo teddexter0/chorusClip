@@ -8,10 +8,13 @@ export default function Notification({ message, type, onClose }) {
     : 'from-blue-600 to-blue-700';
   const Icon = type === 'success' ? CheckCircle : type === 'error' ? XCircle : AlertCircle;
 
-  useEffect(() => {
-    const timer = setTimeout(onClose, 4000);
-    return () => clearTimeout(timer);
-  }, [onClose]);
+ useEffect(() => {
+  const timer = setTimeout(() => {
+    onClose();
+  }, 4000); // Disappears after 4 seconds
+
+  return () => clearTimeout(timer);
+}, [onClose]);
 
   return (
     <div className={`fixed top-20 right-4 z-50 bg-gradient-to-r ${bgColor} text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn max-w-md`}>

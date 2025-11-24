@@ -7,12 +7,11 @@ import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Dow
 import Notification from '../components/ui/Notifications';
 import AuthModal from '../components/ui/AuthModal';
 import PaymentModal from '../components/ui/PaymentModal';
-import TutorialModal from '../components/ui/TutorialModal';
-import PlaylistModal from '../components/ui/PlaylistModal';
+import TutorialModal from '../components/ui/TutorialModal'; 
 import { useAuth } from '../hooks/useAuth';
-
-import AudioVisualizer from '../components/ui/AudioVisualizer';
 import BackgroundAmbience from '../components/ui/BackgroundAmbience';
+
+import AudioVisualizer from '../components/ui/AudioVisualizer'; 
 import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists } from '../utils/playlistUtils';
 import { getArtistImageWithCache } from '../utils/spotifyUtils';
 import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
@@ -81,7 +80,7 @@ const songsRemaining = user ? songsLimit - user.songsToday : 0;
   };
 
   
-useEffect(() => {
+  useEffect(() => {
   if (typeof window !== 'undefined') {
     const isFirstVisit = !localStorage.getItem('tutorialSeen');
     if (isFirstVisit) {
@@ -92,10 +91,16 @@ useEffect(() => {
     loadTrendingClips();
     loadLeaderboard();
     loadTrendingData();
-    loadPublicPlaylists(); // ADD THIS
+    loadPublicPlaylists();
     checkAuthState();
+    
+    // Load playlists after auth check
+    const authUnsubscribe = checkAuthState();
+    if (user?.uid) {
+      loadUserPlaylists(); // ADD THIS
+    }
   }
-}, []);
+}, [user?.uid]); // Add dependency
 
 
 useEffect(() => {
@@ -145,52 +150,79 @@ useEffect(() => {
     setSuggestedEnd(90);
     setShowMostReplayedSuggestion(true);
   };
-const handleUrlSubmit = async () => {
+  
+  const handleUrlSubmit = async () => {
   if (!window.YT || !window.YT.Player) {
     showNotification('⏳ YouTube player loading... Try again in 2 seconds', 'info');
     return;
   }
+  
   if (!user?.isPremium && songsRemaining <= 0) {
-    showNotification('Daily song limit reached! Upgrade to Premium for unlimited songs.', 'error');
+    showNotification('Daily song limit reached! Upgrade to Premium!', 'error');
     return;
   }
 
   const id = extractVideoId(youtubeUrl);
-  if (id) {
-    setVideoId(id);
-    // DON'T reset loops here - let suggestion modal handle it
-    setCurrentLoopIndex(0);
-    setCurrentLoopIteration(0);
-    loadYouTubePlayer(id);
-    
-    // Show suggestion modal AFTER player loads
-    setTimeout(() => {
-      fetchMostReplayed();
-    }, 1000);
-    
-    const newCount = user.songsToday + 1;
-    setUser(prev => ({ ...prev, songsToday: newCount }));
-    localStorage.setItem('songsToday', newCount.toString());
+  if (!id) {
+    showNotification('❌ Invalid YouTube URL', 'error');
+    return;
+  }
 
-    if (songsRemaining === 3 && !user?.isPremium) {
-      setShowSongsWarning(true);
+  // DETECT NON-MUSIC VIDEOS
+  const url = youtubeUrl.toLowerCase();
+  const nonMusicKeywords = ['podcast', 'interview', 'tutorial', 'vlog', 'gaming', 'gameplay', 'lecture', 'documentary'];
+  const isSuspicious = nonMusicKeywords.some(keyword => url.includes(keyword));
+  
+  if (isSuspicious) {
+    const confirm = window.confirm('⚠️ This doesn\'t look like a music video. ChorusClip works best with music! Continue anyway?');
+    if (!confirm) return;
+  }
+  
+  // Destroy old player
+  if (playerRef.current?.destroy) {
+    try {
+      playerRef.current.destroy();
+      playerRef.current = null;
+    } catch (e) {
+      console.log('Player destroy error (ignored)');
     }
   }
+  
+  setVideoId(id);
+  setCurrentLoopIndex(0);
+  setCurrentLoopIteration(0);
+  
+  setTimeout(() => {
+    loadYouTubePlayer(id);
+    fetchMostReplayed();
+  }, 300);
+  
+  const newCount = user.songsToday + 1;
+  setUser(prev => ({ ...prev, songsToday: newCount }));
+  
+  if (songsRemaining === 3 && !user?.isPremium) {
+    setShowSongsWarning(true);
+  }
 };
-  const applySuggestedLoop = () => {
+  
+const applySuggestedLoop = () => {
   const newLoops = [{ start: suggestedStart, end: suggestedEnd }];
   setLoops(newLoops);
   setShowMostReplayedSuggestion(false);
   
-  // Seek immediately, no timeout
-  if (playerRef.current && playerRef.current.seekTo) {
-    try {
-      playerRef.current.seekTo(suggestedStart, true);
-      console.log(`✅ Applied suggested loop: ${suggestedStart}s - ${suggestedEnd}s`);
-    } catch (e) {
-      console.log('Seek error (ignored):', e);
+  // Wait for state to update, THEN seek
+  setTimeout(() => {
+    if (playerRef.current?.seekTo) {
+      try {
+        playerRef.current.seekTo(suggestedStart, true);
+        playerRef.current.playVideo(); // Auto-play after seeking
+        console.log(`✅ Seeked to ${suggestedStart}s and playing`);
+        showNotification(`✅ Loop set: ${Math.floor(suggestedStart/60)}:${(suggestedStart%60).toString().padStart(2,'0')} - ${Math.floor(suggestedEnd/60)}:${(suggestedEnd%60).toString().padStart(2,'0')}`, 'success');
+      } catch (e) {
+        console.log('Seek error:', e);
+      }
     }
-  }
+  }, 300);
 };
 
 const dismissSuggestion = () => {
@@ -200,42 +232,30 @@ const dismissSuggestion = () => {
 };
 
 const loadYouTubePlayer = (id) => {
-  if (window.YT && window.YT.Player) {
-    if (playerRef.current && playerRef.current.destroy) {
-      playerRef.current.destroy();
-    }
-    
-    playerRef.current = new window.YT.Player('youtube-player', {
-      videoId: id,
-      playerVars: { 
-        autoplay: 0, 
-        controls: 1, 
-        enablejsapi: 1,
-        origin: typeof window !== 'undefined' ? window.location.origin : '',
-        widget_referrer: typeof window !== 'undefined' ? window.location.origin : ''
+  if (!window.YT?.Player) return;
+  
+  playerRef.current = new window.YT.Player('youtube-player', {
+    videoId: id,
+    playerVars: { 
+      autoplay: 0,
+      controls: 1,
+      enablejsapi: 1,
+      origin: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
+      widget_referrer: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
+    },
+    events: { 
+      onReady: (event) => {
+        const title = event.target.getVideoData().title;
+        setVideoTitle(title);
+        setArtist(extractArtist(title));
+        
+        // Don't auto-seek here - let user control
+        console.log(`✅ Player ready for: ${title}`);
       },
-      events: { 
-        onReady: (event) => {
-          const title = event.target.getVideoData().title;
-          setVideoTitle(title);
-          setArtist(extractArtist(title));
-          
-          // CRITICAL: Seek to start immediately when ready
-          setTimeout(() => {
-            try {
-              event.target.seekTo(loops[0].start, true);
-              console.log(`✅ Player ready, seeked to ${loops[0].start}s`);
-            } catch (e) {
-              console.log('Initial seek error:', e);
-            }
-          }, 500);
-        }, 
-        onStateChange: onPlayerStateChange
-      }
-    });
-  }
+      onStateChange: onPlayerStateChange
+    }
+  });
 };
-
 
 const loadUserPlaylists = async () => {
   if (!user?.uid) return;
@@ -358,8 +378,96 @@ const loadArtistImages = async () => {
   };
   
   // COMPLETE REPLACEMENT for startTimeTracking function:
+const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
+  console.log('🎵 Playing clip:', clipData);
 
-  const startTimeTracking = () => {
+  try {
+    // Stop all tracking
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+
+    // Increment play count
+    if (user?.uid) {
+      const { db } = await import('../lib/firebase');
+      const { doc, updateDoc, increment } = await import('firebase/firestore');
+      await updateDoc(doc(db, 'clips', clipId), { plays: increment(1) });
+    }
+
+    // NUCLEAR OPTION: Completely destroy and recreate player
+    const playerContainer = document.getElementById('youtube-player');
+    if (playerRef.current) {
+      try {
+        playerRef.current.destroy();
+      } catch (e) {
+        console.log('Destroy error (ignored)');
+      }
+      playerRef.current = null;
+    }
+
+    // Clear and recreate container
+    if (playerContainer) {
+      playerContainer.innerHTML = '';
+    }
+
+    // Setup loops
+    const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+    
+    // Update state
+    setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
+    setVideoId(videoIdToPlay);
+    setLoops(loopsToLoad);
+    setLoopCount(clipData.loopCount || 0);
+    setCurrentLoopIndex(0);
+    setCurrentLoopIteration(0);
+    setIsPlaying(false);
+
+    showNotification(`⏳ Loading ${loopsToLoad.length} loop(s)...`, 'info');
+
+    // Wait for DOM and state to settle
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    // Create fresh player
+    if (window.YT?.Player) {
+      playerRef.current = new window.YT.Player('youtube-player', {
+        videoId: videoIdToPlay,
+        playerVars: {
+          autoplay: 1,
+          controls: 1,
+          enablejsapi: 1,
+          origin: window.location.origin
+        },
+        events: {
+          onReady: (event) => {
+            const title = event.target.getVideoData().title;
+            setVideoTitle(title);
+            setArtist(extractArtist(title));
+
+            // CRITICAL: Seek to start immediately
+            setTimeout(() => {
+              try {
+                event.target.seekTo(loopsToLoad[0].start, true);
+                event.target.playVideo();
+                console.log(`✅ Started at ${loopsToLoad[0].start}s`);
+                showNotification(`▶️ Playing!`, 'success');
+              } catch (e) {
+                console.log('Play error:', e);
+              }
+            }, 1000);
+          },
+          onStateChange: onPlayerStateChange
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Play clip error:', error);
+    showNotification('❌ Failed to play', 'error');
+  }
+};
+
+// COMPLETE REPLACEMENT for startTimeTracking:
+const startTimeTracking = () => {
   if (intervalRef.current) clearInterval(intervalRef.current);
   
   intervalRef.current = setInterval(() => {
@@ -373,29 +481,46 @@ const loadArtistImages = async () => {
       
       setPlayerCurrentTime(time);
       
+      // Only track when PLAYING
       if (state !== window.YT.PlayerState.PLAYING) return;
       
-      if (!loops || loops.length === 0 || !loops[currentLoopIndex]) return;
+      if (!loops || loops.length === 0 || !loops[currentLoopIndex]) {
+        console.error('❌ No valid loops to track');
+        return;
+      }
       
       const currentLoop = loops[currentLoopIndex];
+      const buffer = currentLoop.end - currentLoop.start < 15 ? 0.8 : 0.5;
       
-      // INCREASED BUFFER for short clips
-      const buffer = currentLoop.end - currentLoop.start < 15 ? 0.5 : 0.3;
-      
+      // Check if we've reached the end
       if (time >= currentLoop.end - buffer) {
-        console.log(`🔄 Loop ended at ${time.toFixed(1)}s`);
+        console.log(`🔄 Loop ${currentLoopIndex + 1} ended at ${time.toFixed(1)}s`);
         
-        // Force seek with allowSeekAhead=true
-        playerRef.current.seekTo(currentLoop.start, true);
-        
+        // Move to next loop or restart
         if (currentLoopIndex < loops.length - 1) {
-          setCurrentLoopIndex(currentLoopIndex + 1);
+          const nextIndex = currentLoopIndex + 1;
+          setCurrentLoopIndex(nextIndex);
+          playerRef.current.seekTo(loops[nextIndex].start, true);
+          console.log(`➡️ Moving to loop ${nextIndex + 1}`);
         } else {
+          // Last loop finished - check iterations
           const newIteration = currentLoopIteration + 1;
-          if (loopCount === 0 || newIteration < loopCount) {
+          
+          if (loopCount === 0) {
+            // Infinite loop
+            console.log(`🔁 Infinite loop - iteration ${newIteration}`);
             setCurrentLoopIteration(newIteration);
             setCurrentLoopIndex(0);
+            playerRef.current.seekTo(loops[0].start, true);
+          } else if (newIteration < loopCount) {
+            // More iterations to go
+            console.log(`🔁 Iteration ${newIteration}/${loopCount}`);
+            setCurrentLoopIteration(newIteration);
+            setCurrentLoopIndex(0);
+            playerRef.current.seekTo(loops[0].start, true);
           } else {
+            // Finished all iterations
+            console.log(`✅ Completed ${loopCount} iterations - STOPPING`);
             playerRef.current.pauseVideo();
             setCurrentLoopIteration(0);
             setCurrentLoopIndex(0);
@@ -406,9 +531,8 @@ const loadArtistImages = async () => {
     } catch (e) {
       console.error('Tracking error:', e);
     }
-  }, 100); // Reduced from 200ms to 100ms for tighter loops
+  }, 150); // Check every 150ms for precise looping
 };
-
   const stopTimeTracking = () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
@@ -616,85 +740,6 @@ showNotification(
     }
   };
 
-  const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
-  console.log('Playing clip:', clipData);
-
-  try {
-    // Increment play count only if user is signed in
-    if (user?.uid) {
-      const { db } = await import('../lib/firebase');
-      const { doc, updateDoc, increment } = await import('firebase/firestore');
-      await updateDoc(doc(db, 'clips', clipId), { plays: increment(1) });
-    } else {
-      console.log('Unsigned user - skipping play count');
-    }
-
-    // Destroy existing player if present
-    if (playerRef.current?.destroy) {
-      try {
-        playerRef.current.destroy();
-      } catch (e) {
-        console.log('Destroy error (ignored):', e);
-      }
-    }
-
-    // Setup loops
-    const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
-    console.log('Loading loops:', loopsToLoad);
-
-    // Update state
-    setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
-    setVideoId(videoIdToPlay);
-    setLoops(loopsToLoad);
-    setLoopCount(clipData.loopCount || 0);
-    setCurrentLoopIndex(0);
-    setCurrentLoopIteration(0);
-
-    showNotification(`⏳ Loading ${loopsToLoad.length} loop(s)...`, 'info');
-
-    // Load YouTube player
-    if (window.YT?.Player) {
-      playerRef.current = new window.YT.Player('youtube-player', {
-        videoId: videoIdToPlay,
-        playerVars: {
-          autoplay: 1,
-          controls: 1,
-          enablejsapi: 1,
-          origin: typeof window !== 'undefined' ? window.location.origin : '',
-          widget_referrer: typeof window !== 'undefined' ? window.location.origin : ''
-        },
-        events: {
-          onReady: (event) => {
-            const title = event.target.getVideoData().title;
-            setVideoTitle(title);
-            setArtist(extractArtist(title));
-
-            setTimeout(() => {
-              try {
-                event.target.seekTo(loopsToLoad[0].start, true);
-                event.target.playVideo();
-                showNotification(`▶️ Playing ${loopsToLoad.length} loop(s)!`, 'success');
-                console.log(`✅ Started at ${loopsToLoad[0].start}s`);
-              } catch (e) {
-                console.log('Seek error:', e);
-              }
-            }, 500);
-          },
-          onStateChange: onPlayerStateChange
-        }
-      });
-    }
-  } catch (error) {
-    console.error('Play clip error:', error);
-
-    if (error.code === 'permission-denied') {
-      showNotification('⚠️ Some features require sign in. You can still watch clips!', 'info');
-    } else {
-      showNotification('❌ Failed to play clip', 'error');
-    }
-  }
-};
-
 
   const handleShareClip = async (clip) => {
     const shareUrl = `${window.location.origin}?clip=${clip.id}`;
@@ -865,8 +910,10 @@ const handleUnlikeClip = async (clipId) => {
   }, []); 
   
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-indigo-900 to-purple-800 text-white relative overflow-hidden">
-          {/* Skip to main content link for screen readers */}
+    <div className="min-h-screen text-white relative overflow-hidden">
+    <BackgroundAmbience />
+    
+     {/* Skip to main content link for screen readers */}
     <a 
       href="#main-content" 
       className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-purple-600 focus:rounded"
@@ -1227,11 +1274,13 @@ className="btn-primary w-full py-5 text-xl"
 </header>
 
       {/* Main content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 relative z-10">
-        <div className="grid lg:grid-cols-2 gap-8">
-          <div className="space-y-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 relative z-10">
+  <div className="flex flex-col lg:grid lg:grid-cols-2 gap-6 lg:gap-8">
+    {/* LEFT COLUMN - Create Loop */}
+    <div className="space-y-6">
             <div 
-className="card">          <div className="flex justify-between items-center mb-6">
+className="card">          
+<div className="flex justify-between items-center mb-6">
                 <h2 className="text-3xl font-black tracking-tight">Create Loop</h2>
                 <button onClick={() => setShowTutorial(true)} className="text-purple-400 hover:text-purple-300 transition flex items-center gap-2 text-base">
                   <Video size={22} /> Help
@@ -1780,7 +1829,32 @@ className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trendi
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
               <h3 className="font-black text-xl mb-4 flex items-center gap-2">
                 Strathmore Leaderboard
-              </h3>
+              </h3>{/* MY PLAYLISTS SECTION */}
+{user?.uid && playlists.length > 0 && (
+  <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-green-700 border-opacity-50 mt-6">
+    <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+      <Music size={24} className="text-green-400" />
+      My Playlists
+    </h3>
+    <div className="space-y-3">
+      {playlists.map((playlist) => (
+        <div key={playlist.id} className="bg-green-900 bg-opacity-30 p-4 rounded-xl hover:bg-opacity-50 transition">
+          <div className="flex justify-between items-center mb-2">
+            <p className="font-bold text-lg">{playlist.name}</p>
+            <span className="text-green-300 text-sm">{playlist.clips?.length || 0} songs</span>
+          </div>
+          <button
+            onClick={() => handlePlayPlaylist(playlist)}
+            className="w-full py-3 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
+          >
+            <Play size={20} fill="currentColor" />
+            Play Playlist
+          </button>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
               <p className="text-sm text-purple-300 mb-4">Top clip creators this week</p>
               {leaderboard.length === 0 ? (
                 <div className="text-center py-8 text-purple-300">
@@ -1871,7 +1945,8 @@ className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trendi
     <Plus size={24} />
     Create Playlist ({selectedClipsForPlaylist.length})
   </button>
-)}</div>
+)}
+</div>
     </div>
   );
 };

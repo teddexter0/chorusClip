@@ -31,6 +31,7 @@ const [currentPlaylistPlayer, setCurrentPlaylistPlayer] = useState(null);
 const [isPlayingPlaylist, setIsPlayingPlaylist] = useState(false);
 const [currentPlaylistInfo, setCurrentPlaylistInfo] = useState(null);
 const [playlistMode, setPlaylistMode] = useState('default'); // 'default' | 'once'
+const [managingPlaylist, setManagingPlaylist] = useState(null); // playlist open in mgmt modal
 const [artistImages, setArtistImages] = useState({});
 const [publicPlaylists, setPublicPlaylists] = useState([]);
 
@@ -316,6 +317,62 @@ const loadPublicPlaylists = async () => {
   }
 };
 
+const handleDeletePlaylist = async (playlistId) => {
+  if (!window.confirm('Delete this playlist? This cannot be undone.')) return;
+  try {
+    const { deletePlaylist } = await import('../lib/firebase');
+    await deletePlaylist(playlistId);
+    showNotification('Playlist deleted!', 'success');
+    setManagingPlaylist(null);
+    loadUserPlaylists();
+  } catch (e) {
+    showNotification('Failed to delete playlist', 'error');
+  }
+};
+
+const handleRenamePlaylist = async (playlist) => {
+  const newName = window.prompt('New playlist name:', playlist.name);
+  if (!newName?.trim() || newName.trim() === playlist.name) return;
+  try {
+    const { updatePlaylist } = await import('../lib/firebase');
+    await updatePlaylist(playlist.id, { name: newName.trim() });
+    showNotification('Playlist renamed!', 'success');
+    setManagingPlaylist(prev => prev ? { ...prev, name: newName.trim() } : null);
+    loadUserPlaylists();
+  } catch (e) {
+    showNotification('Failed to rename', 'error');
+  }
+};
+
+const handleRemoveClipFromPlaylist = async (playlist, clipIndex) => {
+  const newClips = playlist.clips.filter((_, i) => i !== clipIndex);
+  try {
+    const { updatePlaylist } = await import('../lib/firebase');
+    await updatePlaylist(playlist.id, { clips: newClips });
+    const updated = { ...playlist, clips: newClips };
+    setManagingPlaylist(updated);
+    loadUserPlaylists();
+    showNotification('Clip removed!', 'success');
+  } catch (e) {
+    showNotification('Failed to remove clip', 'error');
+  }
+};
+
+const handleAddToExistingPlaylist = async (targetPlaylist) => {
+  if (selectedClipsForPlaylist.length === 0) return;
+  const combined = [...targetPlaylist.clips, ...selectedClipsForPlaylist].slice(0, 10);
+  try {
+    const { updatePlaylist } = await import('../lib/firebase');
+    await updatePlaylist(targetPlaylist.id, { clips: combined });
+    showNotification(`Added to "${targetPlaylist.name}"!`, 'success');
+    setSelectedClipsForPlaylist([]);
+    setShowPlaylistModal(false);
+    loadUserPlaylists();
+  } catch (e) {
+    showNotification('Failed to add clips', 'error');
+  }
+};
+
 const handleCreatePlaylist = async () => {
   const nameInput = document.getElementById('playlist-name-input');
   const name = nameInput?.value?.trim();
@@ -355,23 +412,22 @@ const handlePlayPlaylist = (playlist) => {
     return;
   }
 
-  // Stop any existing playlist
   if (currentPlaylistPlayer) {
     currentPlaylistPlayer.stop();
   }
 
   const player = new PlaylistPlayer(playlist, playerRef, {
     onClipChange: (clip, index, total) => {
-      setCurrentPlaylistInfo({
-        name: playlist.name,
-        currentIndex: index,
-        total: total,
-        currentClip: clip
-      });
+      setCurrentPlaylistInfo({ name: playlist.name, currentIndex: index, total, currentClip: clip });
       setLoops(clip.loops);
-      setLoopCount(clip.loopCount || 1);
+      setLoopCount(clip.loopCount || 0);
       setVideoTitle(clip.title);
       setArtist(clip.artist);
+      // Keep refs in sync so startTimeTracking always reads the right values
+      loopsRef.current = clip.loops;
+      loopCountRef.current = clip.loopCount || 0;
+      currentLoopIndexRef.current = 0;
+      currentLoopIterationRef.current = 0;
     },
     onPlaylistComplete: () => {
       setIsPlayingPlaylist(false);
@@ -383,8 +439,27 @@ const handlePlayPlaylist = (playlist) => {
 
   setCurrentPlaylistPlayer(player);
   setIsPlayingPlaylist(true);
-  player.playNext();
   showNotification(`▶️ Playing: ${playlist.name}`, 'success');
+
+  const firstClip = playlist.clips[0];
+
+  if (playerRef.current?.loadVideoById) {
+    // Player already exists — hand off directly to PlaylistPlayer
+    player.playNext();
+  } else if (window.YT?.Player) {
+    // No player yet — create one, then let PlaylistPlayer take over from onReady
+    setVideoId(firstClip.youtubeVideoId);
+    playerRef.current = new window.YT.Player('youtube-player', {
+      videoId: firstClip.youtubeVideoId,
+      playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
+      events: {
+        onReady: () => player.playNext(),
+        onStateChange: onPlayerStateChange
+      }
+    });
+  } else {
+    showNotification('YouTube not ready — paste a URL first or wait a moment.', 'error');
+  }
 };
 
 const loadArtistImages = async () => {
@@ -1188,52 +1263,108 @@ className="btn-primary w-full py-5 text-xl">
         </div>
       )}
 
-      {/* ADD PLAYLIST MODAL HERE */}
-      
-      {showPlaylistModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
-    <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-2xl w-full border border-purple-500 max-h-[90vh] overflow-y-auto">
-      <button onClick={() => setShowPlaylistModal(false)} className="float-right text-white hover:text-purple-300">
-        <X size={32} />
-      </button>
-      
-      <h2 className="text-3xl font-bold mb-6">Create Playlist</h2>
-      
-      <input
-        type="text"
-        id="playlist-name-input"
-        placeholder="Playlist name (e.g., '2010s Party Mix')"
- 
-className="btn-secondary px-5 py-4"     />
-      
-      <div className="bg-purple-900 bg-opacity-30 p-4 rounded-xl max-h-60 overflow-y-auto mb-6">
-        <p className="font-bold mb-3">Selected Clips ({selectedClipsForPlaylist.length}):</p>
-        {selectedClipsForPlaylist.map((clip, idx) => (
-          <div key={idx} className="flex justify-between items-center py-3 border-b border-purple-700">
-            <div className="flex-1">
-              <p className="font-semibold">{idx + 1}. {clip.title}</p>
-              <p className="text-sm text-purple-300">{clip.artist}</p>
+      {/* PLAYLIST MANAGEMENT MODAL */}
+      {managingPlaylist && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-6 max-w-lg w-full border border-purple-500 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex-1 mr-3">
+                <h2 className="text-2xl font-bold truncate">{managingPlaylist.name}</h2>
+                <p className="text-sm text-purple-400">{managingPlaylist.clips?.length || 0}/10 songs</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => handleRenamePlaylist(managingPlaylist)}
+                  className="px-3 py-2 bg-purple-700 hover:bg-purple-600 rounded-xl text-sm font-semibold transition">
+                  Rename
+                </button>
+                <button onClick={() => setManagingPlaylist(null)}
+                  className="text-white hover:text-purple-300">
+                  <X size={28} />
+                </button>
+              </div>
             </div>
-            <button
-              onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
-              className="text-red-400 hover:text-red-300 ml-3"
-            >
-              <X size={20} />
+
+            <div className="space-y-2 mb-5">
+              {(managingPlaylist.clips || []).length === 0 ? (
+                <p className="text-center text-purple-400 py-6">No songs in this playlist yet.</p>
+              ) : (managingPlaylist.clips || []).map((clip, idx) => (
+                <div key={idx} className="flex items-center justify-between bg-purple-900 bg-opacity-40 px-4 py-3 rounded-xl">
+                  <div className="flex-1 min-w-0 mr-3">
+                    <p className="font-semibold truncate">{idx + 1}. {clip.title}</p>
+                    <p className="text-sm text-purple-300 truncate">{clip.artist}
+                      {clip.loopCount === 0 ? ' • ∞ loop' : clip.loopCount > 0 ? ` • ${clip.loopCount}×` : ''}
+                    </p>
+                  </div>
+                  <button onClick={() => handleRemoveClipFromPlaylist(managingPlaylist, idx)}
+                    className="text-red-400 hover:text-red-300 flex-shrink-0">
+                    <X size={18} />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button onClick={() => handleDeletePlaylist(managingPlaylist.id)}
+              className="w-full py-3 bg-red-700 hover:bg-red-600 rounded-xl font-semibold text-white transition">
+              Delete Playlist
             </button>
           </div>
-        ))}
-      </div>
-      
-      <button
-        onClick={handleCreatePlaylist}
-        
-className="btn-primary w-full py-5 text-xl"
-      >
-        Create Playlist
-      </button>
-    </div>
-  </div>
-)}
+        </div>
+      )}
+
+      {/* CREATE / ADD-TO-EXISTING PLAYLIST MODAL */}
+      {showPlaylistModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
+          <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-2xl w-full border border-purple-500 max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setShowPlaylistModal(false)} className="float-right text-white hover:text-purple-300">
+              <X size={32} />
+            </button>
+
+            <h2 className="text-3xl font-bold mb-4">Add {selectedClipsForPlaylist.length} Clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''}</h2>
+
+            <div className="bg-purple-900 bg-opacity-30 p-4 rounded-xl max-h-44 overflow-y-auto mb-5">
+              {selectedClipsForPlaylist.map((clip, idx) => (
+                <div key={idx} className="flex justify-between items-center py-2 border-b border-purple-700 last:border-0">
+                  <div className="flex-1 min-w-0 mr-2">
+                    <p className="font-semibold truncate">{idx + 1}. {clip.title}</p>
+                    <p className="text-sm text-purple-300 truncate">{clip.artist}</p>
+                  </div>
+                  <button onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-300">
+                    <X size={18} />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Add to existing playlist */}
+            {playlists.length > 0 && (
+              <div className="mb-5">
+                <p className="font-bold text-purple-300 mb-2 text-sm uppercase tracking-wide">Add to existing playlist</p>
+                <div className="space-y-2">
+                  {playlists.map(pl => (
+                    <button key={pl.id} onClick={() => handleAddToExistingPlaylist(pl)}
+                      disabled={(pl.clips?.length || 0) >= 10}
+                      className={`w-full flex justify-between items-center px-4 py-3 rounded-xl font-semibold transition text-left ${(pl.clips?.length || 0) >= 10 ? 'opacity-40 cursor-not-allowed bg-purple-900 bg-opacity-20' : 'bg-purple-800 bg-opacity-40 hover:bg-opacity-60'}`}>
+                      <span>{pl.name}</span>
+                      <span className="text-sm text-purple-400">{pl.clips?.length || 0}/10</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="border-t border-purple-700 pt-5">
+              <p className="font-bold text-purple-300 mb-2 text-sm uppercase tracking-wide">Create new playlist</p>
+              <input type="text" id="playlist-name-input"
+                placeholder="Playlist name (e.g. 'Vibes Only')"
+                className="input mb-3" />
+              <button onClick={handleCreatePlaylist} className="btn-primary w-full py-4 text-lg">
+                Create Playlist
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 <header className="border-b border-purple-700 border-opacity-50 bg-black bg-opacity-20 backdrop-blur-md relative z-10 sticky top-0">
   <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
     {/* Top row: Logo and Auth */}
@@ -1249,9 +1380,9 @@ className="btn-primary w-full py-5 text-xl"
             <span className="text-sm sm:text-base font-semibold hidden md:inline truncate max-w-[150px]">
               Hey there, {user.displayName}!
             </span>
-            <button 
+            <button
               onClick={handleChangeUsername}
-              className="text-xs sm:text-sm text-purple-300 hover:text-purple-200 transition hidden sm:inline"
+              className="text-xs sm:text-sm text-purple-300 hover:text-purple-200 transition"
               aria-label="Change username"
             >
               Edit
@@ -1885,16 +2016,20 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
     <div className="space-y-3">
       {playlists.map((playlist) => (
-        <div key={playlist.id} className="bg-green-900 bg-opacity-30 p-4 rounded-xl hover:bg-opacity-50 transition">
-          <div className="flex justify-between items-center mb-2">
-            <p className="font-bold text-lg">{playlist.name}</p>
-            <span className="text-green-300 text-sm">{playlist.clips?.length || 0}/10</span>
+        <div key={playlist.id} className="bg-green-900 bg-opacity-30 p-4 rounded-xl transition">
+          <div className="flex justify-between items-center mb-3">
+            <div>
+              <p className="font-bold text-lg">{playlist.name}</p>
+              <p className="text-sm text-green-400">{playlist.clips?.length || 0}/10 songs</p>
+            </div>
+            <button onClick={() => setManagingPlaylist(playlist)}
+              className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg text-sm font-semibold transition">
+              Manage
+            </button>
           </div>
-          <button
-            onClick={() => handlePlayPlaylist(playlist)}
-            className="w-full py-3 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
-          >
-            <Play size={20} fill="currentColor" />
+          <button onClick={() => handlePlayPlaylist(playlist)}
+            className="w-full py-3 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2">
+            <Play size={18} fill="currentColor" />
             {playlistMode === 'once' ? 'Play Once Each' : 'Play (Saved Repeats)'}
           </button>
         </div>

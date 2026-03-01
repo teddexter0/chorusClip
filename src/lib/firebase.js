@@ -62,20 +62,38 @@ export const subscribeToTrendingClips = (callback) => {
   }
 };
 
-// LEADERBOARD
-export const getLeaderboard = async (limit = 10) => {
+// LEADERBOARD - Top clip creators this week (last 7 days)
+export const getLeaderboard = async (limitCount = 10) => {
   try {
-    const clipsQuery = query(
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const q = query(
       collection(db, 'clips'),
-      orderBy('likes', 'desc'),
-      limit(limit)
+      where('createdAt', '>=', sevenDaysAgo),
+      orderBy('createdAt', 'desc')
     );
-    
-    const snapshot = await getDocs(clipsQuery);
-    // ... rest of function
+    const snapshot = await getDocs(q);
+
+    // Aggregate by creator
+    const creatorStats = {};
+    snapshot.docs.forEach(docSnap => {
+      const data = docSnap.data();
+      const creator = data.createdBy || 'Unknown';
+      if (!creatorStats[creator]) {
+        creatorStats[creator] = { name: creator, songs: 0, artist: data.artist || '', likes: 0 };
+      }
+      creatorStats[creator].songs++;
+      creatorStats[creator].likes += data.likes || 0;
+    });
+
+    return Object.values(creatorStats)
+      .sort((a, b) => b.songs - a.songs || b.likes - a.likes)
+      .slice(0, limitCount)
+      .map((creator, idx) => ({ ...creator, rank: idx + 1 }));
   } catch (error) {
-    console.log('Leaderboard requires sign-in');
-    return []; // Return empty instead of crashing
+    console.log('Leaderboard error:', error);
+    return [];
   }
 };
 export const getUserData = async (uid) => {
@@ -170,42 +188,52 @@ export const checkAndResetDailyLimit = async (uid) => {
 
 // Add to firebase.js:
 
+// TRENDING - Most played clips in the last 30 days
 export const getTrendingClipsByPlays = async (limitCount = 5) => {
   try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // Filter to recent clips, then client-side sort by plays
     const q = query(
-      collection(db, 'clips'), 
-      orderBy('plays', 'desc'), 
-      limit(limitCount)
+      collection(db, 'clips'),
+      where('createdAt', '>=', thirtyDaysAgo),
+      orderBy('createdAt', 'desc'),
+      limit(100)
     );
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const snapshot = await getDocs(q);
+    const clips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return clips.sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, limitCount);
   } catch (error) {
     console.error('Trending clips error:', error);
     return [];
   }
 };
 
+// TOP ARTISTS - Based on clip activity in the last 30 days
 export const getTopArtists = async (limitCount = 5) => {
   try {
-    const clipsSnapshot = await getDocs(collection(db, 'clips'));
-    
-    // Count clips per artist
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    const q = query(
+      collection(db, 'clips'),
+      where('createdAt', '>=', thirtyDaysAgo),
+      orderBy('createdAt', 'desc'),
+      limit(200)
+    );
+    const snapshot = await getDocs(q);
+
     const artistCounts = {};
-    clipsSnapshot.docs.forEach(doc => {
+    snapshot.docs.forEach(doc => {
       const artist = doc.data().artist || 'Unknown';
       artistCounts[artist] = (artistCounts[artist] || 0) + 1;
     });
-    
-    // Sort by count
-    const sortedArtists = Object.entries(artistCounts)
+
+    return Object.entries(artistCounts)
       .sort((a, b) => b[1] - a[1])
       .slice(0, limitCount)
       .map(([artist, count]) => ({ artist, clips: count }));
-    
-    return sortedArtists;
   } catch (error) {
     console.error('Top artists error:', error);
     return [];

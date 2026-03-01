@@ -1,13 +1,12 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Mail, Lock, User, Phone, CheckCircle, XCircle, Users, TrendingUp, Music } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, LogOut, Users, TrendingUp, Music } from 'lucide-react';
 
 // Use relative imports instead of @/
 import Notification from '../components/ui/Notifications';
 import AuthModal from '../components/ui/AuthModal';
-import PaymentModal from '../components/ui/PaymentModal';
-import TutorialModal from '../components/ui/TutorialModal'; 
+import TutorialModal from '../components/ui/TutorialModal';
 import { useAuth } from '../hooks/useAuth';
 import BackgroundAmbience from '../components/ui/BackgroundAmbience';
 
@@ -49,8 +48,6 @@ const [publicPlaylists, setPublicPlaylists] = useState([]);
   
   const [showTutorial, setShowTutorial] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [showSongsWarning, setShowSongsWarning] = useState(false);
   const [showMostReplayedSuggestion, setShowMostReplayedSuggestion] = useState(false);
   const [suggestedStart, setSuggestedStart] = useState(0);
   const [suggestedEnd, setSuggestedEnd] = useState(30);
@@ -84,9 +81,7 @@ const loadTrendingData = async () => {
   useEffect(() => { loopCountRef.current = loopCount; }, [loopCount]);
   // currentLoopIndexRef and currentLoopIterationRef are updated directly inside startTimeTracking
 
-const songsLimit = user?.accountCreatedDaysAgo < 7 ? 10 : 3;
-const songsRemaining = user ? songsLimit - user.songsToday : 0;
-  const maxLoopsPerSong = user?.isPremium ? 3 : 1;
+  const maxLoopsPerSong = 3; // open to all signed-in users
 
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type });
@@ -199,11 +194,6 @@ useEffect(() => {
     return;
   }
   
-  if (!user?.isPremium && songsRemaining <= 0) {
-    showNotification('Daily song limit reached! Upgrade to Premium!', 'error');
-    return;
-  }
-
   const id = extractVideoId(youtubeUrl);
   if (!id) {
     showNotification('❌ Invalid YouTube URL', 'error');
@@ -239,12 +229,6 @@ useEffect(() => {
     fetchMostReplayed();
   }, 300);
   
-  const newCount = user.songsToday + 1;
-  setUser(prev => ({ ...prev, songsToday: newCount }));
-  
-  if (songsRemaining === 3 && !user?.isPremium) {
-    setShowSongsWarning(true);
-  }
 };
   
 const applySuggestedLoop = () => {
@@ -691,10 +675,7 @@ const startTimeTracking = () => {
 
   const addLoop = () => {
     if (loops.length >= maxLoopsPerSong) {
-showNotification(
-  `${user?.isPremium ? 'Maximum 3' : 'Free tier: Only 1'} loop${user?.isPremium ? 's' : ''} per song.`,
-  'error'
-);
+      showNotification('Maximum 3 loops per song.', 'error');
       return;
     }
     setLoops([...loops, { start: 0, end: 30 }]);
@@ -740,10 +721,6 @@ showNotification(
   };
 
   const handleDownload = async () => {
-    if (!user?.isPremium) {
-      showNotification('Downloads are Premium only!', 'error');
-      return;
-    }
     if (!videoId) {
       showNotification('Load a song first!', 'error');
       return;
@@ -965,8 +942,6 @@ const handleUnlikeClip = async (clipId) => {
         uid: null,
         displayName: 'Guest',
         email: '',
-        isPremium: false,
-        songsToday: 0,
         accountCreatedDaysAgo: 0,
         likedClips: []
       });
@@ -1214,36 +1189,7 @@ h1, h2, h3 {
       )}
 
 
-{showPaymentModal && (
-  <PaymentModal
-    onClose={() => setShowPaymentModal(false)}
-    userEmail={user?.email}
-    onSuccess={(msg) => showNotification(msg, 'success')}
-  />
-)}
-
-
 {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
-
-      {showSongsWarning && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
-          <div className="bg-gradient-to-br from-purple-900 to-pink-900 rounded-3xl p-8 max-w-md w-full border border-yellow-500">
-            <div className="flex items-center gap-4 mb-4">
-              <AlertCircle className="text-yellow-400" size={48} />
-              <h3 className="text-3xl font-bold">Only {songsRemaining} Songs Left Today!</h3>
-            </div>
-            <p className="text-purple-200 mb-6 text-xl">Upgrade to Premium for unlimited songs + 3 loops per song!</p>
-            <div className="space-y-3">
-              <button onClick={() => { setShowSongsWarning(false); setShowPaymentModal(true); }} className="w-full py-5 text-xl bg-gradient-to-r from-yellow-500 to-orange-500 text-black rounded-xl font-bold hover:shadow-2xl transition">
-                Upgrade - KES 299/mo
-              </button>
-              <button onClick={() => setShowSongsWarning(false)} className="w-full py-4 text-lg bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
-                Continue with Free
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {showMostReplayedSuggestion && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500">
@@ -1414,17 +1360,6 @@ className="btn-primary w-full py-5 text-xl">
         Strathmore Exclusive
       </span>
       
-      {!user?.isPremium && user?.uid && (
-  <span className="text-xs sm:text-sm bg-gradient-to-r from-purple-600 to-pink-600 px-3 py-1.5 rounded-full font-bold whitespace-nowrap">
-    {songsRemaining} songs left today
-  </span>
-)}
-      
-      {user?.isPremium && (
-        <span className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-3 sm:px-4 py-1.5 rounded-full text-xs sm:text-sm font-bold flex items-center gap-1 whitespace-nowrap">
-          <Sparkles size={14} /> PREMIUM
-        </span>
-      )}
     </div>
   </div>
 </header>
@@ -1704,11 +1639,12 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   <RotateCcw size={28} aria-hidden="true" />
 </button>
                    
-                   {user?.isPremium && (
+                  {user?.uid && (
   <button
     onClick={handleDownload}
     className="px-7 py-5 bg-green-700 hover:bg-green-600 rounded-xl transition"
     aria-label="Download loop as MP3"
+    title="Download loop as MP3"
   >
     <Download size={28} aria-hidden="true" />
   </button>
@@ -1783,11 +1719,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">🔄</span>
-                  <span>Loop up to 3 sections per song (Premium)</span>
+                  <span>Loop up to 3 sections per song</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">💎</span>
-                  <span>Download audio loops (Premium)</span>
+                  <span>Download audio loops (sign in required)</span>
                 </li>
               </ul>
             </div>
@@ -1958,35 +1894,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               )}
 
-              {!user?.isPremium && user?.uid &&(
-                <div className="mt-6 p-6 bg-gradient-to-br from-purple-800 to-pink-800 rounded-2xl text-center border border-purple-500">
-                  <div className="flex justify-center mb-4">
-                    <Sparkles className="text-yellow-400" size={36} />
-                  </div>
-                  <p className="text-base mb-2">Free: {user.accountCreatedDaysAgo < 7 ? '10' : '3'} songs/day, 1 loop per song</p>
-                  <p className="font-black text-3xl mb-4">Premium: KES 299/month</p>
-                  <ul className="text-base text-left mb-6 space-y-2 bg-black bg-opacity-30 p-4 rounded-xl">
-                    <li className="flex items-center gap-2">
-                      <span className="text-green-400 text-lg">✓</span> Unlimited songs per day
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-green-400 text-lg">✓</span> 3 loops per song (vs 1)
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-green-400 text-lg">✓</span> Download audio loops
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-green-400 text-lg">✓</span> Create playlists
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-green-400 text-lg">✓</span> No ads
-                    </li>
-                  </ul>
-                  <button onClick={() => setShowPaymentModal(true)} className="w-full px-6 py-5 text-xl bg-gradient-to-r from-yellow-400 to-orange-500 text-black rounded-xl font-bold hover:shadow-2xl transition pulse-glow">
-                    Upgrade Now
-                  </button>
-                </div>
-              )}
             </div>
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (

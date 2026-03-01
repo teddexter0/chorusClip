@@ -30,6 +30,7 @@ const [showPlaylistModal, setShowPlaylistModal] = useState(false);
 const [currentPlaylistPlayer, setCurrentPlaylistPlayer] = useState(null);
 const [isPlayingPlaylist, setIsPlayingPlaylist] = useState(false);
 const [currentPlaylistInfo, setCurrentPlaylistInfo] = useState(null);
+const [playlistMode, setPlaylistMode] = useState('default'); // 'default' | 'once'
 const [artistImages, setArtistImages] = useState({});
 const [publicPlaylists, setPublicPlaylists] = useState([]);
 
@@ -70,6 +71,17 @@ const loadTrendingData = async () => {
   const playerRef = useRef(null);
   const intervalRef = useRef(null);
   const seekTimeoutRef = useRef(null);
+  // Refs mirror the loop-tracking state so setInterval callbacks always read fresh values
+  // (React state inside setInterval suffers stale closures — refs don't)
+  const loopsRef = useRef([{ start: 0, end: 30 }]);
+  const loopCountRef = useRef(0);
+  const currentLoopIndexRef = useRef(0);
+  const currentLoopIterationRef = useRef(0);
+
+  // Keep refs in sync with state so setInterval callbacks always see current values
+  useEffect(() => { loopsRef.current = loops; }, [loops]);
+  useEffect(() => { loopCountRef.current = loopCount; }, [loopCount]);
+  // currentLoopIndexRef and currentLoopIterationRef are updated directly inside startTimeTracking
 
 const songsLimit = user?.accountCreatedDaysAgo < 7 ? 10 : 3;
 const songsRemaining = user ? songsLimit - user.songsToday : 0;
@@ -146,8 +158,37 @@ useEffect(() => {
   };
 
   const fetchMostReplayed = async () => {
-    setSuggestedStart(60);
-    setSuggestedEnd(90);
+    // Use actual video duration (if player is ready) to make a smarter suggestion.
+    // Chorus/hook is typically 25–40% into a song.
+    // If the player isn't ready yet, fall back to 60s.
+    let duration = 0;
+    try {
+      if (playerRef.current?.getDuration) {
+        duration = playerRef.current.getDuration();
+      }
+    } catch (e) {}
+
+    if (!duration || duration <= 0) {
+      // Player not ready — wait a bit and try once more
+      await new Promise(resolve => setTimeout(resolve, 1200));
+      try {
+        if (playerRef.current?.getDuration) {
+          duration = playerRef.current.getDuration();
+        }
+      } catch (e) {}
+    }
+
+    if (duration > 0) {
+      // Heuristic: chorus tends to start around 25% in and last ~30 s
+      const start = Math.floor(duration * 0.25);
+      const end = Math.min(start + 30, duration - 5);
+      setSuggestedStart(Math.max(0, start));
+      setSuggestedEnd(Math.max(start + 10, end));
+    } else {
+      // Ultimate fallback
+      setSuggestedStart(60);
+      setSuggestedEnd(90);
+    }
     setShowMostReplayedSuggestion(true);
   };
   
@@ -243,14 +284,13 @@ const loadYouTubePlayer = (id) => {
       origin: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000',
       widget_referrer: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
     },
-    events: { 
+    events: {
       onReady: (event) => {
         const title = event.target.getVideoData().title;
         setVideoTitle(title);
         setArtist(extractArtist(title));
-        
-        // Don't auto-seek here - let user control
-        console.log(`✅ Player ready for: ${title}`);
+        // Now that the player is ready we have duration — generate a real suggestion
+        fetchMostReplayed();
       },
       onStateChange: onPlayerStateChange
     }
@@ -339,7 +379,7 @@ const handlePlayPlaylist = (playlist) => {
       setCurrentPlaylistPlayer(null);
     },
     showNotification
-  });
+  }, playlistMode);
 
   setCurrentPlaylistPlayer(player);
   setIsPlayingPlaylist(true);
@@ -377,44 +417,25 @@ const loadArtistImages = async () => {
     }
   };
   
-  // COMPLETE REPLACEMENT for startTimeTracking function:
 const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
-  console.log('🎵 Playing clip:', clipData);
-
   try {
-    // Stop all tracking
+    // Stop any active loop tracking
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
 
-    // Increment play count
+    // Increment play count (fire-and-forget – don't block UX)
     if (user?.uid) {
-      const { db } = await import('../lib/firebase');
-      const { doc, updateDoc, increment } = await import('firebase/firestore');
-      await updateDoc(doc(db, 'clips', clipId), { plays: increment(1) });
+      import('../lib/firebase').then(async ({ db }) => {
+        const { doc, updateDoc, increment } = await import('firebase/firestore');
+        updateDoc(doc(db, 'clips', clipId), { plays: increment(1) }).catch(() => {});
+      });
     }
 
-    // NUCLEAR OPTION: Completely destroy and recreate player
-    const playerContainer = document.getElementById('youtube-player');
-    if (playerRef.current) {
-      try {
-        playerRef.current.destroy();
-      } catch (e) {
-        console.log('Destroy error (ignored)');
-      }
-      playerRef.current = null;
-    }
-
-    // Clear and recreate container
-    if (playerContainer) {
-      playerContainer.innerHTML = '';
-    }
-
-    // Setup loops
     const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
-    
-    // Update state
+
+    // Update state AND refs immediately so startTimeTracking interval uses fresh values right away
     setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
     setVideoId(videoIdToPlay);
     setLoops(loopsToLoad);
@@ -423,42 +444,68 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
     setCurrentLoopIteration(0);
     setIsPlaying(false);
 
-    showNotification(`⏳ Loading ${loopsToLoad.length} loop(s)...`, 'info');
+    loopsRef.current = loopsToLoad;
+    loopCountRef.current = clipData.loopCount || 0;
+    currentLoopIndexRef.current = 0;
+    currentLoopIterationRef.current = 0;
 
-    // Wait for DOM and state to settle
-    await new Promise(resolve => setTimeout(resolve, 800));
+    showNotification('⏳ Loading...', 'info');
 
-    // Create fresh player
-    if (window.YT?.Player) {
-      playerRef.current = new window.YT.Player('youtube-player', {
+    if (playerRef.current?.loadVideoById) {
+      // Reuse existing player — avoids the "loads forever on first attempt" bug
+      // that occurred when destroying/recreating the player DOM element.
+      playerRef.current.loadVideoById({
         videoId: videoIdToPlay,
-        playerVars: {
-          autoplay: 1,
-          controls: 1,
-          enablejsapi: 1,
-          origin: window.location.origin
-        },
-        events: {
-          onReady: (event) => {
-            const title = event.target.getVideoData().title;
-            setVideoTitle(title);
-            setArtist(extractArtist(title));
-
-            // CRITICAL: Seek to start immediately
-            setTimeout(() => {
-              try {
-                event.target.seekTo(loopsToLoad[0].start, true);
-                event.target.playVideo();
-                console.log(`✅ Started at ${loopsToLoad[0].start}s`);
-                showNotification(`▶️ Playing!`, 'success');
-              } catch (e) {
-                console.log('Play error:', e);
-              }
-            }, 1000);
-          },
-          onStateChange: onPlayerStateChange
-        }
+        startSeconds: loopsToLoad[0].start
       });
+
+      // Poll for the new video title (loadVideoById does not re-fire onReady)
+      let titlePolls = 0;
+      const titleInterval = setInterval(() => {
+        titlePolls++;
+        if (playerRef.current?.getVideoData) {
+          const data = playerRef.current.getVideoData();
+          if (data?.title) {
+            setVideoTitle(data.title);
+            setArtist(extractArtist(data.title));
+            clearInterval(titleInterval);
+          }
+        }
+        if (titlePolls > 20) clearInterval(titleInterval);
+      }, 400);
+
+      setTimeout(() => {
+        try {
+          playerRef.current?.playVideo();
+          showNotification('▶️ Playing!', 'success');
+        } catch (e) {}
+      }, 700);
+
+    } else {
+      // No player exists yet — create a fresh one (feed clip tapped before URL submit)
+      await new Promise(resolve => setTimeout(resolve, 400));
+
+      if (window.YT?.Player) {
+        playerRef.current = new window.YT.Player('youtube-player', {
+          videoId: videoIdToPlay,
+          playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
+          events: {
+            onReady: (event) => {
+              const title = event.target.getVideoData().title;
+              setVideoTitle(title);
+              setArtist(extractArtist(title));
+              setTimeout(() => {
+                try {
+                  event.target.seekTo(loopsToLoad[0].start, true);
+                  event.target.playVideo();
+                  showNotification('▶️ Playing!', 'success');
+                } catch (e) {}
+              }, 400);
+            },
+            onStateChange: onPlayerStateChange
+          }
+        });
+      }
     }
   } catch (error) {
     console.error('Play clip error:', error);
@@ -466,63 +513,63 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
   }
 };
 
-// COMPLETE REPLACEMENT for startTimeTracking:
 const startTimeTracking = () => {
   if (intervalRef.current) clearInterval(intervalRef.current);
-  
+
   intervalRef.current = setInterval(() => {
-    if (!playerRef.current?.getCurrentTime || !playerRef.current?.getPlayerState) {
-      return;
-    }
-    
+    if (!playerRef.current?.getCurrentTime || !playerRef.current?.getPlayerState) return;
+
     try {
       const time = playerRef.current.getCurrentTime();
       const state = playerRef.current.getPlayerState();
-      
+
       setPlayerCurrentTime(time);
-      
-      // Only track when PLAYING
+
       if (state !== window.YT.PlayerState.PLAYING) return;
-      
-      if (!loops || loops.length === 0 || !loops[currentLoopIndex]) {
-        console.error('❌ No valid loops to track');
-        return;
-      }
-      
-      const currentLoop = loops[currentLoopIndex];
-      const buffer = currentLoop.end - currentLoop.start < 15 ? 0.8 : 0.5;
-      
-      // Check if we've reached the end
+
+      // READ FROM REFS – not from state (avoids stale closure bug)
+      const currentLoops = loopsRef.current;
+      const loopIdx = currentLoopIndexRef.current;
+      const iteration = currentLoopIterationRef.current;
+      const count = loopCountRef.current;
+
+      if (!currentLoops || currentLoops.length === 0 || !currentLoops[loopIdx]) return;
+
+      const currentLoop = currentLoops[loopIdx];
+      const duration = currentLoop.end - currentLoop.start;
+      const buffer = duration < 15 ? 0.8 : 0.5;
+
       if (time >= currentLoop.end - buffer) {
-        console.log(`🔄 Loop ${currentLoopIndex + 1} ended at ${time.toFixed(1)}s`);
-        
-        // Move to next loop or restart
-        if (currentLoopIndex < loops.length - 1) {
-          const nextIndex = currentLoopIndex + 1;
-          setCurrentLoopIndex(nextIndex);
-          playerRef.current.seekTo(loops[nextIndex].start, true);
-          console.log(`➡️ Moving to loop ${nextIndex + 1}`);
+        if (loopIdx < currentLoops.length - 1) {
+          // Advance to next loop segment within the same clip
+          const nextIdx = loopIdx + 1;
+          currentLoopIndexRef.current = nextIdx;
+          setCurrentLoopIndex(nextIdx);
+          playerRef.current.seekTo(currentLoops[nextIdx].start, true);
         } else {
-          // Last loop finished - check iterations
-          const newIteration = currentLoopIteration + 1;
-          
-          if (loopCount === 0) {
-            // Infinite loop
-            console.log(`🔁 Infinite loop - iteration ${newIteration}`);
-            setCurrentLoopIteration(newIteration);
+          // All segments done – check iteration count
+          const newIter = iteration + 1;
+
+          if (count === 0) {
+            // Infinite – keep looping
+            currentLoopIterationRef.current = newIter;
+            setCurrentLoopIteration(newIter);
+            currentLoopIndexRef.current = 0;
             setCurrentLoopIndex(0);
-            playerRef.current.seekTo(loops[0].start, true);
-          } else if (newIteration < loopCount) {
-            // More iterations to go
-            console.log(`🔁 Iteration ${newIteration}/${loopCount}`);
-            setCurrentLoopIteration(newIteration);
+            playerRef.current.seekTo(currentLoops[0].start, true);
+          } else if (newIter < count) {
+            // More iterations remaining
+            currentLoopIterationRef.current = newIter;
+            setCurrentLoopIteration(newIter);
+            currentLoopIndexRef.current = 0;
             setCurrentLoopIndex(0);
-            playerRef.current.seekTo(loops[0].start, true);
+            playerRef.current.seekTo(currentLoops[0].start, true);
           } else {
-            // Finished all iterations
-            console.log(`✅ Completed ${loopCount} iterations - STOPPING`);
+            // All iterations complete – stop
             playerRef.current.pauseVideo();
+            currentLoopIterationRef.current = 0;
             setCurrentLoopIteration(0);
+            currentLoopIndexRef.current = 0;
             setCurrentLoopIndex(0);
             stopTimeTracking();
           }
@@ -531,7 +578,7 @@ const startTimeTracking = () => {
     } catch (e) {
       console.error('Tracking error:', e);
     }
-  }, 150); // Check every 150ms for precise looping
+  }, 150);
 };
   const stopTimeTracking = () => {
     if (intervalRef.current) {
@@ -1487,8 +1534,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       </button>
       
       <button
-        onClick={() => currentPlaylistPlayer?.shuffle()}
-        className="px-5 py-3 bg-purple-700 rounded-xl hover:bg-purple-600 transition"
+        onClick={() => currentPlaylistPlayer?.toggleShuffle()}
+        className={`px-5 py-3 rounded-xl transition ${currentPlaylistPlayer?.isShuffled ? 'bg-pink-600 hover:bg-pink-500' : 'bg-purple-700 hover:bg-purple-600'}`}
+        title={currentPlaylistPlayer?.isShuffled ? 'Shuffled – tap to restore order' : 'Shuffle'}
       >
         <Shuffle size={24} />
       </button>
@@ -1754,8 +1802,16 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       setShowAuthModal(true);
       return;
     }
+    if (selectedClipsForPlaylist.length >= 10) {
+      showNotification('Playlist cap is 10 songs!', 'error');
+      return;
+    }
+    if (selectedClipsForPlaylist.some(c => c.id === clip.id)) {
+      showNotification('Already in playlist queue!', 'info');
+      return;
+    }
     setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
-    showNotification('Added to playlist queue!', 'success');
+    showNotification(`Added! (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
   }}
   className="text-green-400 hover:text-green-300 transition"
   aria-label="Add to playlist"
@@ -1804,23 +1860,42 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-green-700 border-opacity-50 mt-6">
-    <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+    <h3 className="font-black text-xl mb-2 flex items-center gap-2">
       <Music size={24} className="text-green-400" />
       My Playlists
     </h3>
+
+    {/* Play mode toggle */}
+    <div className="flex gap-2 mb-4">
+      <button
+        onClick={() => setPlaylistMode('default')}
+        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'default' ? 'bg-green-600 text-white' : 'bg-green-900 bg-opacity-40 text-green-300 hover:bg-opacity-60'}`}
+        title="Each clip plays its saved repeat count (infinite clips capped at 5)"
+      >
+        Saved Repeats
+      </button>
+      <button
+        onClick={() => setPlaylistMode('once')}
+        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'once' ? 'bg-blue-600 text-white' : 'bg-blue-900 bg-opacity-40 text-blue-300 hover:bg-opacity-60'}`}
+        title="Every clip plays exactly once"
+      >
+        Play Once Each
+      </button>
+    </div>
+
     <div className="space-y-3">
       {playlists.map((playlist) => (
         <div key={playlist.id} className="bg-green-900 bg-opacity-30 p-4 rounded-xl hover:bg-opacity-50 transition">
           <div className="flex justify-between items-center mb-2">
             <p className="font-bold text-lg">{playlist.name}</p>
-            <span className="text-green-300 text-sm">{playlist.clips?.length || 0} songs</span>
+            <span className="text-green-300 text-sm">{playlist.clips?.length || 0}/10</span>
           </div>
           <button
             onClick={() => handlePlayPlaylist(playlist)}
             className="w-full py-3 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2"
           >
             <Play size={20} fill="currentColor" />
-            Play Playlist
+            {playlistMode === 'once' ? 'Play Once Each' : 'Play (Saved Repeats)'}
           </button>
         </div>
       ))}
@@ -1860,10 +1935,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
             
 <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mb-6">
-  <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+  <h3 className="font-black text-xl mb-1 flex items-center gap-2">
     <TrendingUp size={24} className="text-green-400" />
-    Most Played Clips
+    Trending Clips
   </h3>
+  <p className="text-xs text-purple-400 mb-4">Most played in the last 30 days</p>
   {trendingByPlays.map((clip, idx) => (
     <div key={clip.id} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl mb-2">
       <div>

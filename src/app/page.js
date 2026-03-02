@@ -37,6 +37,7 @@ const [publicPlaylists, setPublicPlaylists] = useState([]);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
+  const [videoDuration, setVideoDuration] = useState(600); // actual duration from YT player (seconds)
   const [artist, setArtist] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   // initial loop state — each loop has its own loopCount (0 = infinite)
@@ -75,6 +76,11 @@ const loadTrendingData = async () => {
   const loopsRef = useRef([{ start: 0, end: 30, loopCount: 1 }]);
   const currentLoopIndexRef = useRef(0);
   const currentLoopIterationRef = useRef(0);
+  // After every programmatic seekTo we block tracking ticks for 600 ms.
+  // Without this, getCurrentTime() still returns the OLD position for 1-2 ticks,
+  // which falsely triggers loop advancement (e.g. Loop 3 starting at 0:00 is
+  // immediately skipped because oldTime ≥ loop3.end - buffer).
+  const skipTrackingUntilRef = useRef(0);
 
   // Keep refs in sync with state so setInterval callbacks always see current values
   useEffect(() => { loopsRef.current = loops; }, [loops]);
@@ -224,6 +230,7 @@ useEffect(() => {
   setCurrentLoopIteration(0);
   setIsReadOnlyMode(false); // New URL loaded — allow editing
   setLoops([{ start: 0, end: 30, loopCount: 1 }]); // Reset loops for new song
+  setVideoDuration(600); // Reset; will be updated once player reports actual duration
 
   setTimeout(() => {
     loadYouTubePlayer(id);
@@ -275,6 +282,9 @@ const loadYouTubePlayer = (id) => {
         const title = event.target.getVideoData().title;
         setVideoTitle(title);
         setArtist(extractArtist(title));
+        // Capture actual video duration so sliders don't exceed the real video length
+        const dur = event.target.getDuration();
+        if (dur > 0) setVideoDuration(Math.ceil(dur));
         // Now that the player is ready we have duration — generate a real suggestion
         fetchMostReplayed();
       },
@@ -526,7 +536,7 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
         startSeconds: loopsToLoad[0].start
       });
 
-      // Poll for the new video title (loadVideoById does not re-fire onReady)
+      // Poll for the new video title + duration (loadVideoById does not re-fire onReady)
       let titlePolls = 0;
       const titleInterval = setInterval(() => {
         titlePolls++;
@@ -535,6 +545,9 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
           if (data?.title) {
             setVideoTitle(data.title);
             setArtist(extractArtist(data.title));
+            // Also grab the actual duration so sliders don't overshoot
+            const dur = playerRef.current.getDuration?.();
+            if (dur > 0) setVideoDuration(Math.ceil(dur));
             clearInterval(titleInterval);
           }
         }
@@ -582,9 +595,16 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
 
 const startTimeTracking = () => {
   if (intervalRef.current) clearInterval(intervalRef.current);
+  skipTrackingUntilRef.current = 0; // Clear any leftover dead zone on fresh start
 
   intervalRef.current = setInterval(() => {
     if (!playerRef.current?.getCurrentTime || !playerRef.current?.getPlayerState) return;
+
+    // Dead zone: skip ticks for 600 ms after any programmatic seekTo.
+    // Without this, getCurrentTime() still returns the OLD position for 1–2 ticks,
+    // which falsely fires the end-of-loop check and skips loops (especially loops
+    // that start at 0:00 or have a small end time).
+    if (Date.now() < skipTrackingUntilRef.current) return;
 
     try {
       const time = playerRef.current.getCurrentTime();
@@ -614,6 +634,7 @@ const startTimeTracking = () => {
           // This loop has more repetitions — restart it
           currentLoopIterationRef.current = newIter;
           setCurrentLoopIteration(newIter);
+          skipTrackingUntilRef.current = Date.now() + 600;
           playerRef.current.seekTo(currentLoop.start, true);
         } else {
           // This loop's repetitions done — advance to next loop segment
@@ -623,6 +644,7 @@ const startTimeTracking = () => {
             setCurrentLoopIndex(nextIdx);
             currentLoopIterationRef.current = 0;
             setCurrentLoopIteration(0);
+            skipTrackingUntilRef.current = Date.now() + 600;
             playerRef.current.seekTo(currentLoops[nextIdx].start, true);
           } else {
             // All loop segments done — stop
@@ -707,15 +729,16 @@ const startTimeTracking = () => {
   const numValue = Number(value);
   
   if (field === 'start') {
-    newLoops[index].start = Math.max(0, numValue);
+    // Clamp start to actual video duration so sliders never exceed the real video
+    newLoops[index].start = Math.max(0, Math.min(numValue, videoDuration - 1));
     if (newLoops[index].end <= newLoops[index].start) {
-      newLoops[index].end = Math.min(newLoops[index].start + 30, 300);
+      newLoops[index].end = Math.min(newLoops[index].start + 30, videoDuration);
     }
     if (newLoops[index].end - newLoops[index].start > 45) {
       newLoops[index].end = newLoops[index].start + 45;
     }
   } else if (field === 'end') {
-    newLoops[index].end = Math.max(newLoops[index].start + 1, numValue);
+    newLoops[index].end = Math.max(newLoops[index].start + 1, Math.min(numValue, videoDuration));
     if (newLoops[index].end - newLoops[index].start > 45) {
       newLoops[index].end = newLoops[index].start + 45;
     }
@@ -1532,7 +1555,7 @@ className="btn-primary w-full py-5 text-xl"            >
     <input
       type="range"
       min="0"
-      max="600"
+      max={videoDuration}
       step="1"
       value={loop.start}
       onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'start', e.target.value)}
@@ -1584,7 +1607,7 @@ className="btn-primary w-full py-5 text-xl"            >
     <input
       type="range"
       min={loop.start + 1}
-      max={Math.min(600, loop.start + 45)}
+      max={Math.min(videoDuration, loop.start + 45)}
       step="1"
       value={loop.end}
       onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'end', e.target.value)}

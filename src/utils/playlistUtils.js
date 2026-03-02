@@ -56,15 +56,22 @@ export const shuffleArray = (array) => {
   return shuffled;
 };
 
-export { PLAYLIST_MAX_CLIPS };
+export { PLAYLIST_MAX_CLIPS, ENDLESS_CAP_IN_PLAYLIST };
 
 /**
- * PlaylistPlayer – manages clip playback within a playlist.
+ * PlaylistPlayer – manages clip-to-clip advancement within a playlist.
+ *
+ * ARCHITECTURE NOTE:
+ *   Per-loop tracking (start/end seeking, repeat counts) is handled entirely by
+ *   startTimeTracking() in page.js. When startTimeTracking detects that ALL loops in
+ *   the current clip are exhausted, it calls advanceToNextClip() here instead of
+ *   pausing. This avoids the race condition caused by having two competing interval
+ *   timers (the old setupCompletionListener + startTimeTracking) watching the same
+ *   getCurrentTime() value.
  *
  * playMode:
- *   'default' – each clip plays its saved loopCount times.
- *               Clips saved as "infinite" (loopCount === 0) are capped at ENDLESS_CAP_IN_PLAYLIST.
- *   'once'    – every clip plays exactly 1 time regardless of its saved loopCount.
+ *   'default' – respect each loop's saved loopCount; infinite (0) capped at ENDLESS_CAP.
+ *   'once'    – every loop in every clip plays exactly 1 time.
  */
 export class PlaylistPlayer {
   constructor(playlist, playerRef, callbacks, playMode = 'default') {
@@ -73,22 +80,35 @@ export class PlaylistPlayer {
     this.callbacks = callbacks;
     this.playMode = playMode;
     this.currentIndex = 0;
-    this.currentClipIteration = 0;
     this.isShuffled = false;
     this.repeatPlaylist = false;
     this.originalOrder = [...playlist.clips];
     this.playlistOrder = [...playlist.clips];
   }
 
-  /** Returns how many times a clip should play for the current playMode. */
-  getClipPlayCount(clip) {
-    if (this.playMode === 'once') return 1;
-    // Default: respect saved loopCount, cap "infinite" at ENDLESS_CAP_IN_PLAYLIST
-    const count = clip.loopCount === 0 ? ENDLESS_CAP_IN_PLAYLIST : clip.loopCount;
-    return Math.max(1, count);
+  /**
+   * Normalize a clip's loops for the current playMode before handing it to
+   * startTimeTracking. This is the single source of truth for repeat counts
+   * inside a playlist.
+   *
+   * 'once'    → every loop plays exactly 1×
+   * 'default' → respect per-loop loopCount; loopCount===0 (infinite) → ENDLESS_CAP
+   */
+  normalizeClip(clip) {
+    const normalizedLoops = (clip.loops || [{ start: 0, end: 30, loopCount: 1 }]).map(loop => {
+      let count;
+      if (this.playMode === 'once') {
+        count = 1;
+      } else {
+        // loopCount 0 means "infinite" — cap at ENDLESS_CAP in a playlist context
+        count = (loop.loopCount === 0) ? ENDLESS_CAP_IN_PLAYLIST : (loop.loopCount ?? 1);
+      }
+      return { ...loop, loopCount: count };
+    });
+    return { ...clip, loops: normalizedLoops };
   }
 
-  /** Toggle shuffle on/off. Keeps current position in the new order. */
+  /** Toggle shuffle on/off. Resets to the beginning of the new order. */
   toggleShuffle() {
     if (this.isShuffled) {
       this.playlistOrder = [...this.originalOrder];
@@ -96,17 +116,12 @@ export class PlaylistPlayer {
       this.currentIndex = 0;
       this.callbacks.showNotification('↕️ Original order restored', 'success');
     } else {
-      this.playlistOrder = shuffleArray(this.playlist.clips);
+      this.playlistOrder = shuffleArray([...this.playlist.clips]);
       this.isShuffled = true;
       this.currentIndex = 0;
       this.callbacks.showNotification('🔀 Playlist shuffled!', 'success');
     }
   }
-
-  /** @deprecated Use toggleShuffle() */
-  shuffle() { this.toggleShuffle(); }
-  /** @deprecated Use toggleShuffle() */
-  unshuffle() { if (this.isShuffled) this.toggleShuffle(); }
 
   toggleRepeat() {
     this.repeatPlaylist = !this.repeatPlaylist;
@@ -116,11 +131,16 @@ export class PlaylistPlayer {
     );
   }
 
+  /**
+   * Load and start the clip at currentIndex.
+   * Normalizes the clip's loops, fires onClipChange so page.js syncs its refs,
+   * then loads the video. startTimeTracking in page.js will handle per-loop
+   * repetitions and call advanceToNextClip() when all loops are done.
+   */
   async playNext() {
     if (this.currentIndex >= this.playlistOrder.length) {
       if (this.repeatPlaylist) {
         this.currentIndex = 0;
-        this.currentClipIteration = 0;
         return this.playNext();
       } else {
         this.callbacks.onPlaylistComplete?.();
@@ -129,71 +149,48 @@ export class PlaylistPlayer {
       }
     }
 
-    const currentClip = this.playlistOrder[this.currentIndex];
-    const loopCount = this.getClipPlayCount(currentClip);
+    const rawClip = this.playlistOrder[this.currentIndex];
+    // Normalize loops for playMode — page.js tracking reads these normalized values
+    const clip = this.normalizeClip(rawClip);
 
-    this.callbacks.onClipChange?.(currentClip, this.currentIndex, this.playlistOrder.length);
+    // Inform page.js: sets loops state, syncs loopsRef, resets iteration refs
+    this.callbacks.onClipChange?.(clip, this.currentIndex, this.playlistOrder.length);
 
     if (this.playerRef.current?.loadVideoById) {
-      // Prefer reusing existing player to avoid "loads forever" bug
       this.playerRef.current.loadVideoById({
-        videoId: currentClip.youtubeVideoId,
-        startSeconds: currentClip.loops[0].start
+        videoId: clip.youtubeVideoId,
+        startSeconds: clip.loops[0]?.start ?? 0
       });
+      // Give the player time to buffer before calling playVideo
       setTimeout(() => {
-        this.playerRef.current?.playVideo();
-      }, 600);
+        try { this.playerRef.current?.playVideo(); } catch (e) {}
+      }, 700);
     }
-
-    this.setupCompletionListener(currentClip, loopCount);
+    // No setupCompletionListener — startTimeTracking handles completion and calls advanceToNextClip().
   }
 
-  setupCompletionListener(clip, loopCount) {
-    if (this.completionInterval) clearInterval(this.completionInterval);
-
-    this.completionInterval = setInterval(() => {
-      if (!this.playerRef.current?.getCurrentTime) {
-        clearInterval(this.completionInterval);
-        return;
-      }
-
-      const time = this.playerRef.current.getCurrentTime();
-      const lastLoop = clip.loops[clip.loops.length - 1];
-
-      if (time >= lastLoop.end - 0.5) {
-        this.currentClipIteration++;
-
-        if (this.currentClipIteration >= loopCount) {
-          clearInterval(this.completionInterval);
-          this.currentIndex++;
-          this.currentClipIteration = 0;
-          setTimeout(() => this.playNext(), 500);
-        } else {
-          // Restart the clip's loops
-          this.playerRef.current.seekTo(clip.loops[0].start, true);
-        }
-      }
-    }, 500);
+  /**
+   * Called by startTimeTracking in page.js when all loops for the current clip
+   * have completed. Advances to the next clip.
+   */
+  advanceToNextClip() {
+    this.currentIndex++;
+    setTimeout(() => this.playNext(), 400);
   }
 
   stop() {
-    if (this.completionInterval) clearInterval(this.completionInterval);
     try { this.playerRef.current?.pauseVideo(); } catch (e) {}
     this.callbacks.showNotification('⏸️ Playlist stopped', 'info');
   }
 
   skip() {
-    if (this.completionInterval) clearInterval(this.completionInterval);
     this.currentIndex++;
-    this.currentClipIteration = 0;
     this.playNext();
   }
 
   previous() {
-    if (this.completionInterval) clearInterval(this.completionInterval);
     if (this.currentIndex > 0) {
       this.currentIndex--;
-      this.currentClipIteration = 0;
       this.playNext();
     }
   }

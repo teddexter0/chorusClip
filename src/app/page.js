@@ -11,7 +11,7 @@ import { useAuth } from '../hooks/useAuth';
 import BackgroundAmbience from '../components/ui/BackgroundAmbience';
 
 import AudioVisualizer from '../components/ui/AudioVisualizer'; 
-import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists } from '../utils/playlistUtils';
+import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists, ENDLESS_CAP_IN_PLAYLIST } from '../utils/playlistUtils';
 import { getArtistImageWithCache } from '../utils/spotifyUtils';
 import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
 
@@ -81,6 +81,10 @@ const loadTrendingData = async () => {
   // which falsely triggers loop advancement (e.g. Loop 3 starting at 0:00 is
   // immediately skipped because oldTime ≥ loop3.end - buffer).
   const skipTrackingUntilRef = useRef(0);
+  // When a playlist is active, startTimeTracking calls advanceToNextClip() here
+  // instead of calling pauseVideo() so the next track starts automatically.
+  // Using a ref (not state) so the setInterval closure always sees the live value.
+  const currentPlaylistPlayerRef = useRef(null);
 
   // Keep refs in sync with state so setInterval callbacks always see current values
   useEffect(() => { loopsRef.current = loops; }, [loops]);
@@ -353,18 +357,58 @@ const handleRemoveClipFromPlaylist = async (playlist, clipIndex) => {
   }
 };
 
+/** Returns true if clip is already in existingClips (same id or same video+start time). */
+const isClipDuplicate = (clip, existingClips) =>
+  existingClips.some(c =>
+    c.id === clip.id ||
+    (c.youtubeVideoId === clip.youtubeVideoId &&
+      c.loops?.[0]?.start === clip.loops?.[0]?.start &&
+      c.loops?.[0]?.end === clip.loops?.[0]?.end)
+  );
+
 const handleAddToExistingPlaylist = async (targetPlaylist) => {
   if (selectedClipsForPlaylist.length === 0) return;
-  const combined = [...targetPlaylist.clips, ...selectedClipsForPlaylist].slice(0, 10);
+  // Filter out duplicates
+  const newClips = selectedClipsForPlaylist.filter(c => !isClipDuplicate(c, targetPlaylist.clips));
+  const skipped = selectedClipsForPlaylist.length - newClips.length;
+  if (newClips.length === 0) {
+    showNotification('All selected clips are already in this playlist!', 'info');
+    return;
+  }
+  const combined = [...targetPlaylist.clips, ...newClips].slice(0, 10);
   try {
     const { updatePlaylist } = await import('../lib/firebase');
     await updatePlaylist(targetPlaylist.id, { clips: combined });
-    showNotification(`Added to "${targetPlaylist.name}"!`, 'success');
+    const skipMsg = skipped > 0 ? ` (${skipped} duplicate${skipped > 1 ? 's' : ''} skipped)` : '';
+    showNotification(`Added to "${targetPlaylist.name}"!${skipMsg}`, 'success');
     setSelectedClipsForPlaylist([]);
     setShowPlaylistModal(false);
     loadUserPlaylists();
   } catch (e) {
     showNotification('Failed to add clips', 'error');
+  }
+};
+
+const handleSortPlaylist = async (playlist, sortBy) => {
+  const sorted = [...(playlist.clips || [])];
+  if (sortBy === 'artist-asc') {
+    sorted.sort((a, b) => (a.artist || '').localeCompare(b.artist || ''));
+  } else if (sortBy === 'artist-desc') {
+    sorted.sort((a, b) => (b.artist || '').localeCompare(a.artist || ''));
+  } else if (sortBy === 'title-asc') {
+    sorted.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  } else if (sortBy === 'date-desc') {
+    sorted.reverse(); // newest-added last in array → show newest first
+  }
+  // 'date-asc' = keep original insertion order (no sort needed)
+  try {
+    const { updatePlaylist } = await import('../lib/firebase');
+    await updatePlaylist(playlist.id, { clips: sorted });
+    setManagingPlaylist(prev => prev ? { ...prev, clips: sorted } : null);
+    loadUserPlaylists();
+    showNotification('Playlist sorted!', 'success');
+  } catch (e) {
+    showNotification('Failed to sort', 'error');
   }
 };
 
@@ -412,22 +456,21 @@ const handlePlayPlaylist = (playlist) => {
   }
 
   const player = new PlaylistPlayer(playlist, playerRef, {
+    // clip.loops are already normalized by PlaylistPlayer.normalizeClip()
     onClipChange: (clip, index, total) => {
       setCurrentPlaylistInfo({ name: playlist.name, currentIndex: index, total, currentClip: clip });
-      // Normalize loops with per-loop counts (backward compat)
-      const normalizedLoops = (clip.loops || []).map(loop => ({
-        ...loop,
-        loopCount: loop.loopCount ?? (clip.loopCount ?? 1)
-      }));
-      setLoops(normalizedLoops);
+      setLoops(clip.loops);
       setVideoTitle(clip.title);
       setArtist(clip.artist);
-      // Keep refs in sync so startTimeTracking always reads the right values
-      loopsRef.current = normalizedLoops;
+      setVideoId(clip.youtubeVideoId);
+      // Sync refs immediately — startTimeTracking reads these, not state
+      loopsRef.current = clip.loops;
       currentLoopIndexRef.current = 0;
       currentLoopIterationRef.current = 0;
+      skipTrackingUntilRef.current = Date.now() + 800; // dead zone while new video loads
     },
     onPlaylistComplete: () => {
+      currentPlaylistPlayerRef.current = null;
       setIsPlayingPlaylist(false);
       setCurrentPlaylistInfo(null);
       setCurrentPlaylistPlayer(null);
@@ -435,20 +478,20 @@ const handlePlayPlaylist = (playlist) => {
     showNotification
   }, playlistMode);
 
+  // Keep ref AND state in sync so startTimeTracking (setInterval closure) sees it
+  currentPlaylistPlayerRef.current = player;
   setCurrentPlaylistPlayer(player);
   setIsPlayingPlaylist(true);
   showNotification(`▶️ Playing: ${playlist.name}`, 'success');
 
-  const firstClip = playlist.clips[0];
-
   if (playerRef.current?.loadVideoById) {
-    // Player already exists — hand off directly to PlaylistPlayer
+    // Existing player — hand off immediately
     player.playNext();
   } else if (window.YT?.Player) {
-    // No player yet — create one, then let PlaylistPlayer take over from onReady
-    setVideoId(firstClip.youtubeVideoId);
+    // No player yet — #youtube-player div is always in DOM (moved outside {videoId &&}),
+    // so we can safely create the player right now without a React re-render race.
     playerRef.current = new window.YT.Player('youtube-player', {
-      videoId: firstClip.youtubeVideoId,
+      videoId: playlist.clips[0].youtubeVideoId,
       playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
       events: {
         onReady: () => player.playNext(),
@@ -647,13 +690,22 @@ const startTimeTracking = () => {
             skipTrackingUntilRef.current = Date.now() + 600;
             playerRef.current.seekTo(currentLoops[nextIdx].start, true);
           } else {
-            // All loop segments done — stop
-            playerRef.current.pauseVideo();
+            // All loop segments for this clip are done
             currentLoopIterationRef.current = 0;
             setCurrentLoopIteration(0);
             currentLoopIndexRef.current = 0;
             setCurrentLoopIndex(0);
             stopTimeTracking();
+
+            if (currentPlaylistPlayerRef.current) {
+              // Playlist mode: hand off to PlaylistPlayer to load the next clip.
+              // Do NOT pauseVideo — PlaylistPlayer.playNext() will call loadVideoById
+              // which takes care of transitioning to the next track.
+              currentPlaylistPlayerRef.current.advanceToNextClip();
+            } else {
+              // Standalone mode: just pause
+              playerRef.current.pauseVideo();
+            }
           }
         }
       }
@@ -1274,6 +1326,27 @@ className="btn-primary w-full py-5 text-xl">
               </div>
             </div>
 
+            {/* Sort controls */}
+            {(managingPlaylist.clips?.length || 0) > 1 && (
+              <div className="mb-3">
+                <p className="text-xs font-bold text-purple-400 uppercase tracking-wide mb-2">Sort by</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: 'A → Z', key: 'artist-asc' },
+                    { label: 'Z → A', key: 'artist-desc' },
+                    { label: 'Title A-Z', key: 'title-asc' },
+                    { label: 'Oldest first', key: 'date-asc' },
+                    { label: 'Newest first', key: 'date-desc' },
+                  ].map(({ label, key }) => (
+                    <button key={key} onClick={() => handleSortPlaylist(managingPlaylist, key)}
+                      className="px-3 py-1.5 bg-purple-800 bg-opacity-50 hover:bg-opacity-80 rounded-lg text-xs font-semibold transition">
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2 mb-5">
               {(managingPlaylist.clips || []).length === 0 ? (
                 <p className="text-center text-purple-400 py-6">No songs in this playlist yet.</p>
@@ -1281,9 +1354,7 @@ className="btn-primary w-full py-5 text-xl">
                 <div key={idx} className="flex items-center justify-between bg-purple-900 bg-opacity-40 px-4 py-3 rounded-xl">
                   <div className="flex-1 min-w-0 mr-3">
                     <p className="font-semibold truncate">{idx + 1}. {clip.title}</p>
-                    <p className="text-sm text-purple-300 truncate">{clip.artist}
-                      {clip.loopCount === 0 ? ' • ∞ loop' : clip.loopCount > 0 ? ` • ${clip.loopCount}×` : ''}
-                    </p>
+                    <p className="text-sm text-purple-300 truncate">{clip.artist}</p>
                   </div>
                   <button onClick={() => handleRemoveClipFromPlaylist(managingPlaylist, idx)}
                     className="text-red-400 hover:text-red-300 flex-shrink-0">
@@ -1441,11 +1512,15 @@ className="btn-primary w-full py-5 text-xl"            >
                 </button>
               </div>
 
+              {/* YouTube player container — always in DOM so handlePlayPlaylist can create
+                  a YT.Player immediately without waiting for a React re-render.
+                  Visually hidden; audio plays through the hidden iframe. */}
+              <div id="youtube-player" style={{position:'fixed',top:'-9999px',width:'2px',height:'2px',overflow:'hidden'}} aria-hidden="true"></div>
+
               {videoId && (
-                <div className="mt-6 space-y-6"> 
-                
+                <div className="mt-6 space-y-6">
+
 <div className="relative">
-  <div id="youtube-player" className="absolute opacity-0 pointer-events-none"></div>
   <AudioVisualizer
     isPlaying={isPlaying}
     currentTime={playerCurrentTime}
@@ -1706,8 +1781,10 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       <button
         onClick={() => {
           currentPlaylistPlayer?.stop();
+          currentPlaylistPlayerRef.current = null;
           setIsPlayingPlaylist(false);
           setCurrentPlaylistInfo(null);
+          setCurrentPlaylistPlayer(null);
         }}
         className="px-5 py-3 bg-red-700 rounded-xl hover:bg-red-600 transition"
       >
@@ -1960,8 +2037,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       showNotification('Playlist cap is 10 songs!', 'error');
       return;
     }
-    if (selectedClipsForPlaylist.some(c => c.id === clip.id)) {
-      showNotification('Already in playlist queue!', 'info');
+    if (isClipDuplicate(clip, selectedClipsForPlaylist)) {
+      showNotification('Already in your queue!', 'info');
       return;
     }
     setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
@@ -2007,6 +2084,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         Play Once Each
       </button>
     </div>
+    <p className="text-xs text-green-500 mt-1 mb-1">
+      {playlistMode === 'once'
+        ? 'Every loop plays 1x regardless of saved count'
+        : `Infinite loops play ${ENDLESS_CAP_IN_PLAYLIST}x max in a playlist`}
+    </p>
 
     <div className="space-y-3">
       {playlists.map((playlist) => (

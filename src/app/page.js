@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, LogOut, Users, TrendingUp, Music } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Users, TrendingUp, Music } from 'lucide-react';
 
 // Use relative imports instead of @/
 import Notification from '../components/ui/Notifications';

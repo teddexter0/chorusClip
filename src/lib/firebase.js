@@ -62,26 +62,38 @@ export const subscribeToTrendingClips = (callback) => {
   }
 };
 
-// LEADERBOARD - Top clip creators this week (last 7 days)
+// LEADERBOARD - Top clip CREATORS (users who posted clips) this week
+// Groups by createdBy (the ChorusClip user's display name), not the YouTube artist.
+// Falls back to all-time if Firestore composite index isn't created yet.
 export const getLeaderboard = async (limitCount = 10) => {
   try {
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    let clipDocs = [];
 
-    const q = query(
-      collection(db, 'clips'),
-      where('createdAt', '>=', sevenDaysAgo),
-      orderBy('createdAt', 'desc')
-    );
-    const snapshot = await getDocs(q);
+    try {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      const q = query(
+        collection(db, 'clips'),
+        where('createdAt', '>=', sevenDaysAgo),
+        orderBy('createdAt', 'desc'),
+        limit(200)
+      );
+      const snap = await getDocs(q);
+      clipDocs = snap.docs.map(d => d.data());
+    } catch {
+      // Composite index not yet created — fall back to most-recent 200 clips (all time)
+      const q = query(collection(db, 'clips'), orderBy('createdAt', 'desc'), limit(200));
+      const snap = await getDocs(q);
+      clipDocs = snap.docs.map(d => d.data());
+    }
 
-    // Aggregate by creator
+    // Aggregate by the ChorusClip user who posted the clip (createdBy = displayName)
     const creatorStats = {};
-    snapshot.docs.forEach(docSnap => {
-      const data = docSnap.data();
-      const creator = data.createdBy || 'Unknown';
+    clipDocs.forEach(data => {
+      const creator = data.createdBy;
+      if (!creator) return;
       if (!creatorStats[creator]) {
-        creatorStats[creator] = { name: creator, songs: 0, artist: data.artist || '', likes: 0 };
+        creatorStats[creator] = { name: creator, songs: 0, topArtist: data.artist || '', likes: 0 };
       }
       creatorStats[creator].songs++;
       creatorStats[creator].likes += data.likes || 0;
@@ -90,12 +102,22 @@ export const getLeaderboard = async (limitCount = 10) => {
     return Object.values(creatorStats)
       .sort((a, b) => b.songs - a.songs || b.likes - a.likes)
       .slice(0, limitCount)
-      .map((creator, idx) => ({ ...creator, rank: idx + 1 }));
+      .map((c, i) => ({ ...c, rank: i + 1, artist: c.topArtist }));
   } catch (error) {
     console.log('Leaderboard error:', error);
     return [];
   }
 };
+// PLAYLIST CRUD
+export const deletePlaylist = async (playlistId) => {
+  const { deleteDoc } = await import('firebase/firestore');
+  await deleteDoc(doc(db, 'playlists', playlistId));
+};
+
+export const updatePlaylist = async (playlistId, updates) => {
+  await updateDoc(doc(db, 'playlists', playlistId), updates);
+};
+
 export const getUserData = async (uid) => {
   const userDoc = await getDoc(doc(db, 'users', uid));
   return userDoc.exists() ? userDoc.data() : null;

@@ -2,6 +2,17 @@
 import { useState } from 'react';
 import { X, Mail, Lock, User } from 'lucide-react';
 
+const AUTH_ERRORS = {
+  'auth/wrong-password': 'Wrong password. Try again or reset your password.',
+  'auth/invalid-credential': 'Wrong password. Try again or reset your password.',
+  'auth/user-not-found': "No account with this email — sign up instead!",
+  'auth/email-already-in-use': 'Email already registered. Sign in instead!',
+  'auth/weak-password': 'Password too weak — use at least 6 characters.',
+  'auth/invalid-email': 'Invalid email address.',
+  'auth/too-many-requests': 'Too many attempts. Wait a moment and try again.',
+  'auth/network-request-failed': 'Network error — check your connection.',
+};
+
 export default function AuthModal({ onClose, onSuccess }) {
   const [mode, setMode] = useState('signin');
   const [email, setEmail] = useState('');
@@ -16,9 +27,8 @@ export default function AuthModal({ onClose, onSuccess }) {
     setError('');
 
     try {
-      // Use relative path
       const { signInUser, signUpUser, sendPasswordResetEmail } = await import('../../lib/firebase');
-      
+
       if (mode === 'signin') {
         await signInUser(email, password);
         onSuccess?.('✅ Welcome back!');
@@ -33,35 +43,45 @@ export default function AuthModal({ onClose, onSuccess }) {
       }
     } catch (err) {
       console.error('Auth error:', err);
-      setError(err.message || 'Something went wrong!');
+      const friendly = AUTH_ERRORS[err.code] || err.message || 'Something went wrong!';
+      setError(friendly);
     } finally {
       setLoading(false);
     }
-  }; 
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500 my-8 relative">
-        <button onClick={onClose} className="absolute top-4 right-4 text-white hover:text-purple-300 transition">
-          <X size={32} />
+      <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-6 sm:p-8 max-w-md w-full border border-purple-500 my-6 relative">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-white hover:text-purple-300 transition"
+          aria-label="Close"
+        >
+          <X size={28} />
         </button>
 
-        <h2 className="text-4xl font-black mb-6">
+        <h2 className="text-3xl sm:text-4xl font-black mb-2">
           {mode === 'reset' ? 'Reset Password' : mode === 'signup' ? 'Create Account' : 'Welcome Back'}
         </h2>
+        <p className="text-purple-400 text-sm mb-6">
+          {mode === 'signin' && 'Sign in with your Strathmore email'}
+          {mode === 'signup' && 'Join ChorusClip with your Strathmore email'}
+          {mode === 'reset' && "We'll send a link to your email"}
+        </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {mode === 'signup' && (
             <div>
-              <label className="block text-base font-bold text-purple-300 mb-2">Display Name</label>
+              <label className="block text-sm font-bold text-purple-300 mb-2">Display Name</label>
               <div className="relative">
-                <User className="absolute left-3 top-4 text-purple-400" size={22} />
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" size={20} />
                 <input
                   type="text"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="john_doe"
-                  className="w-full pl-12 pr-4 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+                  className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-500"
                   required
                 />
               </div>
@@ -69,15 +89,15 @@ export default function AuthModal({ onClose, onSuccess }) {
           )}
 
           <div>
-            <label className="block text-base font-bold text-purple-300 mb-2">Strathmore Email</label>
+            <label className="block text-sm font-bold text-purple-300 mb-2">Strathmore Email</label>
             <div className="relative">
-              <Mail className="absolute left-3 top-4 text-purple-400" size={22} />
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" size={20} />
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="your.name@strathmore.edu"
-                className="w-full pl-12 pr-4 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+                className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-500"
                 required
               />
             </div>
@@ -85,15 +105,15 @@ export default function AuthModal({ onClose, onSuccess }) {
 
           {mode !== 'reset' && (
             <div>
-              <label className="block text-base font-bold text-purple-300 mb-2">Password</label>
+              <label className="block text-sm font-bold text-purple-300 mb-2">Password</label>
               <div className="relative">
-                <Lock className="absolute left-3 top-4 text-purple-400" size={22} />
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" size={20} />
                 <input
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-12 pr-4 py-4 text-lg bg-purple-950 bg-opacity-50 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white"
+                  className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-500"
                   required
                 />
               </div>
@@ -101,7 +121,7 @@ export default function AuthModal({ onClose, onSuccess }) {
           )}
 
           {error && (
-            <div className="bg-red-900 bg-opacity-50 border border-red-500 rounded-xl p-4 text-base">
+            <div className="bg-red-950 bg-opacity-70 border border-red-500 rounded-xl p-3 text-sm text-red-200 leading-relaxed">
               {error}
             </div>
           )}
@@ -109,24 +129,30 @@ export default function AuthModal({ onClose, onSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-5 text-xl bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition disabled:opacity-50"
+            className="w-full py-4 text-lg bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition disabled:opacity-50 mt-2"
           >
-            {loading ? 'Loading...' : mode === 'reset' ? 'Send Reset Link' : mode === 'signup' ? 'Create Account' : 'Sign In'}
+            {loading
+              ? 'Loading...'
+              : mode === 'reset'
+              ? 'Send Reset Link'
+              : mode === 'signup'
+              ? 'Create Account'
+              : 'Sign In'}
           </button>
         </form>
 
-        <div className="mt-6 text-center space-y-3">
+        <div className="mt-5 text-center space-y-3 border-t border-purple-700 pt-5">
           {mode !== 'reset' && (
             <button
-              onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-              className="text-purple-300 hover:text-purple-200 text-base font-semibold"
+              onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setError(''); }}
+              className="block w-full text-purple-300 hover:text-purple-200 text-sm font-semibold transition"
             >
               {mode === 'signin' ? "Don't have an account? Sign Up" : 'Already have an account? Sign In'}
             </button>
           )}
           <button
-            onClick={() => setMode(mode === 'reset' ? 'signin' : 'reset')}
-            className="text-purple-400 hover:text-purple-300 text-base"
+            onClick={() => { setMode(mode === 'reset' ? 'signin' : 'reset'); setError(''); }}
+            className="block w-full text-purple-400 hover:text-purple-300 text-sm transition"
           >
             {mode === 'reset' ? '← Back to Sign In' : 'Forgot Password?'}
           </button>

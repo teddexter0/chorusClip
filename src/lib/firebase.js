@@ -268,7 +268,8 @@ export const signInUser = async (email, password) => {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     return userCredential.user;
   } catch (error) {
-    throw new Error(error.message);
+    // Re-throw original Firebase error to preserve error.code for smart UI messaging
+    throw error;
   }
 };
 
@@ -276,7 +277,7 @@ export const signUpUser = async (email, password, displayName) => {
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
-    
+
     // Create user document in Firestore
     await setDoc(doc(db, 'users', user.uid), {
       email: user.email,
@@ -286,10 +287,11 @@ export const signUpUser = async (email, password, displayName) => {
       songsToday: 0,
       lastResetDate: new Date().toDateString()
     });
-    
+
     return user;
   } catch (error) {
-    throw new Error(error.message);
+    // Re-throw original Firebase error to preserve error.code for smart UI messaging
+    throw error;
   }
 };
 

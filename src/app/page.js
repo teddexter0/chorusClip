@@ -37,13 +37,15 @@ const [publicPlaylists, setPublicPlaylists] = useState([]);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
+  const [videoDuration, setVideoDuration] = useState(600); // actual duration from YT player (seconds)
   const [artist, setArtist] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-  // initial loop state
-  const [loops, setLoops] = useState([{ start: 0, end: 30 }]);
+  // initial loop state — each loop has its own loopCount (0 = infinite)
+  const [loops, setLoops] = useState([{ start: 0, end: 30, loopCount: 1 }]);
   const [currentLoopIndex, setCurrentLoopIndex] = useState(0);
-  const [loopCount, setLoopCount] = useState(0);
   const [currentLoopIteration, setCurrentLoopIteration] = useState(0);
+  // isReadOnlyMode: true when playing a clip from the feed (no editing allowed)
+  const [isReadOnlyMode, setIsReadOnlyMode] = useState(false);
   const [playerCurrentTime, setPlayerCurrentTime] = useState(0);
   
   const [showTutorial, setShowTutorial] = useState(false);
@@ -71,14 +73,17 @@ const loadTrendingData = async () => {
   const seekTimeoutRef = useRef(null);
   // Refs mirror the loop-tracking state so setInterval callbacks always read fresh values
   // (React state inside setInterval suffers stale closures — refs don't)
-  const loopsRef = useRef([{ start: 0, end: 30 }]);
-  const loopCountRef = useRef(0);
+  const loopsRef = useRef([{ start: 0, end: 30, loopCount: 1 }]);
   const currentLoopIndexRef = useRef(0);
   const currentLoopIterationRef = useRef(0);
+  // After every programmatic seekTo we block tracking ticks for 600 ms.
+  // Without this, getCurrentTime() still returns the OLD position for 1-2 ticks,
+  // which falsely triggers loop advancement (e.g. Loop 3 starting at 0:00 is
+  // immediately skipped because oldTime ≥ loop3.end - buffer).
+  const skipTrackingUntilRef = useRef(0);
 
   // Keep refs in sync with state so setInterval callbacks always see current values
   useEffect(() => { loopsRef.current = loops; }, [loops]);
-  useEffect(() => { loopCountRef.current = loopCount; }, [loopCount]);
   // currentLoopIndexRef and currentLoopIterationRef are updated directly inside startTimeTracking
 
   const maxLoopsPerSong = 3; // open to all signed-in users
@@ -223,7 +228,10 @@ useEffect(() => {
   setVideoId(id);
   setCurrentLoopIndex(0);
   setCurrentLoopIteration(0);
-  
+  setIsReadOnlyMode(false); // New URL loaded — allow editing
+  setLoops([{ start: 0, end: 30, loopCount: 1 }]); // Reset loops for new song
+  setVideoDuration(600); // Reset; will be updated once player reports actual duration
+
   setTimeout(() => {
     loadYouTubePlayer(id);
     fetchMostReplayed();
@@ -232,7 +240,7 @@ useEffect(() => {
 };
   
 const applySuggestedLoop = () => {
-  const newLoops = [{ start: suggestedStart, end: suggestedEnd }];
+  const newLoops = [{ start: suggestedStart, end: suggestedEnd, loopCount: 1 }];
   setLoops(newLoops);
   setShowMostReplayedSuggestion(false);
   
@@ -274,6 +282,9 @@ const loadYouTubePlayer = (id) => {
         const title = event.target.getVideoData().title;
         setVideoTitle(title);
         setArtist(extractArtist(title));
+        // Capture actual video duration so sliders don't exceed the real video length
+        const dur = event.target.getDuration();
+        if (dur > 0) setVideoDuration(Math.ceil(dur));
         // Now that the player is ready we have duration — generate a real suggestion
         fetchMostReplayed();
       },
@@ -403,13 +414,16 @@ const handlePlayPlaylist = (playlist) => {
   const player = new PlaylistPlayer(playlist, playerRef, {
     onClipChange: (clip, index, total) => {
       setCurrentPlaylistInfo({ name: playlist.name, currentIndex: index, total, currentClip: clip });
-      setLoops(clip.loops);
-      setLoopCount(clip.loopCount || 0);
+      // Normalize loops with per-loop counts (backward compat)
+      const normalizedLoops = (clip.loops || []).map(loop => ({
+        ...loop,
+        loopCount: loop.loopCount ?? (clip.loopCount ?? 1)
+      }));
+      setLoops(normalizedLoops);
       setVideoTitle(clip.title);
       setArtist(clip.artist);
       // Keep refs in sync so startTimeTracking always reads the right values
-      loopsRef.current = clip.loops;
-      loopCountRef.current = clip.loopCount || 0;
+      loopsRef.current = normalizedLoops;
       currentLoopIndexRef.current = 0;
       currentLoopIterationRef.current = 0;
     },
@@ -492,19 +506,23 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
       });
     }
 
-    const loopsToLoad = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+    // Normalize loops: ensure each has its own loopCount (backward compat with old clips)
+    const rawLoops = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+    const loopsToLoad = rawLoops.map(loop => ({
+      ...loop,
+      loopCount: loop.loopCount ?? (clipData.loopCount ?? 1)
+    }));
 
     // Update state AND refs immediately so startTimeTracking interval uses fresh values right away
     setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
     setVideoId(videoIdToPlay);
     setLoops(loopsToLoad);
-    setLoopCount(clipData.loopCount || 0);
     setCurrentLoopIndex(0);
     setCurrentLoopIteration(0);
     setIsPlaying(false);
+    setIsReadOnlyMode(true); // Playing from feed — lock the edit sliders
 
     loopsRef.current = loopsToLoad;
-    loopCountRef.current = clipData.loopCount || 0;
     currentLoopIndexRef.current = 0;
     currentLoopIterationRef.current = 0;
 
@@ -518,7 +536,7 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
         startSeconds: loopsToLoad[0].start
       });
 
-      // Poll for the new video title (loadVideoById does not re-fire onReady)
+      // Poll for the new video title + duration (loadVideoById does not re-fire onReady)
       let titlePolls = 0;
       const titleInterval = setInterval(() => {
         titlePolls++;
@@ -527,6 +545,9 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
           if (data?.title) {
             setVideoTitle(data.title);
             setArtist(extractArtist(data.title));
+            // Also grab the actual duration so sliders don't overshoot
+            const dur = playerRef.current.getDuration?.();
+            if (dur > 0) setVideoDuration(Math.ceil(dur));
             clearInterval(titleInterval);
           }
         }
@@ -574,9 +595,16 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
 
 const startTimeTracking = () => {
   if (intervalRef.current) clearInterval(intervalRef.current);
+  skipTrackingUntilRef.current = 0; // Clear any leftover dead zone on fresh start
 
   intervalRef.current = setInterval(() => {
     if (!playerRef.current?.getCurrentTime || !playerRef.current?.getPlayerState) return;
+
+    // Dead zone: skip ticks for 600 ms after any programmatic seekTo.
+    // Without this, getCurrentTime() still returns the OLD position for 1–2 ticks,
+    // which falsely fires the end-of-loop check and skips loops (especially loops
+    // that start at 0:00 or have a small end time).
+    if (Date.now() < skipTrackingUntilRef.current) return;
 
     try {
       const time = playerRef.current.getCurrentTime();
@@ -590,41 +618,36 @@ const startTimeTracking = () => {
       const currentLoops = loopsRef.current;
       const loopIdx = currentLoopIndexRef.current;
       const iteration = currentLoopIterationRef.current;
-      const count = loopCountRef.current;
 
       if (!currentLoops || currentLoops.length === 0 || !currentLoops[loopIdx]) return;
 
       const currentLoop = currentLoops[loopIdx];
       const duration = currentLoop.end - currentLoop.start;
       const buffer = duration < 15 ? 0.8 : 0.5;
+      // Per-loop count: 0 = infinite, otherwise the specific repeat count for this loop
+      const loopPlayCount = currentLoop.loopCount ?? 1;
 
       if (time >= currentLoop.end - buffer) {
-        if (loopIdx < currentLoops.length - 1) {
-          // Advance to next loop segment within the same clip
-          const nextIdx = loopIdx + 1;
-          currentLoopIndexRef.current = nextIdx;
-          setCurrentLoopIndex(nextIdx);
-          playerRef.current.seekTo(currentLoops[nextIdx].start, true);
-        } else {
-          // All segments done – check iteration count
-          const newIter = iteration + 1;
+        const newIter = iteration + 1;
 
-          if (count === 0) {
-            // Infinite – keep looping
-            currentLoopIterationRef.current = newIter;
-            setCurrentLoopIteration(newIter);
-            currentLoopIndexRef.current = 0;
-            setCurrentLoopIndex(0);
-            playerRef.current.seekTo(currentLoops[0].start, true);
-          } else if (newIter < count) {
-            // More iterations remaining
-            currentLoopIterationRef.current = newIter;
-            setCurrentLoopIteration(newIter);
-            currentLoopIndexRef.current = 0;
-            setCurrentLoopIndex(0);
-            playerRef.current.seekTo(currentLoops[0].start, true);
+        if (loopPlayCount === 0 || newIter < loopPlayCount) {
+          // This loop has more repetitions — restart it
+          currentLoopIterationRef.current = newIter;
+          setCurrentLoopIteration(newIter);
+          skipTrackingUntilRef.current = Date.now() + 600;
+          playerRef.current.seekTo(currentLoop.start, true);
+        } else {
+          // This loop's repetitions done — advance to next loop segment
+          if (loopIdx < currentLoops.length - 1) {
+            const nextIdx = loopIdx + 1;
+            currentLoopIndexRef.current = nextIdx;
+            setCurrentLoopIndex(nextIdx);
+            currentLoopIterationRef.current = 0;
+            setCurrentLoopIteration(0);
+            skipTrackingUntilRef.current = Date.now() + 600;
+            playerRef.current.seekTo(currentLoops[nextIdx].start, true);
           } else {
-            // All iterations complete – stop
+            // All loop segments done — stop
             playerRef.current.pauseVideo();
             currentLoopIterationRef.current = 0;
             setCurrentLoopIteration(0);
@@ -678,7 +701,27 @@ const startTimeTracking = () => {
       showNotification('Maximum 3 loops per song.', 'error');
       return;
     }
-    setLoops([...loops, { start: 0, end: 30 }]);
+    setLoops([...loops, { start: 0, end: 30, loopCount: 1 }]);
+  };
+
+  const updateLoopCount = (index, value) => {
+    const newLoops = [...loops];
+    newLoops[index] = { ...newLoops[index], loopCount: Number(value) };
+    setLoops(newLoops);
+  };
+
+  const moveLoop = (index, direction) => {
+    if (direction === 'up' && index === 0) return;
+    if (direction === 'down' && index === loops.length - 1) return;
+    const newLoops = [...loops];
+    const target = direction === 'up' ? index - 1 : index + 1;
+    [newLoops[index], newLoops[target]] = [newLoops[target], newLoops[index]];
+    setLoops(newLoops);
+    // Reset tracking to start of first loop
+    currentLoopIndexRef.current = 0;
+    setCurrentLoopIndex(0);
+    currentLoopIterationRef.current = 0;
+    setCurrentLoopIteration(0);
   };
 
   const updateLoop = (index, field, value) => {
@@ -686,15 +729,16 @@ const startTimeTracking = () => {
   const numValue = Number(value);
   
   if (field === 'start') {
-    newLoops[index].start = Math.max(0, numValue);
+    // Clamp start to actual video duration so sliders never exceed the real video
+    newLoops[index].start = Math.max(0, Math.min(numValue, videoDuration - 1));
     if (newLoops[index].end <= newLoops[index].start) {
-      newLoops[index].end = Math.min(newLoops[index].start + 30, 300);
+      newLoops[index].end = Math.min(newLoops[index].start + 30, videoDuration);
     }
     if (newLoops[index].end - newLoops[index].start > 45) {
       newLoops[index].end = newLoops[index].start + 45;
     }
   } else if (field === 'end') {
-    newLoops[index].end = Math.max(newLoops[index].start + 1, numValue);
+    newLoops[index].end = Math.max(newLoops[index].start + 1, Math.min(numValue, videoDuration));
     if (newLoops[index].end - newLoops[index].start > 45) {
       newLoops[index].end = newLoops[index].start + 45;
     }
@@ -777,12 +821,12 @@ const startTimeTracking = () => {
     title: videoTitle,
     artist,
     youtubeVideoId: videoId,
-    // CRITICAL: Save ALL loops as array
+    // Save ALL loops with their individual loopCount
     loops: loops.map(loop => ({
       start: Number(loop.start),
-      end: Number(loop.end)
+      end: Number(loop.end),
+      loopCount: loop.loopCount ?? 1
     })),
-    loopCount: loopCount || 0,
     userId: user?.uid,
     createdBy: user.displayName,
     likes: 0,
@@ -1323,8 +1367,8 @@ className="btn-primary w-full py-5 text-xl">
       <div className="flex items-center gap-2">
         {user?.uid ? (
           <>
-            <span className="text-sm sm:text-base font-semibold hidden md:inline truncate max-w-[150px]">
-              Hey there, {user.displayName}!
+            <span className="text-sm sm:text-base font-semibold truncate max-w-[120px] sm:max-w-[180px]">
+              {user.displayName}
             </span>
             <button
               onClick={handleChangeUsername}
@@ -1430,90 +1474,128 @@ className="btn-primary w-full py-5 text-xl"            >
                     </div>
                   )}
 
-                  <div className="bg-purple-900 bg-opacity-30 p-6 rounded-2xl border border-purple-700 border-opacity-50">
-                    <label className="block text-lg font-bold text-purple-300 mb-3">Loop Repetitions</label>
-             
-             <select
-  value={loopCount}
-  onChange={(e) => setLoopCount(Number(e.target.value))}
-  
-className="btn-secondary px-5 py-4" aria-label="Number of loop repetitions"
->
-  <option value={0}>Infinite Loop</option>
-  <option value={1}>1 time</option>
-  <option value={2}>2 times</option>
-  <option value={3}>3 times</option>
-  <option value={5}>5 times</option>
-  <option value={10}>10 times</option>
-</select>
-                    {loopCount > 0 && currentLoopIteration > 0 && (
-                      <p className="text-purple-300 text-lg mt-3">
-                        Playing: {currentLoopIteration}/{loopCount}
-                      </p>
-                    )}
-                  </div>
+                  {/* Read-only banner when playing from feed */}
+                  {isReadOnlyMode && (
+                    <div className="flex items-center justify-between bg-yellow-900 bg-opacity-40 border border-yellow-600 rounded-xl px-4 py-3">
+                      <p className="text-yellow-300 text-sm font-semibold">Playing from feed — load your own URL to edit loops</p>
+                      <button
+                        onClick={() => setIsReadOnlyMode(false)}
+                        className="text-yellow-400 hover:text-yellow-200 text-xs ml-3 underline"
+                      >Unlock</button>
+                    </div>
+                  )}
 
                   {loops.map((loop, idx) => (
-                    <div key={idx} className="bg-purple-900 bg-opacity-30 p-6 rounded-2xl border border-purple-700 border-opacity-50">
+                    <div key={idx} className={`bg-purple-900 bg-opacity-30 p-6 rounded-2xl border border-opacity-50 ${idx === currentLoopIndex && isPlaying ? 'border-pink-500' : 'border-purple-700'}`}>
+                      {/* Loop header: title + reorder + remove */}
                       <div className="flex justify-between items-center mb-5">
-                        <h4 className="font-bold text-2xl">Loop {idx + 1} {idx === currentLoopIndex && isPlaying && 'Playing'}</h4>
-                        {loops.length > 1 && (
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-bold text-2xl">
+                            Loop {idx + 1}
+                            {idx === currentLoopIndex && isPlaying && (
+                              <span className="ml-2 text-base text-pink-400 font-semibold animate-pulse">▶ Playing</span>
+                            )}
+                          </h4>
+                          {/* Reorder buttons */}
+                          {!isReadOnlyMode && loops.length > 1 && (
+                            <div className="flex flex-col gap-0.5 ml-2">
+                              <button
+                                onClick={() => moveLoop(idx, 'up')}
+                                disabled={idx === 0}
+                                className="text-purple-400 hover:text-purple-200 disabled:opacity-20 leading-none text-lg"
+                                title="Move loop up"
+                              >▲</button>
+                              <button
+                                onClick={() => moveLoop(idx, 'down')}
+                                disabled={idx === loops.length - 1}
+                                className="text-purple-400 hover:text-purple-200 disabled:opacity-20 leading-none text-lg"
+                                title="Move loop down"
+                              >▼</button>
+                            </div>
+                          )}
+                        </div>
+                        {!isReadOnlyMode && loops.length > 1 && (
                           <button onClick={() => removeLoop(idx)} className="text-red-400 hover:text-red-300 transition">
                             <X size={28} />
                           </button>
                         )}
                       </div>
-                      
+
+                      {/* Per-loop repeat count */}
+                      <div className="mb-5">
+                        <label className="block text-base font-bold text-purple-300 mb-2">Repeat this loop</label>
+                        <select
+                          value={loop.loopCount ?? 1}
+                          onChange={(e) => !isReadOnlyMode && updateLoopCount(idx, e.target.value)}
+                          disabled={isReadOnlyMode}
+                          className="btn-secondary px-4 py-3 text-sm disabled:opacity-60"
+                          aria-label={`Repeat count for loop ${idx + 1}`}
+                        >
+                          <option value={0}>Infinite</option>
+                          <option value={1}>1 time</option>
+                          <option value={2}>2 times</option>
+                          <option value={3}>3 times</option>
+                          <option value={5}>5 times</option>
+                          <option value={10}>10 times</option>
+                        </select>
+                        {idx === currentLoopIndex && isPlaying && (loop.loopCount ?? 1) > 0 && currentLoopIteration > 0 && (
+                          <span className="ml-3 text-purple-300 text-sm">
+                            {currentLoopIteration}/{loop.loopCount}
+                          </span>
+                        )}
+                      </div>
+
 <div className="space-y-6">
   {/* START TIME */}
   <div>
     <label className="block text-lg font-bold text-purple-300 mb-3">
       Start: {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')}
     </label>
-    
-    {/* Slider */}
+
     <input
       type="range"
       min="0"
-      max="600"
+      max={videoDuration}
       step="1"
       value={loop.start}
-      onChange={(e) => updateLoop(idx, 'start', e.target.value)}
-      className="w-full mb-2"
+      onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'start', e.target.value)}
+      disabled={isReadOnlyMode}
+      className="w-full mb-2 disabled:opacity-50"
     />
-    
-    {/* Manual Input */}
-    <div className="flex gap-2 items-center">
-      <input
-        type="number"
-        min="0"
-        max="10"
-        placeholder="Min"
-        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
-        onChange={(e) => {
-          const minutes = parseInt(e.target.value) || 0;
-          const seconds = loop.start % 60;
-          updateLoop(idx, 'start', minutes * 60 + seconds);
-        }}
-      />
-      <span className="text-purple-300">:</span>
-      <input
-        type="number"
-        min="0"
-        max="59"
-        placeholder="Sec"
-        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
-        onChange={(e) => {
-          const minutes = Math.floor(loop.start / 60);
-          const seconds = parseInt(e.target.value) || 0;
-          updateLoop(idx, 'start', minutes * 60 + seconds);
-        }}
-      />
-      <span className="text-sm text-purple-400 ml-2">Type exact time</span>
-    </div>
+
+    {!isReadOnlyMode && (
+      <div className="flex gap-2 items-center">
+        <input
+          type="number"
+          min="0"
+          max="10"
+          placeholder="Min"
+          className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+          onChange={(e) => {
+            const minutes = parseInt(e.target.value) || 0;
+            const seconds = loop.start % 60;
+            updateLoop(idx, 'start', minutes * 60 + seconds);
+          }}
+        />
+        <span className="text-purple-300">:</span>
+        <input
+          type="number"
+          min="0"
+          max="59"
+          placeholder="Sec"
+          className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+          onChange={(e) => {
+            const minutes = Math.floor(loop.start / 60);
+            const seconds = parseInt(e.target.value) || 0;
+            updateLoop(idx, 'start', minutes * 60 + seconds);
+          }}
+        />
+        <span className="text-sm text-purple-400 ml-2">Type exact time</span>
+      </div>
+    )}
   </div>
-  
-  {/* END TIME - Same pattern */}
+
+  {/* END TIME */}
   <div>
     <label className="block text-lg font-bold text-purple-300 mb-3">
       End: {Math.floor(loop.end/60)}:{(loop.end%60).toString().padStart(2,'0')}
@@ -1521,44 +1603,47 @@ className="btn-secondary px-5 py-4" aria-label="Number of loop repetitions"
         (Duration: {Math.max(0, loop.end - loop.start)}s / Max 45s)
       </span>
     </label>
-    
+
     <input
       type="range"
       min={loop.start + 1}
-      max={Math.min(600, loop.start + 45)}
+      max={Math.min(videoDuration, loop.start + 45)}
       step="1"
       value={loop.end}
-      onChange={(e) => updateLoop(idx, 'end', e.target.value)}
-      className="w-full mb-2"
+      onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'end', e.target.value)}
+      disabled={isReadOnlyMode}
+      className="w-full mb-2 disabled:opacity-50"
     />
-    
-    <div className="flex gap-2 items-center">
-      <input
-        type="number"
-        min="0"
-        max="10"
-        placeholder="Min"
-        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
-        onChange={(e) => {
-          const minutes = parseInt(e.target.value) || 0;
-          const seconds = loop.end % 60;
-          updateLoop(idx, 'end', minutes * 60 + seconds);
-        }}
-      />
-      <span className="text-purple-300">:</span>
-      <input
-        type="number"
-        min="0"
-        max="59"
-        placeholder="Sec"
-        className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
-        onChange={(e) => {
-          const minutes = Math.floor(loop.end / 60);
-          const seconds = parseInt(e.target.value) || 0;
-          updateLoop(idx, 'end', minutes * 60 + seconds);
-        }}
-      />
-    </div>
+
+    {!isReadOnlyMode && (
+      <div className="flex gap-2 items-center">
+        <input
+          type="number"
+          min="0"
+          max="10"
+          placeholder="Min"
+          className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+          onChange={(e) => {
+            const minutes = parseInt(e.target.value) || 0;
+            const seconds = loop.end % 60;
+            updateLoop(idx, 'end', minutes * 60 + seconds);
+          }}
+        />
+        <span className="text-purple-300">:</span>
+        <input
+          type="number"
+          min="0"
+          max="59"
+          placeholder="Sec"
+          className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
+          onChange={(e) => {
+            const minutes = Math.floor(loop.end / 60);
+            const seconds = parseInt(e.target.value) || 0;
+            updateLoop(idx, 'end', minutes * 60 + seconds);
+          }}
+        />
+      </div>
+    )}
   </div>
 </div>
                     </div>
@@ -1651,6 +1736,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 )}
                   </div>
 
+                  {!isReadOnlyMode && (
                   <div className="flex gap-3 flex-wrap">
                     {loops.length < maxLoopsPerSong && (
                       <button
@@ -1667,6 +1753,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                       Post to Feed
                     </button>
                   </div>
+                  )}
                 </div>
               )}
             </div>

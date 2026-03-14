@@ -9,6 +9,7 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
   const [searchUsername, setSearchUsername] = useState('');
   const [loading, setLoading] = useState(false);
   const [sendingRequest, setSendingRequest] = useState(false);
+  const [permissionError, setPermissionError] = useState(false);
 
   useEffect(() => {
     if (user?.uid) loadFriendships();
@@ -16,6 +17,7 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
 
   const loadFriendships = async () => {
     setLoading(true);
+    setPermissionError(false);
     try {
       const { getFriendships, getFriendActivity } = await import('../../lib/firebase');
       const all = await getFriendships(user.uid);
@@ -31,6 +33,9 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
       }
     } catch (e) {
       console.error('Load friendships error:', e);
+      if (e?.code === 'permission-denied' || e?.message?.includes('permissions')) {
+        setPermissionError(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -126,6 +131,17 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
             </button>
           ))}
         </div>
+
+        {permissionError && (
+          <div className="mb-4 bg-yellow-950 bg-opacity-70 border border-yellow-600 rounded-xl p-4 text-sm text-yellow-200">
+            <p className="font-bold mb-1">Firestore rules need updating</p>
+            <p className="text-yellow-300 text-xs leading-relaxed">
+              The friends feature requires new Firestore security rules.
+              Run <code className="bg-black bg-opacity-40 px-1 rounded">firebase deploy --only firestore:rules</code> from
+              the project root, then refresh.
+            </p>
+          </div>
+        )}
 
         {loading && <p className="text-center text-purple-400 py-6 text-sm">Loading...</p>}
 

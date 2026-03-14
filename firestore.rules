@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users: any signed-in user can read profiles (needed for username lookup).
+    // Only the owner can write their own document.
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Clips: publicly readable. Signed-in users can create.
+    // Only owner can delete; anyone signed in can update (plays/likes counters).
+    match /clips/{clipId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Playlists: publicly readable. Owner can create/update/delete.
+    match /playlists/{playlistId} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    // Payments: only owner can read/write their payment records.
+    match /payments/{paymentId} {
+      allow read: if request.auth != null &&
+        (resource.data.userId == request.auth.uid);
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+    }
+
+    // UserLikes: each user owns their own likes document.
+    match /userLikes/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Friendships: a participant can read, create, or update their own friendships.
+    // The 'participants' field is an array containing both user UIDs.
+    match /friendships/{friendshipId} {
+      allow read: if request.auth != null &&
+        request.auth.uid in resource.data.participants;
+      allow create: if request.auth != null &&
+        request.auth.uid in request.resource.data.participants &&
+        request.resource.data.fromUid == request.auth.uid;
+      allow update: if request.auth != null &&
+        request.auth.uid in resource.data.participants;
+    }
+  }
+}

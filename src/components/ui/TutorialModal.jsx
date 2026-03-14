@@ -14,24 +14,29 @@ export default function TutorialModal({ onClose }) {
         </h2>
         <div className="bg-black bg-opacity-50 rounded-2xl p-6 sm:p-8 mb-6 flex flex-col items-center justify-center aspect-video">
           <Video size={72} className="text-purple-400 mb-4" />
-          <p className="text-purple-300 text-center text-base sm:text-lg">Quick tutorial:<br/>1. Paste YouTube link<br/>2. Adjust loop points<br/>3. Play and enjoy!</p>
+          <p className="text-purple-300 text-center text-base sm:text-lg">
+            1. Paste a YouTube link<br/>
+            2. Define up to 3 sections of the song<br/>
+            3. Set how many times each section repeats<br/>
+            4. Save as a Clip &amp; add to a playlist!
+          </p>
         </div>
         <div className="grid sm:grid-cols-2 gap-4 text-base mb-6">
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-            <p className="font-semibold mb-2 text-lg">Step 1</p>
-            <p className="text-purple-200">Paste YouTube link</p>
+            <p className="font-semibold mb-2 text-lg">Clip</p>
+            <p className="text-purple-200">Up to 3 sections of a song, each with their own repeat count</p>
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-            <p className="font-semibold mb-2 text-lg">Step 2</p>
-            <p className="text-purple-200">Auto-detect best part</p>
+            <p className="font-semibold mb-2 text-lg">Sections</p>
+            <p className="text-purple-200">Pick start + end times. Set repeat count (1–10× or Infinite)</p>
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-            <p className="font-semibold mb-2 text-lg">Step 3</p>
-            <p className="text-purple-200">Loop endlessly!</p>
+            <p className="font-semibold mb-2 text-lg">Infinite repeats</p>
+            <p className="text-purple-200">Infinite caps at 5× inside playlists so the queue keeps moving</p>
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-            <p className="font-semibold mb-2 text-lg">Premium</p>
-            <p className="text-purple-200">3 loops, playlists, downloads</p>
+            <p className="font-semibold mb-2 text-lg">Playlists &amp; Queue</p>
+            <p className="text-purple-200">Add clips to playlists, then queue up to 5 playlists to play back-to-back</p>
           </div>
         </div>
         <button onClick={onClose} className="w-full py-5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-xl hover:shadow-2xl transition pulse-glow">

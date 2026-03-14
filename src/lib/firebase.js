@@ -262,6 +262,77 @@ export const getTopArtists = async (limitCount = 5) => {
   }
 };
 
+// ── FRIENDS SYSTEM ─────────────────────────────────────────────────────────
+
+/**
+ * Send a friend request by the target's displayName (username).
+ * Returns 'sent' | 'already_friends' | 'not_found' | 'self'
+ */
+export const sendFriendRequest = async (fromUid, fromDisplayName, toUsername) => {
+  const { collection, query, where, getDocs, addDoc, serverTimestamp } = await import('firebase/firestore');
+
+  if (fromDisplayName.toLowerCase() === toUsername.toLowerCase()) return 'self';
+
+  // Look up target user by displayName
+  const usersQ = query(collection(db, 'users'), where('displayName', '==', toUsername));
+  const usersSnap = await getDocs(usersQ);
+  if (usersSnap.empty) return 'not_found';
+  const toUid = usersSnap.docs[0].id;
+  const toDisplayName = usersSnap.docs[0].data().displayName;
+
+  // Check if friendship already exists (either direction)
+  const existingQ = query(
+    collection(db, 'friendships'),
+    where('participants', 'array-contains', fromUid)
+  );
+  const existingSnap = await getDocs(existingQ);
+  const alreadyExists = existingSnap.docs.some(d => d.data().participants.includes(toUid));
+  if (alreadyExists) return 'already_friends';
+
+  await addDoc(collection(db, 'friendships'), {
+    fromUid,
+    fromDisplayName,
+    toUid,
+    toDisplayName,
+    participants: [fromUid, toUid],
+    status: 'pending',
+    createdAt: new Date()
+  });
+  return 'sent';
+};
+
+export const respondToFriendRequest = async (friendshipId, accept) => {
+  const { doc, updateDoc } = await import('firebase/firestore');
+  await updateDoc(doc(db, 'friendships', friendshipId), {
+    status: accept ? 'accepted' : 'declined',
+    respondedAt: new Date()
+  });
+};
+
+export const getFriendships = async (uid) => {
+  const { collection, query, where, getDocs } = await import('firebase/firestore');
+  const q = query(collection(db, 'friendships'), where('participants', 'array-contains', uid));
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
+
+export const getFriendActivity = async (friendUids, limitCount = 10) => {
+  if (!friendUids || friendUids.length === 0) return [];
+  const { collection, query, where, getDocs, orderBy, limit } = await import('firebase/firestore');
+  // Firestore 'in' supports max 10 values
+  const batch = friendUids.slice(0, 10);
+  const q = query(
+    collection(db, 'clips'),
+    where('userId', 'in', batch),
+    orderBy('createdAt', 'desc'),
+    limit(limitCount)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+};
+
+// ── END FRIENDS SYSTEM ──────────────────────────────────────────────────────
+
 // Add these functions at the end of firebase.js
 export const signInUser = async (email, password) => {
   try {
@@ -299,6 +370,7 @@ export const sendPasswordResetEmail = async (email) => {
   try {
     await firebaseSendPasswordReset(auth, email);
   } catch (error) {
-    throw new Error(error.message);
+    // Re-throw original error to preserve error.code for UI error mapping
+    throw error;
   }
 };

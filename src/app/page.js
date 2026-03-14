@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Download, Sparkles, LogOut, Users, TrendingUp, Music } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Sparkles, LogOut, Users, TrendingUp, Music, ChevronDown, ChevronUp, UserPlus, Bell } from 'lucide-react';
 
 // Use relative imports instead of @/
 import Notification from '../components/ui/Notifications';
@@ -10,7 +10,8 @@ import TutorialModal from '../components/ui/TutorialModal';
 import { useAuth } from '../hooks/useAuth';
 import BackgroundAmbience from '../components/ui/BackgroundAmbience';
 
-import AudioVisualizer from '../components/ui/AudioVisualizer'; 
+import AudioVisualizer from '../components/ui/AudioVisualizer';
+import FriendsPanel from '../components/ui/FriendsPanel';
 import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists, ENDLESS_CAP_IN_PLAYLIST } from '../utils/playlistUtils';
 import { getArtistImageWithCache } from '../utils/spotifyUtils';
 import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
@@ -56,9 +57,25 @@ const [publicPlaylists, setPublicPlaylists] = useState([]);
 
   const [notification, setNotification] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
-  const [clips, setClips] = useState([]); 
+  const [clips, setClips] = useState([]);
 const [trendingByPlays, setTrendingByPlays] = useState([]);
 const [topArtists, setTopArtists] = useState([]);
+
+// Accordion open states for discovery sections
+const [feedExpanded, setFeedExpanded] = useState(false);
+const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
+const [trendingExpanded, setTrendingExpanded] = useState(false);
+const [artistsExpanded, setArtistsExpanded] = useState(false);
+
+// Friends panel
+const [showFriendsPanel, setShowFriendsPanel] = useState(false);
+
+// Playlist queue (up to 5 playlists queued to play consecutively)
+const [playlistQueue, setPlaylistQueue] = useState([]);
+const [playlistQueueIndex, setPlaylistQueueIndex] = useState(0);
+const [isPlayingQueue, setIsPlayingQueue] = useState(false);
+const playlistQueueRef = useRef([]);
+const playlistQueueIndexRef = useRef(0);
 
 const loadTrendingData = async () => {
   const { getTrendingClipsByPlays, getTopArtists } = await import('../lib/firebase');
@@ -91,6 +108,7 @@ const loadTrendingData = async () => {
   // currentLoopIndexRef and currentLoopIterationRef are updated directly inside startTimeTracking
 
   const maxLoopsPerSong = 3; // open to all signed-in users
+  const USERNAME_CHANGE_QUOTA = 3;
 
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type });
@@ -503,6 +521,110 @@ const handlePlayPlaylist = (playlist) => {
   }
 };
 
+// Playlist Queue helpers
+const handleAddToQueue = (playlist) => {
+  if (playlistQueue.some(p => p.id === playlist.id)) {
+    showNotification('Already in queue!', 'info');
+    return;
+  }
+  if (playlistQueue.length >= 5) {
+    showNotification('Queue holds max 5 playlists', 'error');
+    return;
+  }
+  const newQueue = [...playlistQueue, playlist];
+  setPlaylistQueue(newQueue);
+  playlistQueueRef.current = newQueue;
+  showNotification(`Added "${playlist.name}" to queue (${newQueue.length}/5)`, 'success');
+};
+
+const handleRemoveFromQueue = (playlistId) => {
+  const newQueue = playlistQueue.filter(p => p.id !== playlistId);
+  setPlaylistQueue(newQueue);
+  playlistQueueRef.current = newQueue;
+};
+
+const handleMoveQueueItem = (index, dir) => {
+  const newQueue = [...playlistQueue];
+  const target = dir === 'up' ? index - 1 : index + 1;
+  if (target < 0 || target >= newQueue.length) return;
+  [newQueue[index], newQueue[target]] = [newQueue[target], newQueue[index]];
+  setPlaylistQueue(newQueue);
+  playlistQueueRef.current = newQueue;
+};
+
+const handlePlayQueue = (startIdx = 0) => {
+  const queue = playlistQueueRef.current;
+  if (!queue || queue.length === 0) {
+    showNotification('Add playlists to the queue first!', 'error');
+    return;
+  }
+  if (startIdx >= queue.length) {
+    setIsPlayingQueue(false);
+    setPlaylistQueueIndex(0);
+    showNotification('Queue finished!', 'success');
+    return;
+  }
+
+  setIsPlayingQueue(true);
+  setPlaylistQueueIndex(startIdx);
+  playlistQueueIndexRef.current = startIdx;
+
+  const targetPlaylist = queue[startIdx];
+  showNotification(`Queue ${startIdx + 1}/${queue.length}: "${targetPlaylist.name}"`, 'info');
+
+  // Override the playlist's onPlaylistComplete to advance the queue
+  if (currentPlaylistPlayer) {
+    currentPlaylistPlayer.stop();
+  }
+
+  const player = new PlaylistPlayer(targetPlaylist, playerRef, {
+    onClipChange: (clip, index, total) => {
+      setCurrentPlaylistInfo({ name: targetPlaylist.name, currentIndex: index, total, currentClip: clip, queuePos: startIdx, queueTotal: queue.length });
+      setLoops(clip.loops);
+      setVideoTitle(clip.title);
+      setArtist(clip.artist);
+      setVideoId(clip.youtubeVideoId);
+      loopsRef.current = clip.loops;
+      currentLoopIndexRef.current = 0;
+      currentLoopIterationRef.current = 0;
+      skipTrackingUntilRef.current = Date.now() + 800;
+    },
+    onPlaylistComplete: () => {
+      // Advance to next playlist in queue
+      const nextIdx = playlistQueueIndexRef.current + 1;
+      if (nextIdx < playlistQueueRef.current.length) {
+        setTimeout(() => handlePlayQueue(nextIdx), 600);
+      } else {
+        currentPlaylistPlayerRef.current = null;
+        setIsPlayingPlaylist(false);
+        setIsPlayingQueue(false);
+        setCurrentPlaylistInfo(null);
+        setCurrentPlaylistPlayer(null);
+        setPlaylistQueueIndex(0);
+        showNotification('All queued playlists finished!', 'success');
+      }
+    },
+    showNotification
+  }, playlistMode);
+
+  currentPlaylistPlayerRef.current = player;
+  setCurrentPlaylistPlayer(player);
+  setIsPlayingPlaylist(true);
+
+  if (playerRef.current?.loadVideoById) {
+    player.playNext();
+  } else if (window.YT?.Player) {
+    playerRef.current = new window.YT.Player('youtube-player', {
+      videoId: targetPlaylist.clips[0].youtubeVideoId,
+      playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
+      events: {
+        onReady: () => player.playNext(),
+        onStateChange: onPlayerStateChange
+      }
+    });
+  }
+};
+
 const loadArtistImages = async () => {
   const uniqueArtists = [...new Set(topArtists.map(a => a.artist))];
   
@@ -527,9 +649,27 @@ const loadArtistImages = async () => {
     if (event.data === window.YT.PlayerState.PLAYING) {
       setIsPlaying(true);
       startTimeTracking();
-    } else if (event.data === window.YT.PlayerState.PAUSED || event.data === window.YT.PlayerState.ENDED) {
+    } else if (event.data === window.YT.PlayerState.PAUSED) {
       setIsPlaying(false);
       stopTimeTracking();
+    } else if (event.data === window.YT.PlayerState.ENDED) {
+      // YouTube ENDED fires when the video reaches its actual end,
+      // which can happen if a section's end time is close to the video's total duration
+      // and our 100ms tracker didn't catch it in time. Treat it as: restart the
+      // current section from the top so playback never escapes the clip boundary.
+      setIsPlaying(false);
+      stopTimeTracking();
+      const loops = loopsRef.current;
+      const idx = currentLoopIndexRef.current;
+      if (loops && loops[idx]) {
+        // Restart current section — don't reset iteration count, let normal logic handle it
+        setTimeout(() => {
+          try {
+            playerRef.current?.seekTo(loops[idx].start, true);
+            playerRef.current?.playVideo();
+          } catch (e) {}
+        }, 300);
+      }
     }
   };
   
@@ -643,10 +783,9 @@ const startTimeTracking = () => {
   intervalRef.current = setInterval(() => {
     if (!playerRef.current?.getCurrentTime || !playerRef.current?.getPlayerState) return;
 
-    // Dead zone: skip ticks for 600 ms after any programmatic seekTo.
+    // Dead zone: skip ticks for 800 ms after any programmatic seekTo.
     // Without this, getCurrentTime() still returns the OLD position for 1–2 ticks,
-    // which falsely fires the end-of-loop check and skips loops (especially loops
-    // that start at 0:00 or have a small end time).
+    // which falsely fires the end-of-loop check and skips sections.
     if (Date.now() < skipTrackingUntilRef.current) return;
 
     try {
@@ -666,31 +805,40 @@ const startTimeTracking = () => {
 
       const currentLoop = currentLoops[loopIdx];
       const duration = currentLoop.end - currentLoop.start;
-      const buffer = duration < 15 ? 0.8 : 0.5;
-      // Per-loop count: 0 = infinite, otherwise the specific repeat count for this loop
+      // Generous buffer to catch end-of-section reliably regardless of connection speed
+      const buffer = Math.min(1.0, duration * 0.06);
+      // Per-section repeat count: 0 = infinite, otherwise specific repeat count for this section
       const loopPlayCount = currentLoop.loopCount ?? 1;
+
+      // DEFENSIVE: if playback drifted BEFORE start (e.g. YouTube resumed from beginning),
+      // snap back to section start immediately.
+      if (time < currentLoop.start - 0.3) {
+        skipTrackingUntilRef.current = Date.now() + 800;
+        playerRef.current.seekTo(currentLoop.start, true);
+        return;
+      }
 
       if (time >= currentLoop.end - buffer) {
         const newIter = iteration + 1;
 
         if (loopPlayCount === 0 || newIter < loopPlayCount) {
-          // This loop has more repetitions — restart it
+          // This section has more repetitions — restart it
           currentLoopIterationRef.current = newIter;
           setCurrentLoopIteration(newIter);
-          skipTrackingUntilRef.current = Date.now() + 600;
+          skipTrackingUntilRef.current = Date.now() + 800;
           playerRef.current.seekTo(currentLoop.start, true);
         } else {
-          // This loop's repetitions done — advance to next loop segment
+          // This section's repetitions done — advance to next section
           if (loopIdx < currentLoops.length - 1) {
             const nextIdx = loopIdx + 1;
             currentLoopIndexRef.current = nextIdx;
             setCurrentLoopIndex(nextIdx);
             currentLoopIterationRef.current = 0;
             setCurrentLoopIteration(0);
-            skipTrackingUntilRef.current = Date.now() + 600;
+            skipTrackingUntilRef.current = Date.now() + 800;
             playerRef.current.seekTo(currentLoops[nextIdx].start, true);
           } else {
-            // All loop segments for this clip are done
+            // All sections for this clip are done
             currentLoopIterationRef.current = 0;
             setCurrentLoopIteration(0);
             currentLoopIndexRef.current = 0;
@@ -698,12 +846,10 @@ const startTimeTracking = () => {
             stopTimeTracking();
 
             if (currentPlaylistPlayerRef.current) {
-              // Playlist mode: hand off to PlaylistPlayer to load the next clip.
-              // Do NOT pauseVideo — PlaylistPlayer.playNext() will call loadVideoById
-              // which takes care of transitioning to the next track.
+              // Playlist mode: advance to next clip
               currentPlaylistPlayerRef.current.advanceToNextClip();
             } else {
-              // Standalone mode: just pause
+              // Standalone mode: pause cleanly
               playerRef.current.pauseVideo();
             }
           }
@@ -712,7 +858,7 @@ const startTimeTracking = () => {
     } catch (e) {
       console.error('Tracking error:', e);
     }
-  }, 150);
+  }, 100); // 100ms polling for tighter boundary adherence
 };
   const stopTimeTracking = () => {
     if (intervalRef.current) {
@@ -750,10 +896,14 @@ const startTimeTracking = () => {
 
   const addLoop = () => {
     if (loops.length >= maxLoopsPerSong) {
-      showNotification('Maximum 3 loops per song.', 'error');
+      showNotification('Maximum 3 sections per clip.', 'error');
       return;
     }
-    setLoops([...loops, { start: 0, end: 30, loopCount: 1 }]);
+    // New section starts where the last one ends (capped by video duration)
+    const lastLoop = loops[loops.length - 1];
+    const newStart = Math.min(lastLoop.end, videoDuration - 1);
+    const newEnd = Math.min(newStart + 30, videoDuration);
+    setLoops([...loops, { start: newStart, end: newEnd, loopCount: 1 }]);
   };
 
   const updateLoopCount = (index, value) => {
@@ -816,39 +966,7 @@ const startTimeTracking = () => {
     if (currentLoopIndex >= loops.length - 1) setCurrentLoopIndex(0);
   };
 
-  const handleDownload = async () => {
-    if (!videoId) {
-      showNotification('Load a song first!', 'error');
-      return;
-    }
-
-    const loop = loops[currentLoopIndex];
-    try {
-      showNotification('Preparing download...', 'info');
-      const response = await fetch('/api/download', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          videoId, startTime: loop.start, endTime: loop.end, title: videoTitle
-        })
-      });
-
-      if (!response.ok) throw new Error('Download failed');
-
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${videoTitle.replace(/[^a-z0-9]/gi, '_')}_loop.mp3`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-      showNotification('Download started!', 'success');
-    } catch (error) {
-      showNotification('Download failed. Try again later.', 'error');
-    }
-  };
+  // Download removed — yt-dlp/ffmpeg not available in serverless deployment (Vercel).
 
   // Update handlePostToFeed function (around line 740):
   
@@ -892,7 +1010,7 @@ const startTimeTracking = () => {
   try {
     const { createClip } = await import('../lib/firebase');
     await createClip(clipData);
-    showNotification(`✅ Posted ${loops.length} loop(s) to feed!`, 'success');
+    showNotification(`✅ Clip posted with ${loops.length} section(s)!`, 'success');
   } catch (error) {
     console.error('Post error:', error);
     showNotification('Failed to post. Try again.', 'error');
@@ -1052,37 +1170,56 @@ const handleUnlikeClip = async (clipId) => {
     showNotification('Please sign in first!', 'error');
     return;
   }
-  
-  const newName = prompt('Enter new display name (3-20 characters):');
-  if (!newName || newName.length < 3 || newName.length > 20) {
-    showNotification('Invalid name. Must be 3-20 characters.', 'error');
+
+  const changesUsed = user.usernameChanges ?? 0;
+  const remaining = USERNAME_CHANGE_QUOTA - changesUsed;
+  if (remaining <= 0) {
+    showNotification(`Username can only be changed ${USERNAME_CHANGE_QUOTA} times total. Limit reached.`, 'error');
     return;
   }
-  
+
+  const newName = prompt(`Enter new display name (3-20 chars, alphanumeric/underscore/spaces).\nChanges remaining after this: ${remaining - 1}/${USERNAME_CHANGE_QUOTA}`);
+  if (!newName?.trim()) return;
+  const trimmed = newName.trim();
+  if (trimmed.length < 3 || trimmed.length > 20) {
+    showNotification('Name must be 3-20 characters.', 'error');
+    return;
+  }
+  if (!/^[a-zA-Z0-9_ ]+$/.test(trimmed)) {
+    showNotification('Only letters, numbers, underscores and spaces allowed.', 'error');
+    return;
+  }
+
   try {
     const { db } = await import('../lib/firebase');
-    const { doc, updateDoc, collection, query, where, getDocs, writeBatch } = await import('firebase/firestore');
-    
-    // Update user document
+    const { doc, updateDoc, collection, query, where, getDocs, writeBatch, increment } = await import('firebase/firestore');
+
+    // Check uniqueness
+    const existingQuery = query(collection(db, 'users'), where('displayName', '==', trimmed));
+    const existingSnap = await getDocs(existingQuery);
+    if (!existingSnap.empty && existingSnap.docs[0].id !== user.uid) {
+      showNotification('That username is taken. Choose another.', 'error');
+      return;
+    }
+
     await updateDoc(doc(db, 'users', user.uid), {
-      displayName: newName
+      displayName: trimmed,
+      usernameChanges: increment(1)
     });
-    
-    // Update ALL clips by this user (BATCH UPDATE)
+
     const clipsQuery = query(collection(db, 'clips'), where('userId', '==', user.uid));
     const clipsSnapshot = await getDocs(clipsQuery);
-    
     const batch = writeBatch(db);
     clipsSnapshot.docs.forEach((clipDoc) => {
-      batch.update(clipDoc.ref, { createdBy: newName });
+      batch.update(clipDoc.ref, { createdBy: trimmed });
     });
     await batch.commit();
-    
-    setUser(prev => ({ ...prev, displayName: newName }));
-    showNotification('✅ Username updated everywhere!', 'success');
+
+    setUser(prev => ({ ...prev, displayName: trimmed, usernameChanges: changesUsed + 1 }));
+    showNotification(`Username updated! ${remaining - 1} change(s) remaining.`, 'success');
   } catch (error) {
     console.error('Username update error:', error);
-    showNotification('❌ Failed to update username', 'error');
+    showNotification('Failed to update username', 'error');
   }
 };
   useEffect(() => {
@@ -1286,6 +1423,15 @@ h1, h2, h3 {
 
 
 {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
+
+{showFriendsPanel && (
+  <FriendsPanel
+    user={user}
+    onClose={() => setShowFriendsPanel(false)}
+    onPlayClip={handlePlayClip}
+    showNotification={showNotification}
+  />
+)}
       {showMostReplayedSuggestion && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500">
@@ -1312,7 +1458,7 @@ className="btn-primary w-full py-5 text-xl">
             <div className="flex justify-between items-center mb-4">
               <div className="flex-1 mr-3">
                 <h2 className="text-2xl font-bold truncate">{managingPlaylist.name}</h2>
-                <p className="text-sm text-purple-400">{managingPlaylist.clips?.length || 0}/10 songs</p>
+                <p className="text-sm text-purple-400">{managingPlaylist.clips?.length || 0}/10 clips</p>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => handleRenamePlaylist(managingPlaylist)}
@@ -1428,28 +1574,41 @@ className="btn-primary w-full py-5 text-xl">
       )}
 <header className="border-b border-purple-700 border-opacity-50 bg-black bg-opacity-20 backdrop-blur-md relative z-10 sticky top-0">
   <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-    {/* Top row: Logo and Auth */}
+    {/* Top row: Logo, Friends nav, Auth */}
     <div className="flex justify-between items-center mb-3 sm:mb-0">
       <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent tracking-tight">
         ChorusClip
       </h1>
-      
-      {/* Auth section */}
-      <div className="flex items-center gap-2">
+
+      <div className="flex items-center gap-2 sm:gap-3">
+        {/* Friends nav (signed-in only) */}
+        {user?.uid && (
+          <button
+            onClick={() => setShowFriendsPanel(true)}
+            className="relative px-3 py-2 rounded-xl bg-purple-800 bg-opacity-50 hover:bg-opacity-80 transition flex items-center gap-1.5 text-sm font-semibold"
+            aria-label="Friends"
+          >
+            <UserPlus size={18} />
+            <span className="hidden sm:inline">Friends</span>
+          </button>
+        )}
+
+        {/* Auth section */}
         {user?.uid ? (
           <>
-            <span className="text-sm sm:text-base font-semibold truncate max-w-[120px] sm:max-w-[180px]">
+            <span className="text-sm sm:text-base font-semibold truncate max-w-[100px] sm:max-w-[160px]">
               {user.displayName}
             </span>
             <button
               onClick={handleChangeUsername}
               className="text-xs sm:text-sm text-purple-300 hover:text-purple-200 transition"
               aria-label="Change username"
+              title={`Change username (${USERNAME_CHANGE_QUOTA - (user.usernameChanges ?? 0)} change(s) remaining)`}
             >
               Edit
             </button>
-            <button 
-              onClick={handleSignOut} 
+            <button
+              onClick={handleSignOut}
               className="px-3 sm:px-5 py-2 text-sm sm:text-base bg-red-600 hover:bg-red-700 rounded-xl font-semibold transition flex items-center gap-1 sm:gap-2"
               aria-label="Sign out"
             >
@@ -1458,8 +1617,8 @@ className="btn-primary w-full py-5 text-xl">
             </button>
           </>
         ) : (
-          <button 
-            onClick={() => setShowAuthModal(true)} 
+          <button
+            onClick={() => setShowAuthModal(true)}
             className="px-4 sm:px-6 py-2 text-sm sm:text-base bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold hover:shadow-lg transition"
             aria-label="Sign in to ChorusClip"
           >
@@ -1468,13 +1627,12 @@ className="btn-primary w-full py-5 text-xl">
         )}
       </div>
     </div>
-    
+
     {/* Bottom row: Badges */}
     <div className="flex flex-wrap items-center gap-2 justify-center sm:justify-start mt-3 sm:mt-0">
       <span className="text-xs sm:text-sm bg-purple-700 bg-opacity-50 backdrop-blur px-3 py-1.5 rounded-full border border-purple-500 font-semibold whitespace-nowrap">
         Strathmore Exclusive
       </span>
-      
     </div>
   </div>
 </header>
@@ -1487,7 +1645,7 @@ className="btn-primary w-full py-5 text-xl">
             <div 
 className="card">          
 <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-black tracking-tight">Create Loop</h2>
+                <h2 className="text-3xl font-black tracking-tight">Create Clip</h2>
                 <button onClick={() => setShowTutorial(true)} className="text-purple-400 hover:text-purple-300 transition flex items-center gap-2 text-base">
                   <Video size={22} /> Help
                 </button>
@@ -1552,7 +1710,7 @@ className="btn-primary w-full py-5 text-xl"            >
                   {/* Read-only banner when playing from feed */}
                   {isReadOnlyMode && (
                     <div className="flex items-center justify-between bg-yellow-900 bg-opacity-40 border border-yellow-600 rounded-xl px-4 py-3">
-                      <p className="text-yellow-300 text-sm font-semibold">Playing from feed — load your own URL to edit loops</p>
+                      <p className="text-yellow-300 text-sm font-semibold">Playing from feed — load your own URL to edit sections</p>
                       <button
                         onClick={() => setIsReadOnlyMode(false)}
                         className="text-yellow-400 hover:text-yellow-200 text-xs ml-3 underline"
@@ -1562,11 +1720,11 @@ className="btn-primary w-full py-5 text-xl"            >
 
                   {loops.map((loop, idx) => (
                     <div key={idx} className={`bg-purple-900 bg-opacity-30 p-6 rounded-2xl border border-opacity-50 ${idx === currentLoopIndex && isPlaying ? 'border-pink-500' : 'border-purple-700'}`}>
-                      {/* Loop header: title + reorder + remove */}
+                      {/* Section header: title + reorder + remove */}
                       <div className="flex justify-between items-center mb-5">
                         <div className="flex items-center gap-2">
                           <h4 className="font-bold text-2xl">
-                            Loop {idx + 1}
+                            Section {idx + 1}
                             {idx === currentLoopIndex && isPlaying && (
                               <span className="ml-2 text-base text-pink-400 font-semibold animate-pulse">▶ Playing</span>
                             )}
@@ -1578,13 +1736,13 @@ className="btn-primary w-full py-5 text-xl"            >
                                 onClick={() => moveLoop(idx, 'up')}
                                 disabled={idx === 0}
                                 className="text-purple-400 hover:text-purple-200 disabled:opacity-20 leading-none text-lg"
-                                title="Move loop up"
+                                title="Move section up"
                               >▲</button>
                               <button
                                 onClick={() => moveLoop(idx, 'down')}
                                 disabled={idx === loops.length - 1}
                                 className="text-purple-400 hover:text-purple-200 disabled:opacity-20 leading-none text-lg"
-                                title="Move loop down"
+                                title="Move section down"
                               >▼</button>
                             </div>
                           )}
@@ -1596,22 +1754,25 @@ className="btn-primary w-full py-5 text-xl"            >
                         )}
                       </div>
 
-                      {/* Per-loop repeat count */}
+                      {/* Per-section repeat count */}
                       <div className="mb-5">
-                        <label className="block text-base font-bold text-purple-300 mb-2">Repeat this loop</label>
+                        <label className="block text-base font-bold text-purple-300 mb-2">
+                          Repeats for this section
+                          <span className="text-xs text-purple-500 ml-2 font-normal">(Infinite = 5× in playlists)</span>
+                        </label>
                         <select
                           value={loop.loopCount ?? 1}
                           onChange={(e) => !isReadOnlyMode && updateLoopCount(idx, e.target.value)}
                           disabled={isReadOnlyMode}
                           className="btn-secondary px-4 py-3 text-sm disabled:opacity-60"
-                          aria-label={`Repeat count for loop ${idx + 1}`}
+                          aria-label={`Repeat count for section ${idx + 1}`}
                         >
-                          <option value={0}>Infinite</option>
-                          <option value={1}>1 time</option>
-                          <option value={2}>2 times</option>
-                          <option value={3}>3 times</option>
-                          <option value={5}>5 times</option>
-                          <option value={10}>10 times</option>
+                          <option value={0}>Infinite (caps at 5×)</option>
+                          <option value={1}>1×</option>
+                          <option value={2}>2×</option>
+                          <option value={3}>3×</option>
+                          <option value={5}>5×</option>
+                          <option value={10}>10×</option>
                         </select>
                         {idx === currentLoopIndex && isPlaying && (loop.loopCount ?? 1) > 0 && currentLoopIteration > 0 && (
                           <span className="ml-3 text-purple-300 text-sm">
@@ -1801,16 +1962,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   <RotateCcw size={28} aria-hidden="true" />
 </button>
                    
-                  {user?.uid && (
-  <button
-    onClick={handleDownload}
-    className="px-7 py-5 bg-green-700 hover:bg-green-600 rounded-xl transition"
-    aria-label="Download loop as MP3"
-    title="Download loop as MP3"
-  >
-    <Download size={28} aria-hidden="true" />
-  </button>
-)}
+                  {/* Download removed — not available in serverless deployment */}
                   </div>
 
                   {!isReadOnlyMode && (
@@ -1820,7 +1972,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                         onClick={addLoop}
                         className="flex-1 min-w-[200px] py-5 text-lg bg-purple-700 bg-opacity-50 hover:bg-opacity-70 rounded-xl flex items-center justify-center gap-2 font-bold transition"
                       >
-                        <Plus size={22} /> Add Loop ({loops.length}/{maxLoopsPerSong})
+                        <Plus size={22} /> Add Section ({loops.length}/{maxLoopsPerSong})
                       </button>
                     )}
                     <button
@@ -1875,19 +2027,27 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               <ul className="space-y-3 text-base text-purple-200">
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">✨</span>
-                  <span>Auto-detect most replayed sections</span>
+                  <span>Auto-detect the chorus/hook section of any song</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">🙏</span>
-                  <span>Perfect for worship, study, workouts</span>
+                  <span>Perfect for worship, study, workouts, and choirs</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <span className="text-purple-400 text-lg">🔄</span>
-                  <span>Loop up to 3 sections per song</span>
+                  <span className="text-purple-400 text-lg">🎵</span>
+                  <span>Create a <strong>Clip</strong> with up to 3 sections per song, each repeating a custom number of times</span>
                 </li>
                 <li className="flex items-start gap-2">
-                  <span className="text-purple-400 text-lg">💎</span>
-                  <span>Download audio loops (sign in required)</span>
+                  <span className="text-purple-400 text-lg">♾️</span>
+                  <span><strong>Infinite repeats</strong> cap at 5× inside playlists to keep things moving</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-purple-400 text-lg">📋</span>
+                  <span>Queue up to 5 playlists and play them back-to-back</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-purple-400 text-lg">👥</span>
+                  <span>Add friends by username and see what they're listening to</span>
                 </li>
               </ul>
             </div>
@@ -1913,151 +2073,129 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
 
           <div className="space-y-6">
-            <div className="card"> <h2 className="text-3xl font-black tracking-tight mb-6">Trending Clips</h2>             
+            <div className="card">
+              <button
+                className="w-full flex justify-between items-center mb-4"
+                onClick={() => setFeedExpanded(v => !v)}
+              >
+                <h2 className="text-3xl font-black tracking-tight">Trending Clips</h2>
+                <span className="flex items-center gap-2 text-purple-400 text-sm font-semibold">
+                  {clips.slice(0, 5).length} shown
+                  {feedExpanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
+                </span>
+              </button>
               {clips.length === 0 ? (
                 <div className="text-center py-12 text-purple-300">
                   <p className="text-xl mb-2">No clips yet!</p>
-                  <p className="text-base">Be the first to post a loop</p>
+                  <p className="text-base">Be the first to post a clip</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-       
-       {clips.map((clip) => {
-  const clipLoops = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30 }];
-  const firstLoop = clipLoops[0];
-  
-  return (
-  <div
-    key={clip.id}
-    className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
-    role="article"
-    aria-label={`${clip.title} by ${clip.artist}`}
-  >
-    {/* Header: title, artist, loops, delete button */}
-    <div className="flex justify-between items-start mb-3">
-      <div className="flex-1">
-        <h3 className="font-bold text-xl">{clip.title}</h3>
-        <p className="text-base text-purple-300">{clip.artist}</p>
-        <p className="text-sm text-purple-400 mt-1">
-          by @{clip.createdBy} • {clipLoops.length} loop{clipLoops.length > 1 ? 's' : ''}
-          {clip.loopCount > 0 && ` • ${clip.loopCount}x`}
-        </p>
-      </div>
+                  {(feedExpanded ? clips : clips.slice(0, 5)).map((clip) => {
+                    const clipSections = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30 }];
+                    const firstSection = clipSections[0];
+                    return (
+                      <div
+                        key={clip.id}
+                        className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
+                        role="article"
+                        aria-label={`${clip.title} by ${clip.artist}`}
+                      >
+                        <div className="flex justify-between items-start mb-3">
+                          <div className="flex-1">
+                            <h3 className="font-bold text-xl">{clip.title}</h3>
+                            <p className="text-base text-purple-300">{clip.artist}</p>
+                            <p className="text-sm text-purple-400 mt-1">
+                              by @{clip.createdBy} • {clipSections.length} section{clipSections.length > 1 ? 's' : ''}
+                            </p>
+                          </div>
+                          {clip.userId === user?.uid && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteClip(clip.id); }}
+                              className="text-red-400 hover:text-red-300 transition ml-2"
+                              title="Delete clip"
+                              aria-label="Delete clip"
+                            >
+                              <X size={20} />
+                            </button>
+                          )}
+                        </div>
 
-     {/* Delete button if user owns the clip */}
-{clip.userId === user?.uid && (
-  <button
-    onClick={(e) => {
-      e.stopPropagation();
-      handleDeleteClip(clip.id);
-    }}
-    className="text-red-400 hover:text-red-300 transition ml-2"
-    title="Delete clip"
-    aria-label="Delete clip"
-  >
-    <X size={20} />
-  </button>
-)}
+                        {/* Section timestamps */}
+                        <div className="mb-3 space-y-1">
+                          {clipSections.map((sec, idx) => (
+                            <div key={idx} className="text-sm text-purple-400">
+                              Section {idx + 1}: {Math.floor(sec.start / 60)}:{(sec.start % 60).toString().padStart(2, '0')} –{' '}
+                              {Math.floor(sec.end / 60)}:{(sec.end % 60).toString().padStart(2, '0')}
+                              {sec.loopCount > 0 && <span className="ml-2 text-pink-400">{sec.loopCount}×</span>}
+                              {sec.loopCount === 0 && <span className="ml-2 text-pink-400">∞</span>}
+                            </div>
+                          ))}
+                        </div>
 
-    </div>
+                        <div className="flex justify-between items-center text-base">
+                          <span className="text-purple-400 font-semibold">
+                            {Math.max(0, firstSection.end - firstSection.start)}s · section 1
+                          </span>
+                          <div className="flex items-center gap-4">
+                            <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
+                            <button
+                              onClick={() =>
+                                user.likedClips?.includes(clip.id)
+                                  ? handleUnlikeClip(clip.id)
+                                  : handleLikeClip(clip.id)
+                              }
+                              className={`transition transform hover:scale-110 ${user.likedClips?.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
+                              aria-label={user.likedClips?.includes(clip.id) ? `Unlike ${clip.title}` : `Like ${clip.title}`}
+                              aria-pressed={user.likedClips?.includes(clip.id)}
+                            >
+                              <Heart size={24} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} aria-hidden="true" />
+                            </button>
+                            <button
+                              onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+                              className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
+                              aria-label={`Play ${clip.title}`}
+                            >
+                              <Play size={16} fill="currentColor" aria-hidden="true" />
+                              <span>{clip.plays || 0}</span>
+                            </button>
+                            <button
+                              onClick={() => handleShareClip(clip)}
+                              className="text-purple-400 hover:text-purple-300 transition"
+                              aria-label={`Share ${clip.title}`}
+                            >
+                              <Share2 size={18} aria-hidden="true" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!user?.uid) { showNotification('Sign in to create playlists!', 'error'); setShowAuthModal(true); return; }
+                                if (selectedClipsForPlaylist.length >= 10) { showNotification('Playlist cap is 10 clips!', 'error'); return; }
+                                if (isClipDuplicate(clip, selectedClipsForPlaylist)) { showNotification('Already in your queue!', 'info'); return; }
+                                setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
+                                showNotification(`Added! (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
+                              }}
+                              className="text-green-400 hover:text-green-300 transition"
+                              aria-label="Add to playlist"
+                            >
+                              <Plus size={18} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
 
-    {/* Loop timestamps */}
-    <div className="mb-3 space-y-1">
-      {clipLoops.map((loop, idx) => (
-        <div key={idx} className="text-sm text-purple-400">
-          Loop {idx + 1}: {Math.floor(loop.start / 60)}:{(loop.start % 60).toString().padStart(2, '0')} -{' '}
-          {Math.floor(loop.end / 60)}:{(loop.end % 60).toString().padStart(2, '0')}
-        </div>
-      ))}
-    </div>
-
-    {/* Footer: duration, like/play/share */}
-    <div className="flex justify-between items-center text-base">
-      <span className="text-purple-400 font-semibold">
-        Duration: {Math.max(0, firstLoop.end - firstLoop.start)}s per loop
-      </span>
-      <div className="flex items-center gap-4">
-        <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
-
-        {/* Like / Unlike */}
-        <button
-          onClick={() =>
-            user.likedClips.includes(clip.id)
-              ? handleUnlikeClip(clip.id)
-              : handleLikeClip(clip.id)
-          }
-          className={`transition transform hover:scale-110 ${
-            user.likedClips.includes(clip.id)
-              ? 'text-pink-500'
-              : 'text-pink-400 hover:text-pink-300'
-          }`}
-          aria-label={
-            user.likedClips.includes(clip.id)
-              ? `Unlike ${clip.title}`
-              : `Like ${clip.title}`
-          }
-          aria-pressed={user.likedClips.includes(clip.id)}
-        >
-          <Heart
-            size={24}
-            fill={user.likedClips.includes(clip.id) ? 'currentColor' : 'none'}
-            aria-hidden="true"
-          />
-        </button>
-
-        {/* Play */}
-        <button
-          onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-          className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
-          aria-label={`Play ${clip.title} by ${clip.artist}`}
-        >
-          <Play size={16} fill="currentColor" aria-hidden="true" />
-          <span>{clip.plays || 0}</span>
-        </button>
-
-        {/* Share */}
-        <button
-          onClick={() => handleShareClip(clip)}
-          className="text-purple-400 hover:text-purple-300 transition"
-          aria-label={`Share ${clip.title}`}
-        >
-          <Share2 size={18} aria-hidden="true" />
-        </button>
-
-        {/* Add to Playlist */}
-        <button
-  onClick={(e) => {
-    e.stopPropagation();
-    if (!user?.uid) {
-      showNotification('Sign in to create playlists!', 'error');
-      setShowAuthModal(true);
-      return;
-    }
-    if (selectedClipsForPlaylist.length >= 10) {
-      showNotification('Playlist cap is 10 songs!', 'error');
-      return;
-    }
-    if (isClipDuplicate(clip, selectedClipsForPlaylist)) {
-      showNotification('Already in your queue!', 'info');
-      return;
-    }
-    setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
-    showNotification(`Added! (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
-  }}
-  className="text-green-400 hover:text-green-300 transition"
-  aria-label="Add to playlist"
->
-  <Plus size={18} />
-</button>
-      </div>
-    </div>
-  </div>
-);
-
-})}
+                  {clips.length > 5 && (
+                    <button
+                      onClick={() => setFeedExpanded(v => !v)}
+                      className="w-full py-3 bg-purple-800 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"
+                    >
+                      {feedExpanded ? <><ChevronUp size={16}/> Show less</> : <><ChevronDown size={16}/> Show {clips.length - 5} more clips</>}
+                    </button>
+                  )}
                 </div>
               )}
-
             </div>
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
@@ -2068,26 +2206,26 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </h3>
 
     {/* Play mode toggle */}
-    <div className="flex gap-2 mb-4">
+    <div className="flex gap-2 mb-3">
       <button
         onClick={() => setPlaylistMode('default')}
         className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'default' ? 'bg-green-600 text-white' : 'bg-green-900 bg-opacity-40 text-green-300 hover:bg-opacity-60'}`}
-        title="Each clip plays its saved repeat count (infinite clips capped at 5)"
+        title="Each section plays its saved repeat count (infinite capped at 5)"
       >
         Saved Repeats
       </button>
       <button
         onClick={() => setPlaylistMode('once')}
         className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'once' ? 'bg-blue-600 text-white' : 'bg-blue-900 bg-opacity-40 text-blue-300 hover:bg-opacity-60'}`}
-        title="Every clip plays exactly once"
+        title="Every section in every clip plays exactly once"
       >
         Play Once Each
       </button>
     </div>
-    <p className="text-xs text-green-500 mt-1 mb-1">
+    <p className="text-xs text-green-500 mb-4">
       {playlistMode === 'once'
-        ? 'Every loop plays 1x regardless of saved count'
-        : `Infinite loops play ${ENDLESS_CAP_IN_PLAYLIST}x max in a playlist`}
+        ? 'Every section plays 1× regardless of saved count'
+        : `Infinite sections play ${ENDLESS_CAP_IN_PLAYLIST}× max`}
     </p>
 
     <div className="space-y-3">
@@ -2096,106 +2234,198 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           <div className="flex justify-between items-center mb-3">
             <div>
               <p className="font-bold text-lg">{playlist.name}</p>
-              <p className="text-sm text-green-400">{playlist.clips?.length || 0}/10 songs</p>
+              <p className="text-sm text-green-400">{playlist.clips?.length || 0}/10 clips</p>
             </div>
-            <button onClick={() => setManagingPlaylist(playlist)}
-              className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg text-sm font-semibold transition">
-              Manage
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleAddToQueue(playlist)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistQueue.some(p => p.id === playlist.id) ? 'bg-yellow-600 text-white' : 'bg-yellow-900 bg-opacity-40 text-yellow-300 hover:bg-opacity-70'}`}
+                title="Add to playlist queue"
+              >
+                {playlistQueue.some(p => p.id === playlist.id) ? 'In Queue' : '+ Queue'}
+              </button>
+              <button onClick={() => setManagingPlaylist(playlist)}
+                className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg text-sm font-semibold transition">
+                Manage
+              </button>
+            </div>
           </div>
           <button onClick={() => handlePlayPlaylist(playlist)}
             className="w-full py-3 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2">
             <Play size={18} fill="currentColor" />
-            {playlistMode === 'once' ? 'Play Once Each' : 'Play (Saved Repeats)'}
+            {playlistMode === 'once' ? 'Play Once Each' : 'Play'}
           </button>
         </div>
       ))}
     </div>
+
+    {/* Playlist Queue Panel */}
+    {playlistQueue.length > 0 && (
+      <div className="mt-5 bg-yellow-900 bg-opacity-30 border border-yellow-600 border-opacity-50 rounded-2xl p-4">
+        <div className="flex justify-between items-center mb-3">
+          <p className="font-bold text-yellow-300 flex items-center gap-2">
+            Playlist Queue ({playlistQueue.length}/5)
+          </p>
+          {isPlayingQueue && (
+            <span className="text-xs text-yellow-400 animate-pulse font-semibold">▶ Playing queue…</span>
+          )}
+        </div>
+        <div className="space-y-2 mb-3">
+          {playlistQueue.map((pl, qi) => (
+            <div key={pl.id} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
+              <span className="text-yellow-400 font-bold w-5 text-sm">{qi + 1}</span>
+              <span className="flex-1 text-sm font-semibold truncate">{pl.name}</span>
+              <div className="flex gap-1">
+                <button onClick={() => handleMoveQueueItem(qi, 'up')} disabled={qi === 0}
+                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▲</button>
+                <button onClick={() => handleMoveQueueItem(qi, 'down')} disabled={qi === playlistQueue.length - 1}
+                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▼</button>
+                <button onClick={() => handleRemoveFromQueue(pl.id)}
+                  className="text-red-400 hover:text-red-300 ml-1"><X size={14}/></button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => handlePlayQueue(0)}
+          className="w-full py-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl font-bold hover:shadow-lg transition flex items-center justify-center gap-2"
+        >
+          <Play size={18} fill="currentColor" />
+          Play Queue ({playlistQueue.length} playlist{playlistQueue.length > 1 ? 's' : ''})
+        </button>
+      </div>
+    )}
   </div>
 )}
 
             {/* STRATHMORE LEADERBOARD SECTION */}
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
-              <h3 className="font-black text-xl mb-4 flex items-center gap-2">
-                Strathmore Leaderboard
-              </h3>
-              <p className="text-sm text-purple-300 mb-4">Top clip creators this week</p>
+              <button
+                className="w-full flex justify-between items-center mb-1"
+                onClick={() => setLeaderboardExpanded(v => !v)}
+              >
+                <h3 className="font-black text-xl flex items-center gap-2">Strathmore Leaderboard</h3>
+                <span className="flex items-center gap-1 text-purple-400 text-sm">
+                  Top creators {leaderboardExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+                </span>
+              </button>
+              <p className="text-xs text-purple-400 mb-4">This week · sorted by clips posted</p>
               {leaderboard.length === 0 ? (
-                <div className="text-center py-8 text-purple-300">
-                  <p className="text-base">No rankings yet!</p>
-                </div>
+                <div className="text-center py-6 text-purple-300"><p className="text-base">No rankings yet!</p></div>
               ) : (
-                <div className="space-y-3">
-                  {leaderboard.map((entry) => (
-                    <div key={entry.rank} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <span className="text-3xl">
-                          {entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : '🥉'}
-                        </span>
-                        <div>
-                          <p className="font-bold text-lg">@{entry.name}</p>
-                          <p className="text-sm text-purple-300">Top artist: {entry.artist}</p>
+                <>
+                  <div className="space-y-3">
+                    {(leaderboardExpanded ? leaderboard : leaderboard.slice(0, 5)).map((entry) => (
+                      <div key={entry.rank} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl">
+                        <div className="flex items-center gap-3">
+                          <span className="text-3xl">
+                            {entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : `#${entry.rank}`}
+                          </span>
+                          <div>
+                            <p className="font-bold text-lg">@{entry.name}</p>
+                            <p className="text-sm text-purple-300">Top artist: {entry.artist}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-purple-300 font-bold text-xl">{entry.songs}</p>
+                          <p className="text-xs text-purple-500">clips · {entry.likes} ❤️</p>
                         </div>
                       </div>
-                      <span className="text-purple-300 font-bold text-xl">{entry.songs}</span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                  {leaderboard.length > 5 && (
+                    <button
+                      onClick={() => setLeaderboardExpanded(v => !v)}
+                      className="w-full mt-3 py-2.5 bg-purple-800 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"
+                    >
+                      {leaderboardExpanded ? <><ChevronUp size={16}/> Show less</> : <><ChevronDown size={16}/> Show {leaderboard.length - 5} more</>}
+                    </button>
+                  )}
+                </>
               )}
             </div>
 
-            
 <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mb-6">
-  <h3 className="font-black text-xl mb-1 flex items-center gap-2">
-    <TrendingUp size={24} className="text-green-400" />
-    Trending Clips
-  </h3>
+  <button
+    className="w-full flex justify-between items-center mb-1"
+    onClick={() => setTrendingExpanded(v => !v)}
+  >
+    <h3 className="font-black text-xl flex items-center gap-2">
+      <TrendingUp size={22} className="text-green-400" />
+      Trending Clips
+    </h3>
+    <span className="flex items-center gap-1 text-purple-400 text-sm">
+      Most played {trendingExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+    </span>
+  </button>
   <p className="text-xs text-purple-400 mb-4">Most played in the last 30 days</p>
-  {trendingByPlays.map((clip, idx) => (
-    <div key={clip.id} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl mb-2">
-      <div>
-        <p className="font-bold">{idx + 1}. {clip.title}</p>
-        <p className="text-sm text-purple-300">{clip.artist}</p>
-      </div>
-      <span className="text-green-400 font-bold">{clip.plays || 0} plays</span>
-    </div>
-  ))}
+  {trendingByPlays.length === 0 ? (
+    <p className="text-center text-purple-400 py-4 text-sm">No data yet</p>
+  ) : (
+    <>
+      {(trendingExpanded ? trendingByPlays : trendingByPlays.slice(0, 5)).map((clip, idx) => (
+        <div key={clip.id} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl mb-2">
+          <div>
+            <p className="font-bold">{idx + 1}. {clip.title}</p>
+            <p className="text-sm text-purple-300">{clip.artist}</p>
+          </div>
+          <span className="text-green-400 font-bold">{clip.plays || 0} plays</span>
+        </div>
+      ))}
+      {trendingByPlays.length > 5 && (
+        <button
+          onClick={() => setTrendingExpanded(v => !v)}
+          className="w-full mt-1 py-2.5 bg-purple-800 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"
+        >
+          {trendingExpanded ? <><ChevronUp size={16}/> Show less</> : <><ChevronDown size={16}/> Show {trendingByPlays.length - 5} more</>}
+        </button>
+      )}
+    </>
+  )}
 </div>
 
 <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
-  <h3 className="font-black text-xl mb-4 flex items-center gap-2">
-    <Music size={24} className="text-pink-400" />
-    Top Artists
-  </h3>
+  <button
+    className="w-full flex justify-between items-center mb-4"
+    onClick={() => setArtistsExpanded(v => !v)}
+  >
+    <h3 className="font-black text-xl flex items-center gap-2">
+      <Music size={22} className="text-pink-400" />
+      Top Artists
+    </h3>
+    <span className="flex items-center gap-1 text-purple-400 text-sm">
+      Last 30 days {artistsExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+    </span>
+  </button>
   <div className="space-y-3">
-    {topArtists.map((item, idx) => (
+    {(artistsExpanded ? topArtists : topArtists.slice(0, 5)).map((item, idx) => (
       <div key={idx} className="flex items-center gap-4 bg-purple-900 bg-opacity-30 p-4 rounded-xl hover:bg-opacity-50 transition group">
         <span className="text-2xl font-bold text-purple-400 w-8">{idx + 1}</span>
-        
-        {/* Artist Image */}
         <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-purple-600 group-hover:border-yellow-400 transition flex-shrink-0">
           {artistImages[item.artist] ? (
-            <img
-              src={artistImages[item.artist]}
-              alt={item.artist}
-              className="w-full h-full object-cover"
-            />
+            <img src={artistImages[item.artist]} alt={item.artist} className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
               <Music size={32} className="text-white" />
             </div>
           )}
         </div>
-        
         <div className="flex-1">
           <p className="font-bold text-lg">{item.artist}</p>
           <p className="text-sm text-purple-300">{item.clips} clips</p>
         </div>
-        
         <span className="text-pink-400 font-bold">{item.clips}</span>
       </div>
     ))}
   </div>
+  {topArtists.length > 5 && (
+    <button
+      onClick={() => setArtistsExpanded(v => !v)}
+      className="w-full mt-3 py-2.5 bg-purple-800 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"
+    >
+      {artistsExpanded ? <><ChevronUp size={16}/> Show less</> : <><ChevronDown size={16}/> Show {topArtists.length - 5} more</>}
+    </button>
+  )}
 </div>
           </div>
         </div>

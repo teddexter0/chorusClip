@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { X, Mail, Lock, User } from 'lucide-react';
+import { X, Mail, Lock, User, CheckCircle } from 'lucide-react';
 
 const AUTH_ERRORS = {
   'auth/wrong-password': 'Wrong password. Try again or reset your password.',
@@ -20,26 +20,28 @@ export default function AuthModal({ onClose, onSuccess }) {
   const [displayName, setDisplayName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [resetSent, setResetSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+    setResetSent(false);
 
     try {
       const { signInUser, signUpUser, sendPasswordResetEmail } = await import('../../lib/firebase');
 
       if (mode === 'signin') {
         await signInUser(email, password);
-        onSuccess?.('✅ Welcome back!');
+        onSuccess?.('Welcome back!');
         onClose();
       } else if (mode === 'signup') {
         await signUpUser(email, password, displayName);
-        onSuccess?.('🎉 Account created! Welcome!');
+        onSuccess?.('Account created! Welcome!');
         onClose();
       } else if (mode === 'reset') {
         await sendPasswordResetEmail(email);
-        onSuccess?.('✉️ Check your inbox for reset link!');
+        setResetSent(true);
       }
     } catch (err) {
       console.error('Auth error:', err);
@@ -126,19 +128,44 @@ export default function AuthModal({ onClose, onSuccess }) {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-4 text-lg bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition disabled:opacity-50 mt-2"
-          >
-            {loading
-              ? 'Loading...'
-              : mode === 'reset'
-              ? 'Send Reset Link'
-              : mode === 'signup'
-              ? 'Create Account'
-              : 'Sign In'}
-          </button>
+          {resetSent && (
+            <div className="bg-green-950 bg-opacity-80 border border-green-500 rounded-xl p-4 flex items-start gap-3">
+              <CheckCircle size={22} className="text-green-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-green-300 font-bold text-sm">Reset email sent!</p>
+                <p className="text-green-400 text-xs mt-1">
+                  Check your inbox (and spam folder) at <strong>{email}</strong> for a password reset link.
+                  It may take a minute to arrive.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!resetSent && (
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-4 text-lg bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition disabled:opacity-50 mt-2"
+            >
+              {loading
+                ? 'Sending...'
+                : mode === 'reset'
+                ? 'Send Reset Link'
+                : mode === 'signup'
+                ? 'Create Account'
+                : 'Sign In'}
+            </button>
+          )}
+
+          {resetSent && (
+            <button
+              type="button"
+              onClick={() => { setMode('signin'); setResetSent(false); setError(''); }}
+              className="w-full py-4 text-lg bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold hover:shadow-2xl transition mt-2"
+            >
+              Back to Sign In
+            </button>
+          )}
         </form>
 
         <div className="mt-5 text-center space-y-3 border-t border-purple-700 pt-5">

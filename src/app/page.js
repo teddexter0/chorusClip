@@ -1573,66 +1573,74 @@ className="btn-primary w-full py-5 text-xl">
         </div>
       )}
 <header className="border-b border-purple-700 border-opacity-50 bg-black bg-opacity-20 backdrop-blur-md relative z-10 sticky top-0">
-  <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-    {/* Top row: Logo, Friends nav, Auth */}
-    <div className="flex justify-between items-center mb-3 sm:mb-0">
-      <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent tracking-tight">
+  <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4">
+    <div className="flex items-center justify-between gap-2">
+      {/* Logo */}
+      <h1 className="text-2xl sm:text-4xl lg:text-5xl font-black bg-gradient-to-r from-purple-400 via-pink-400 to-purple-400 bg-clip-text text-transparent tracking-tight shrink-0">
         ChorusClip
       </h1>
 
-      <div className="flex items-center gap-2 sm:gap-3">
-        {/* Friends nav (signed-in only) */}
-        {user?.uid && (
-          <button
-            onClick={() => setShowFriendsPanel(true)}
-            className="relative px-3 py-2 rounded-xl bg-purple-800 bg-opacity-50 hover:bg-opacity-80 transition flex items-center gap-1.5 text-sm font-semibold"
-            aria-label="Friends"
-          >
-            <UserPlus size={18} />
-            <span className="hidden sm:inline">Friends</span>
-          </button>
-        )}
-
-        {/* Auth section */}
+      {/* Right-side actions */}
+      <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
         {user?.uid ? (
           <>
-            <span className="text-sm sm:text-base font-semibold truncate max-w-[100px] sm:max-w-[160px]">
-              {user.displayName}
-            </span>
+            {/* Friends button — icon only on mobile */}
+            <button
+              onClick={() => setShowFriendsPanel(true)}
+              className="p-2 sm:px-3 sm:py-2 rounded-xl bg-purple-800 bg-opacity-50 hover:bg-opacity-80 transition flex items-center gap-1.5 text-sm font-semibold shrink-0"
+              aria-label="Friends"
+            >
+              <UserPlus size={18} />
+              <span className="hidden sm:inline">Friends</span>
+            </button>
+
+            {/* User info — tap to edit username on desktop; hidden on mobile */}
             <button
               onClick={handleChangeUsername}
-              className="text-xs sm:text-sm text-purple-300 hover:text-purple-200 transition"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white bg-opacity-10 hover:bg-opacity-15 transition min-w-0"
               aria-label="Change username"
-              title={`Change username (${USERNAME_CHANGE_QUOTA - (user.usernameChanges ?? 0)} change(s) remaining)`}
+              title={`${USERNAME_CHANGE_QUOTA - (user.usernameChanges ?? 0)} change(s) remaining`}
             >
-              Edit
+              <span className="text-sm font-semibold truncate max-w-[140px]">{user.displayName}</span>
+              <span className="text-xs text-purple-300 shrink-0">Edit</span>
             </button>
+
+            {/* Mobile: avatar circle with first letter, tap = sign out menu alternative */}
+            <button
+              onClick={handleChangeUsername}
+              className="sm:hidden w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-sm font-black shrink-0"
+              aria-label="Edit username"
+              title={user.displayName}
+            >
+              {(user.displayName || 'U')[0].toUpperCase()}
+            </button>
+
+            {/* Sign out */}
             <button
               onClick={handleSignOut}
-              className="px-3 sm:px-5 py-2 text-sm sm:text-base bg-red-600 hover:bg-red-700 rounded-xl font-semibold transition flex items-center gap-1 sm:gap-2"
+              className="p-2 sm:px-4 sm:py-2 bg-red-600 hover:bg-red-700 rounded-xl font-semibold transition flex items-center gap-1 shrink-0"
               aria-label="Sign out"
             >
-              <LogOut size={16} className="sm:w-[18px] sm:h-[18px]" />
-              <span className="hidden sm:inline">Sign Out</span>
+              <LogOut size={16} />
+              <span className="hidden sm:inline text-sm">Sign Out</span>
             </button>
           </>
         ) : (
-          <button
-            onClick={() => setShowAuthModal(true)}
-            className="px-4 sm:px-6 py-2 text-sm sm:text-base bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold hover:shadow-lg transition"
-            aria-label="Sign in to ChorusClip"
-          >
-            Sign In
-          </button>
+          <>
+            {/* "Strathmore Exclusive" badge — hidden on mobile to save space */}
+            <span className="hidden sm:inline-block text-xs bg-purple-700 bg-opacity-50 backdrop-blur px-3 py-1.5 rounded-full border border-purple-500 font-semibold whitespace-nowrap">
+              Strathmore Exclusive
+            </span>
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="px-4 py-2 text-sm sm:text-base bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold hover:shadow-lg transition shrink-0"
+              aria-label="Sign in to ChorusClip"
+            >
+              Sign In
+            </button>
+          </>
         )}
       </div>
-    </div>
-
-    {/* Bottom row: Badges */}
-    <div className="flex flex-wrap items-center gap-2 justify-center sm:justify-start mt-3 sm:mt-0">
-      <span className="text-xs sm:text-sm bg-purple-700 bg-opacity-50 backdrop-blur px-3 py-1.5 rounded-full border border-purple-500 font-semibold whitespace-nowrap">
-        Strathmore Exclusive
-      </span>
     </div>
   </div>
 </header>
@@ -2101,71 +2109,80 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                         role="article"
                         aria-label={`${clip.title} by ${clip.artist}`}
                       >
-                        <div className="flex justify-between items-start mb-3">
-                          <div className="flex-1">
-                            <h3 className="font-bold text-xl">{clip.title}</h3>
-                            <p className="text-base text-purple-300">{clip.artist}</p>
-                            <p className="text-sm text-purple-400 mt-1">
-                              by @{clip.createdBy} • {clipSections.length} section{clipSections.length > 1 ? 's' : ''}
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex-1 min-w-0 mr-2">
+                            <h3 className="font-bold text-base sm:text-lg leading-tight truncate">{clip.title}</h3>
+                            <p className="text-sm text-purple-300 truncate">{clip.artist}</p>
+                            <p className="text-xs text-purple-500 mt-0.5 truncate">
+                              @{clip.createdBy} · {clipSections.length} section{clipSections.length > 1 ? 's' : ''}
                             </p>
                           </div>
                           {clip.userId === user?.uid && (
                             <button
                               onClick={(e) => { e.stopPropagation(); handleDeleteClip(clip.id); }}
-                              className="text-red-400 hover:text-red-300 transition ml-2"
+                              className="text-red-400 hover:text-red-300 transition shrink-0"
                               title="Delete clip"
                               aria-label="Delete clip"
                             >
-                              <X size={20} />
+                              <X size={16} />
                             </button>
                           )}
                         </div>
 
-                        {/* Section timestamps */}
-                        <div className="mb-3 space-y-1">
+                        {/* Section timestamps — compact chips */}
+                        <div className="flex flex-wrap gap-1.5 mb-2">
                           {clipSections.map((sec, idx) => (
-                            <div key={idx} className="text-sm text-purple-400">
-                              Section {idx + 1}: {Math.floor(sec.start / 60)}:{(sec.start % 60).toString().padStart(2, '0')} –{' '}
-                              {Math.floor(sec.end / 60)}:{(sec.end % 60).toString().padStart(2, '0')}
-                              {sec.loopCount > 0 && <span className="ml-2 text-pink-400">{sec.loopCount}×</span>}
-                              {sec.loopCount === 0 && <span className="ml-2 text-pink-400">∞</span>}
-                            </div>
+                            <span key={idx} className="inline-flex items-center gap-1 text-xs bg-purple-900 bg-opacity-60 border border-purple-700 border-opacity-40 px-2 py-0.5 rounded-full text-purple-300">
+                              §{idx + 1} {Math.floor(sec.start / 60)}:{(sec.start % 60).toString().padStart(2, '0')}–{Math.floor(sec.end / 60)}:{(sec.end % 60).toString().padStart(2, '0')}
+                              <span className="text-pink-400">{sec.loopCount === 0 ? '∞' : `${sec.loopCount}×`}</span>
+                            </span>
                           ))}
                         </div>
 
-                        <div className="flex justify-between items-center text-base">
-                          <span className="text-purple-400 font-semibold">
-                            {Math.max(0, firstSection.end - firstSection.start)}s · section 1
+                        {/* Clip card footer — two-row on mobile, single row on sm+ */}
+                        <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-3 mt-1">
+                          {/* Duration badge */}
+                          <span className="text-xs text-purple-500 font-medium">
+                            {Math.max(0, firstSection.end - firstSection.start)}s
                           </span>
-                          <div className="flex items-center gap-4">
-                            <span className="text-purple-300 text-base">{clip.likes || 0} ❤️</span>
+
+                          {/* Action buttons — always on same line, tightly spaced */}
+                          <div className="flex items-center gap-3 ml-auto">
+                            {/* Like with count */}
                             <button
                               onClick={() =>
                                 user.likedClips?.includes(clip.id)
                                   ? handleUnlikeClip(clip.id)
                                   : handleLikeClip(clip.id)
                               }
-                              className={`transition transform hover:scale-110 ${user.likedClips?.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
+                              className={`flex items-center gap-1 transition ${user.likedClips?.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
                               aria-label={user.likedClips?.includes(clip.id) ? `Unlike ${clip.title}` : `Like ${clip.title}`}
                               aria-pressed={user.likedClips?.includes(clip.id)}
                             >
-                              <Heart size={24} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} aria-hidden="true" />
+                              <Heart size={16} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                              <span className="text-xs font-semibold">{clip.likes || 0}</span>
                             </button>
+
+                            {/* Play with count */}
                             <button
                               onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-                              className="text-purple-300 hover:text-purple-100 transition flex items-center gap-1"
+                              className="flex items-center gap-1 text-purple-300 hover:text-purple-100 transition"
                               aria-label={`Play ${clip.title}`}
                             >
-                              <Play size={16} fill="currentColor" aria-hidden="true" />
-                              <span>{clip.plays || 0}</span>
+                              <Play size={16} fill="currentColor" />
+                              <span className="text-xs font-semibold">{clip.plays || 0}</span>
                             </button>
+
+                            {/* Share */}
                             <button
                               onClick={() => handleShareClip(clip)}
                               className="text-purple-400 hover:text-purple-300 transition"
                               aria-label={`Share ${clip.title}`}
                             >
-                              <Share2 size={18} aria-hidden="true" />
+                              <Share2 size={16} />
                             </button>
+
+                            {/* Add to playlist */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -2178,7 +2195,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                               className="text-green-400 hover:text-green-300 transition"
                               aria-label="Add to playlist"
                             >
-                              <Plus size={18} />
+                              <Plus size={16} />
                             </button>
                           </div>
                         </div>

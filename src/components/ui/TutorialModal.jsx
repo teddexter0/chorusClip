@@ -23,20 +23,28 @@ export default function TutorialModal({ onClose }) {
         </div>
         <div className="grid sm:grid-cols-2 gap-4 text-base mb-6">
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-            <p className="font-semibold mb-2 text-lg">Clip</p>
-            <p className="text-purple-200">Up to 3 sections of a song, each with their own repeat count</p>
+            <p className="font-semibold mb-2 text-lg">Creating a Clip</p>
+            <p className="text-purple-200">Paste a YouTube URL  Load Song  adjust up to 3 sections  Post to Feed.</p>
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-            <p className="font-semibold mb-2 text-lg">Sections</p>
-            <p className="text-purple-200">Pick start + end times. Set repeat count (1–10× or Infinite)</p>
+            <p className="font-semibold mb-2 text-lg">Setting timestamps</p>
+            <p className="text-purple-200">Use the sliders <em>or</em> type exact min/sec. Tap <strong>"Jump to section start & pause"</strong> to preview a timestamp before saving it.</p>
+          </div>
+          <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
+            <p className="font-semibold mb-2 text-lg">📱 Mobile tip</p>
+            <p className="text-purple-200">Use ▲▼ buttons (now bigger!) to reorder sections. Jump-pause first, then drag the large slider. Way easier than guessing the timestamp.</p>
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
             <p className="font-semibold mb-2 text-lg">Infinite repeats</p>
-            <p className="text-purple-200">Infinite caps at 5× inside playlists so the queue keeps moving</p>
+            <p className="text-purple-200">Infinite sections cap at 5 inside playlists so the queue keeps moving forward.</p>
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
-            <p className="font-semibold mb-2 text-lg">Playlists &amp; Queue</p>
-            <p className="text-purple-200">Add clips to playlists, then queue up to 5 playlists to play back-to-back</p>
+            <p className="font-semibold mb-2 text-lg">Queue (up to 10)</p>
+            <p className="text-purple-200">Queue up to <strong>10 playlists</strong> for back-to-back play. Your queue is saved to your account  it survives refresh and works across devices.</p>
+          </div>
+          <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
+            <p className="font-semibold mb-2 text-lg">Loop & Privacy</p>
+            <p className="text-purple-200">Hit the 🔁 button to loop a clip continuously. Toggle playlists public/private anytime from the Manage screen.</p>
           </div>
         </div>
         <button onClick={onClose} className="w-full py-5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-xl hover:shadow-2xl transition pulse-glow">

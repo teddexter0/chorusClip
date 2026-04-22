@@ -374,3 +374,28 @@ export const sendPasswordResetEmail = async (email) => {
     throw error;
   }
 };
+
+// QUEUE PERSISTENCE
+export const saveQueueToFirestore = async (userId, queueIds) => {
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      savedQueueIds: queueIds,
+      queueUpdatedAt: new Date()
+    });
+  } catch (e) {
+    console.error('Failed to save queue:', e);
+  }
+};
+
+export const loadQueueFromFirestore = async (userId) => {
+  try {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (userDoc.exists()) {
+      return userDoc.data().savedQueueIds || [];
+    }
+    return [];
+  } catch (e) {
+    console.error('Failed to load queue:', e);
+    return [];
+  }
+};

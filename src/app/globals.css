@@ -113,12 +113,36 @@ select option {
   }
 }
 
-/* Desktop - side by side */
-@media (min-width: 1024px) {
-  .grid.lg\:grid-cols-2 {
+/* Wide screens (1280px+): side by side */
+@media (min-width: 1280px) {
+  .grid.xl\:grid-cols-\[minmax\(0\,1fr\)_minmax\(0\,1fr\)\] {
     display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) !important;
     align-items: start !important;
-    gap: 2rem !important;
+    gap: 2.5rem !important;
+  }
+}
+/* Mid laptops (10241279px): single column to avoid clunky split */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .xl\:grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 1.5rem !important;
+  }
+}
+
+/* Larger touch targets for range sliders on mobile */
+@media (max-width: 767px) {
+  input[type="range"] {
+    height: 16px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    width: 36px;
+    height: 36px;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 36px;
+    height: 36px;
+    border: 4px solid #10b981;
   }
 }

@@ -2,75 +2,100 @@
 
 **Loop your favorite song moments. Share with friends. Discover new music.**
 
-[**Try ChorusClip now**](https://chorus-clip.vercel.app/)
-ChorusClip lets you create and share 45-second loops of your favorite parts of any YouTube song. Perfect for worship music, study sessions, workouts, and more.
+[**Try ChorusClip **](https://chorus-clip.vercel.app/)
 
-![ChorusClip Banner](./assets/banner.png)
-
----
-
-## 🚀 Features
-
-- **Auto-detect** the most replayed parts of songs
-- **Loop up to 3 sections** per song (Premium)
-- **Social feed** to discover clips from friends
-- **Download audio loops** (Premium)
-- **Create playlists** for events, workouts, church (Premium)
-- **Strathmore University exclusive** (launch phase)
+ChorusClip lets you create and share looped clips of your favorite sections of any YouTube song  with up to 3 sections per clip, custom repeat counts, playlists, and a persistent cross-device queue.
 
 ---
 
-## 📸 Screenshots
+## Features
 
-![Home Screen](./assets/home.png)
-![Loop Creator](./assets/creator.png)
-![Trending Feed](./assets/feed.png)
-
----
-
-## 🛠️ Tech Stack
-
-- **Framework:** Next.js 14 (App Router)
-- **Styling:** Tailwind CSS
-- **Database:** Firebase Firestore
-- **Authentication:** Firebase Auth
-- **Payments:** Pesapal / M-Pesa Daraja API
-- **APIs:** YouTube Data API, Spotify Web API
+- **Smart loop suggestion**  auto-detects the chorus/hook (25% into the song)
+- **Up to 3 sections per clip**  each with its own repeat count (110 or Infinite)
+- **Playlists**  up to 10 clips per playlist, sortable, public or private
+- **Cross-device queue**  queue up to 10 playlists; queue is saved to your account and persists across refresh and devices
+- **Standalone loop mode**  🔁 button loops a single clip continuously
+- **Social feed**  trending clips, leaderboard with sort criteria, top artists
+- **Friends**  add by username, see what friends are listening to
+- **Mobile-friendly**  large touch targets, jump-to-timestamp helper, drag-reorder
 
 ---
 
-## 🤝 Contributing
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | Next.js 14 (App Router) |
+| Styling | Tailwind CSS |
+| Database | Firebase Firestore |
+| Auth | Firebase Auth |
+| Payments | Pesapal (KES) |
+| APIs | YouTube IFrame API, Spotify Web API |
+| Deployment | Vercel |
+
+---
+
+## Getting Started
+
+```bash
+git clone https://github.com/teddexter0/chorusClip.git
+cd chorusClip
+npm install
+cp .env.local.example .env.local
+# fill in your Firebase + Spotify credentials
+npm run dev
+```
+
+### Required env vars (`.env.local`):
+```
+NEXT_PUBLIC_FIREBASE_API_KEY=
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=
+NEXT_PUBLIC_FIREBASE_APP_ID=
+NEXT_PUBLIC_SPOTIFY_CLIENT_ID=
+NEXT_PUBLIC_SPOTIFY_CLIENT_SECRET=
+NEXT_PUBLIC_BASE_URL=http://localhost:3000
+```
+
+---
+
+## Deployment
+
+Push to `main`  Vercel auto-deploys.
+
+```bash
+git add .
+git commit -m "your message"
+git push origin main
+```
+
+---
+
+## Roadmap
+
+- [ ] Bulk YouTube URL import (paste 5 links  auto-create clips)
+- [ ] Leaderboard Spotify metadata (genre, streams, release date)
+- [ ] Premium tier  15-song playlists, audio download
+- [ ] Playlist view counters (YouTube-style)
+
+---
+
+## Contributing
 
 1. Fork the repo
-2. Create feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to branch (`git push origin feature/AmazingFeature`)
-5. Open Pull Request
+2. `git checkout -b feat/your-feature`
+3. Commit and push
+4. Open a Pull Request
 
 ---
 
-## 📄 License
+## License
 
-MIT License - see LICENSE file
-
----
-
-## 📧 Contact
-
-**Developer:** Ted Dexter Sande 
-**Email:** ted.sande@strathmore.edu  
-**GitHub:** [@teddexter0](https://github.com/teddexter0)
+MIT  see `license` file.
 
 ---
 
-## 🙏 Acknowledgments
-
-- YouTube Data API for video metadata
-- Spotify Web API for artist information
-- Firebase for backend infrastructure
-- Next.js team for amazing framework
-- Strathmore University for initial testing
-
----
-
-**Built with ⚡ for music lovers at Strathmore University**# chorusClip
+**Developer:** Ted Dexter Sande  [ted.sande@strathmore.edu](mailto:ted.sande@strathmore.edu)
+**Built for music lovers at Strathmore University**

@@ -1,7 +1,7 @@
 // lib/firebase.js
 import { initializeApp } from 'firebase/app';
 import { getAuth, sendEmailVerification } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot, startAfter } from 'firebase/firestore';
 import { 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
@@ -145,6 +145,35 @@ export const getTrendingClips = async (limitCount = 20) => {
     id: doc.id,
     ...doc.data()
   }));
+};
+
+export const getClipsPage = async (limitCount = 15, lastVisibleDoc = null) => {
+  try {
+    const constraints = [orderBy('createdAt', 'desc'), limit(limitCount)];
+    if (lastVisibleDoc) {
+      constraints.splice(1, 0, startAfter(lastVisibleDoc));
+    }
+
+    const q = query(collection(db, 'clips'), ...constraints);
+    const snapshot = await getDocs(q);
+    const clips = snapshot.docs.map(entry => ({
+      id: entry.id,
+      ...entry.data()
+    }));
+
+    return {
+      clips,
+      lastVisibleDoc: snapshot.docs[snapshot.docs.length - 1] || null,
+      hasMore: snapshot.docs.length === limitCount
+    };
+  } catch (error) {
+    console.error('Clip pagination error:', error);
+    return {
+      clips: [],
+      lastVisibleDoc: null,
+      hasMore: false
+    };
+  }
 };
 
 // PAYMENTS

@@ -11,10 +11,6 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
   const [sendingRequest, setSendingRequest] = useState(false);
   const [permissionError, setPermissionError] = useState(false);
 
-  useEffect(() => {
-    if (user?.uid) loadFriendships();
-  }, [user?.uid]);
-
   const loadFriendships = async () => {
     setLoading(true);
     setPermissionError(false);
@@ -40,6 +36,13 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    loadFriendships();
+    // loadFriendships depends on the current user identity and should rerun when it changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
 
   const handleSendRequest = async () => {
     const target = searchUsername.trim();

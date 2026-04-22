@@ -28,7 +28,7 @@ export default function TutorialModal({ onClose }) {
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
             <p className="font-semibold mb-2 text-lg">Setting timestamps</p>
-            <p className="text-purple-200">Use the sliders <em>or</em> type exact min/sec. Tap <strong>"Jump to section start & pause"</strong> to preview a timestamp before saving it.</p>
+            <p className="text-purple-200">Use the sliders <em>or</em> type exact min/sec. Tap <strong>&quot;Jump to section start & pause&quot;</strong> to preview a timestamp before saving it.</p>
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-5 rounded-xl">
             <p className="font-semibold mb-2 text-lg">📱 Mobile tip</p>
@@ -48,7 +48,7 @@ export default function TutorialModal({ onClose }) {
           </div>
         </div>
         <button onClick={onClose} className="w-full py-5 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-xl hover:shadow-2xl transition pulse-glow">
-          Let's Go!
+          Let&apos;s Go!
         </button>
       </div>
     </div>

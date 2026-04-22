@@ -3,7 +3,7 @@
 const PLAYLIST_MAX_CLIPS = 10;
 const ENDLESS_CAP_IN_PLAYLIST = 5; // "Infinite" loops are capped at 5 plays in a playlist
 
-export const createPlaylist = async (userId, name, clips) => {
+export const createPlaylist = async (userId, name, clips, ownerDisplayName = '') => {
   const { db } = await import('../lib/firebase');
   const { collection, addDoc } = await import('firebase/firestore');
 
@@ -13,7 +13,8 @@ export const createPlaylist = async (userId, name, clips) => {
     clips: clips.slice(0, PLAYLIST_MAX_CLIPS),
     createdAt: new Date(),
     plays: 0,
-    isPublic: true
+    isPublic: true,
+    createdBy: ownerDisplayName || 'Community'
   };
 
   const docRef = await addDoc(collection(db, 'playlists'), playlist);
@@ -35,13 +36,12 @@ export const getUserPlaylists = async (userId) => {
 
 export const getAllPublicPlaylists = async () => {
   const { db } = await import('../lib/firebase');
-  const { collection, query, where, getDocs, orderBy, limit } = await import('firebase/firestore');
+  const { collection, query, where, getDocs, limit } = await import('firebase/firestore');
 
   const q = query(
     collection(db, 'playlists'),
     where('isPublic', '==', true),
-    orderBy('plays', 'desc'),
-    limit(10)
+    limit(50)
   );
   const snapshot = await getDocs(q);
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));

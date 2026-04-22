@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Sparkles, LogOut, Users, TrendingUp, Music, ChevronDown, ChevronUp, UserPlus, Bell } from 'lucide-react';
 
@@ -57,9 +58,12 @@ const [queueBannerCollapsed, setQueueBannerCollapsed] = useState(false);
   const [suggestedEnd, setSuggestedEnd] = useState(30);
 
   const [notification, setNotification] = useState(null);
-  const [leaderboard, setLeaderboard] = useState([]);
-  const [leaderboardSort, setLeaderboardSort] = useState('clips');
-  const [clips, setClips] = useState([]);
+const [leaderboard, setLeaderboard] = useState([]);
+const [leaderboardSort, setLeaderboardSort] = useState('clips');
+const [clips, setClips] = useState([]);
+const [feedCursor, setFeedCursor] = useState(null);
+const [feedHasMore, setFeedHasMore] = useState(true);
+const [feedLoading, setFeedLoading] = useState(false);
 const [discoveryLoading, setDiscoveryLoading] = useState(true);
 const [trendingByPlays, setTrendingByPlays] = useState([]);
 const [topArtists, setTopArtists] = useState([]);
@@ -82,6 +86,58 @@ const [isPlayingQueue, setIsPlayingQueue] = useState(false);
 const [standaloneLoop, setStandaloneLoop] = useState(false);
 const playlistQueueRef = useRef([]);
 const playlistQueueIndexRef = useRef(0);
+
+const formatSeconds = (seconds) => {
+  const safe = Math.max(0, Math.floor(seconds || 0));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
+const getCreatedAtValue = (value) => {
+  if (!value) return 0;
+  if (typeof value.toMillis === 'function') return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (typeof value.seconds === 'number') return value.seconds * 1000;
+  return 0;
+};
+
+const getPlaylistRuntime = (playlist) =>
+  (playlist?.clips || []).reduce((playlistTotal, clip) => {
+    const clipLoops = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30, loopCount: 1 }];
+    const clipRuntime = clipLoops.reduce((loopTotal, loop) => {
+      const loopLength = Math.max(0, (loop.end ?? 0) - (loop.start ?? 0));
+      const repeats = loop.loopCount === 0 ? ENDLESS_CAP_IN_PLAYLIST : (loop.loopCount ?? 1);
+      return loopTotal + (loopLength * repeats);
+    }, 0);
+    return playlistTotal + clipRuntime;
+  }, 0);
+
+const buildPublicPlaylistShowcase = (publicLists) => {
+  const playlistsWithMetrics = publicLists
+    .filter(playlist => (playlist.clips?.length || 0) > 0)
+    .map(playlist => ({
+      ...playlist,
+      runtimeSeconds: getPlaylistRuntime(playlist)
+    }));
+
+  const slots = [
+    { key: 'most-clips', title: 'Most Clips', subtitle: 'Deepest crate', pick: (items) => [...items].sort((a, b) => (b.clips?.length || 0) - (a.clips?.length || 0))[0] },
+    { key: 'least-clips', title: 'Quickest Pick', subtitle: 'Shortest queueable set', pick: (items) => [...items].sort((a, b) => (a.clips?.length || 0) - (b.clips?.length || 0))[0] },
+    { key: 'longest-runtime', title: 'Longest Runtime', subtitle: 'Most total play time', pick: (items) => [...items].sort((a, b) => (b.runtimeSeconds || 0) - (a.runtimeSeconds || 0))[0] },
+    { key: 'featured-pick', title: 'Featured Pick', subtitle: 'Pinned by a curator', pick: (items) => [...items].sort((a, b) => Number(b.isFeatured === true) - Number(a.isFeatured === true) || getCreatedAtValue(b.createdAt) - getCreatedAtValue(a.createdAt)).find(item => item.isFeatured === true) || null },
+  ];
+
+  const seen = new Set();
+  return slots
+    .map(slot => {
+      const chosen = slot.pick(playlistsWithMetrics.filter(item => !seen.has(item.id)));
+      if (!chosen) return null;
+      seen.add(chosen.id);
+      return { ...slot, playlist: chosen };
+    })
+    .filter(Boolean);
+};
 
 const loadTrendingData = async () => {
   setDiscoveryLoading(true);
@@ -128,45 +184,102 @@ const loadTrendingData = async () => {
 
   
   useEffect(() => {
-  if (typeof window !== 'undefined') {
-    const isFirstVisit = !localStorage.getItem('tutorialSeen');
-    if (isFirstVisit) {
-      setTimeout(() => setShowTutorial(true), 500);
-      localStorage.setItem('tutorialSeen', 'true');
+    if (typeof window !== 'undefined') {
+      const isFirstVisit = !localStorage.getItem('tutorialSeen');
+      if (isFirstVisit) {
+        setTimeout(() => setShowTutorial(true), 500);
+        localStorage.setItem('tutorialSeen', 'true');
+      }
+
+      loadTrendingClips();
+      loadLeaderboard();
+      loadTrendingData();
+      loadPublicPlaylists();
+
+      if (user?.uid) {
+        loadUserPlaylists();
+        loadSavedQueue();
+      }
     }
+    // These loaders intentionally re-run when auth identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]);
 
-    loadTrendingClips();
-    loadLeaderboard();
-    loadTrendingData();
-    loadPublicPlaylists();
-    checkAuthState();
-    
-    // Load playlists after auth check
-    const authUnsubscribe = checkAuthState();
-    if (user?.uid) {
-      loadUserPlaylists(); // ADD THIS
-      loadSavedQueue(); // ADD THIS
-    }
-  }
-}, [user?.uid]); // Add dependency
+  useEffect(() => {
+    if (topArtists.length === 0) return;
 
+    const loadImages = async () => {
+      const uniqueArtists = [...new Set(topArtists.map(a => a.artist))];
 
-useEffect(() => {
-  if (topArtists.length > 0) {
-    loadArtistImages();
-  }
-}, [topArtists]);
+      for (const artist of uniqueArtists) {
+        if (!artistImages[artist]) {
+          const imageUrl = await getArtistImageWithCache(artist);
+          setArtistImages(prev => ({ ...prev, [artist]: imageUrl }));
+        }
+      }
+    };
+
+    loadImages();
+  }, [topArtists, artistImages]);
 
 useEffect(() => { standaloneLoopRef.current = standaloneLoop; }, [standaloneLoop]);
 
+  useEffect(() => {
+    if (user?.uid) return;
+
+    setPlaylists([]);
+    setSelectedClipsForPlaylist([]);
+    setPlaylistQueue([]);
+    playlistQueueRef.current = [];
+    setPlaylistQueueIndex(0);
+    playlistQueueIndexRef.current = 0;
+    setIsPlayingQueue(false);
+    setCurrentPlaylistInfo(null);
+
+    if (currentPlaylistPlayerRef.current) {
+      currentPlaylistPlayerRef.current.stop();
+      currentPlaylistPlayerRef.current = null;
+    }
+    setCurrentPlaylistPlayer(null);
+    setIsPlayingPlaylist(false);
+  }, [user?.uid]);
+
   const loadTrendingClips = async () => {
+    setFeedLoading(true);
     try {
-      const { subscribeToTrendingClips } = await import('../lib/firebase');
-      subscribeToTrendingClips((trendingClips) => {
-        setClips(trendingClips);
-      });
+      const { getClipsPage } = await import('../lib/firebase');
+      const firstPage = await getClipsPage(FEED_PAGE_SIZE);
+      setClips(firstPage.clips);
+      setFeedCursor(firstPage.lastVisibleDoc);
+      setFeedHasMore(firstPage.hasMore);
+      setFeedPage(1);
     } catch (error) {
       console.log('Using demo clips');
+      setClips([]);
+      setFeedCursor(null);
+      setFeedHasMore(false);
+      setFeedPage(1);
+    } finally {
+      setFeedLoading(false);
+    }
+  };
+
+  const loadMoreClips = async () => {
+    if (feedLoading || !feedHasMore) return;
+
+    setFeedLoading(true);
+    try {
+      const { getClipsPage } = await import('../lib/firebase');
+      const nextPage = await getClipsPage(FEED_PAGE_SIZE, feedCursor);
+      setClips(prev => [...prev, ...nextPage.clips]);
+      setFeedCursor(nextPage.lastVisibleDoc);
+      setFeedHasMore(nextPage.hasMore);
+      setFeedPage(prev => prev + 1);
+    } catch (error) {
+      console.error('Failed to load older clips:', error);
+      showNotification('Could not load older clips right now', 'error');
+    } finally {
+      setFeedLoading(false);
     }
   };
 
@@ -494,7 +607,7 @@ const handleCreatePlaylist = async () => {
   }
   
   try {
-    await createPlaylist(user.uid, name, selectedClipsForPlaylist);
+    await createPlaylist(user.uid, name, selectedClipsForPlaylist, user.displayName);
     showNotification('🎉 Playlist created!', 'success');
     setShowPlaylistModal(false);
     setSelectedClipsForPlaylist([]);
@@ -682,18 +795,6 @@ const handlePlayQueue = (startIdx = 0) => {
     });
   }
 };
-
-const loadArtistImages = async () => {
-  const uniqueArtists = [...new Set(topArtists.map(a => a.artist))];
-  
-  for (const artist of uniqueArtists) {
-    if (!artistImages[artist]) {
-      const imageUrl = await getArtistImageWithCache(artist);
-      setArtistImages(prev => ({ ...prev, [artist]: imageUrl }));
-    }
-  }
-};
-
 
   const onPlayerReady = (event) => {
   const title = event.target.getVideoData().title;
@@ -1212,6 +1313,20 @@ const handleUnlikeClip = async (clipId) => {
 };
   const handleSignOut = async () => {
     try {
+      setSelectedClipsForPlaylist([]);
+      setPlaylistQueue([]);
+      playlistQueueRef.current = [];
+      setPlaylistQueueIndex(0);
+      playlistQueueIndexRef.current = 0;
+      setIsPlayingQueue(false);
+      setCurrentPlaylistInfo(null);
+      if (currentPlaylistPlayerRef.current) {
+        currentPlaylistPlayerRef.current.stop();
+        currentPlaylistPlayerRef.current = null;
+      }
+      setCurrentPlaylistPlayer(null);
+      setIsPlayingPlaylist(false);
+
       const { auth } = await import('../lib/firebase');
       const { signOut } = await import('firebase/auth');
       await signOut(auth);
@@ -1298,9 +1413,13 @@ const handleUnlikeClip = async (clipId) => {
     return () => {
       stopTimeTracking();
       if (playerRef.current?.destroy) playerRef.current.destroy();
-      if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const seekTimeout = seekTimeoutRef.current;
+      if (seekTimeout) clearTimeout(seekTimeout);
     };
   }, []); 
+
+  const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   
   return (
     <div className="min-h-screen text-white relative overflow-hidden">
@@ -1507,7 +1626,7 @@ className="btn-primary w-full py-5 text-xl">
                 Use This Section
               </button>
               <button onClick={dismissSuggestion} className="w-full py-4 text-lg bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
-                I'll Choose Manually
+                I&apos;ll Choose Manually
               </button>
             </div>
           </div>
@@ -1548,9 +1667,11 @@ className="btn-primary w-full py-5 text-xl">
                   const newVal = !(managingPlaylist.isPublic !== false);
                   try {
                     const { updatePlaylist } = await import('../lib/firebase');
-                    await updatePlaylist(managingPlaylist.id, { isPublic: newVal });
-                    setManagingPlaylist(prev => prev ? { ...prev, isPublic: newVal } : null);
+                    const updates = { isPublic: newVal, isFeatured: newVal ? managingPlaylist.isFeatured : false };
+                    await updatePlaylist(managingPlaylist.id, updates);
+                    setManagingPlaylist(prev => prev ? { ...prev, ...updates } : null);
                     loadUserPlaylists();
+                    loadPublicPlaylists();
                     showNotification(newVal ? '🌍 Now public' : '🔒 Now private', 'success');
                   } catch (e) {
                     showNotification('Failed to update', 'error');
@@ -1560,6 +1681,38 @@ className="btn-primary w-full py-5 text-xl">
                 aria-label="Toggle playlist visibility"
               >
                 <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${managingPlaylist.isPublic !== false ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between bg-purple-900 bg-opacity-20 px-4 py-3 rounded-xl mb-3">
+              <div>
+                <p className="font-semibold text-sm">Public showcase slot</p>
+                <p className="text-xs text-purple-400 mt-0.5">
+                  {managingPlaylist.isFeatured ? 'Pinned as a featured public pick' : 'Optional extra slot you can deliberately promote'}
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  const nextFeatured = !managingPlaylist.isFeatured;
+                  try {
+                    const { updatePlaylist } = await import('../lib/firebase');
+                    const updates = {
+                      isFeatured: nextFeatured,
+                      isPublic: nextFeatured ? true : managingPlaylist.isPublic
+                    };
+                    await updatePlaylist(managingPlaylist.id, updates);
+                    setManagingPlaylist(prev => prev ? { ...prev, ...updates } : null);
+                    loadUserPlaylists();
+                    loadPublicPlaylists();
+                    showNotification(nextFeatured ? '⭐ Featured on public showcase' : 'Featured showcase removed', 'success');
+                  } catch (e) {
+                    showNotification('Failed to update showcase slot', 'error');
+                  }
+                }}
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 ${managingPlaylist.isFeatured ? 'bg-yellow-500' : 'bg-purple-700'}`}
+                aria-label="Toggle featured public showcase slot"
+              >
+                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${managingPlaylist.isFeatured ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
             </div>
 
@@ -2171,11 +2324,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">📋</span>
-                  <span>Queue up to 5 playlists and play them back-to-back</span>
+                  <span>Queue up to 10 playlists and play them back-to-back</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">👥</span>
-                  <span>Add friends by username and see what they're listening to</span>
+                  <span>Add friends by username and see what they&apos;re listening to</span>
                 </li>
               </ul>
             </div>
@@ -2186,7 +2339,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 Need Help?
               </h3>
               <p className="text-base text-purple-200 mb-4">
-                Experiencing issues? Have feedback? We'd love to hear from you!
+                Experiencing issues? Have feedback? We&apos;d love to hear from you!
               </p>
               <a 
                 href="mailto:ted.sande@strathmore.edu?subject=ChorusClip Support Request"
@@ -2208,11 +2361,16 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               >
                 <h2 className="text-3xl font-black tracking-tight">Trending Clips</h2>
                 <span className="flex items-center gap-2 text-purple-400 text-sm font-semibold">
-                  {clips.slice(0, 5).length} shown
+                  {feedExpanded ? `${clips.length} loaded` : `${Math.min(clips.length, 5)} shown`}
                   {feedExpanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
                 </span>
               </button>
-              {clips.length === 0 ? (
+              <p className="text-xs text-purple-400 mb-4">Latest uploads first. Expand and keep loading to browse older history.</p>
+              {feedLoading && clips.length === 0 ? (
+                <div className="text-center py-12 text-purple-300">
+                  <p className="text-xl mb-2">Loading clips...</p>
+                </div>
+              ) : clips.length === 0 ? (
                 <div className="text-center py-12 text-purple-300">
                   <p className="text-xl mb-2">No clips yet!</p>
                   <p className="text-base">Be the first to post a clip</p>
@@ -2333,13 +2491,17 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                           <ChevronDown size={16}/> Show {clips.length - 5} more clips
                         </button>
                       )}
-                      {feedExpanded && clips.length > feedPage * FEED_PAGE_SIZE && (
+                      {feedExpanded && feedHasMore && (
                         <button
-                          onClick={() => setFeedPage(p => p + 1)}
-                          className="w-full py-3 bg-gradient-to-r from-purple-700 to-pink-700 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2 hover:shadow-lg"
+                          onClick={loadMoreClips}
+                          disabled={feedLoading}
+                          className="w-full py-3 bg-gradient-to-r from-purple-700 to-pink-700 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2 hover:shadow-lg disabled:opacity-60"
                         >
-                          <ChevronDown size={16}/> Load {Math.min(FEED_PAGE_SIZE, clips.length - feedPage * FEED_PAGE_SIZE)} more clips
+                          <ChevronDown size={16}/> {feedLoading ? 'Loading older clips...' : `Load ${FEED_PAGE_SIZE} older clips`}
                         </button>
+                      )}
+                      {feedExpanded && !feedHasMore && clips.length > FEED_PAGE_SIZE && (
+                        <p className="text-center text-xs text-purple-500 py-1">You’ve reached the oldest loaded clip in the archive.</p>
                       )}
                       {feedExpanded && (
                         <button
@@ -2354,6 +2516,63 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               )}
             </div>
+{publicPlaylistShowcase.length > 0 && (
+  <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-cyan-700 border-opacity-50 mt-6">
+    <div className="flex items-start justify-between gap-3 mb-4">
+      <div>
+        <h3 className="font-black text-xl flex items-center gap-2">
+          <Music size={22} className="text-cyan-300" />
+          Public Playlist Picks
+        </h3>
+        <p className="text-sm text-cyan-200 mt-1">Visible even to signed-out listeners. Curated from public playlists only.</p>
+      </div>
+      {!user?.uid && (
+        <button
+          onClick={() => setShowAuthModal(true)}
+          className="px-3 py-2 bg-cyan-700 hover:bg-cyan-600 rounded-xl text-sm font-semibold transition shrink-0"
+        >
+          Sign in for queue
+        </button>
+      )}
+    </div>
+    <div className="grid gap-3 md:grid-cols-2">
+      {publicPlaylistShowcase.map(({ key, title, subtitle, playlist }) => (
+        <div key={key} className="rounded-2xl border border-cyan-700 border-opacity-40 bg-cyan-950 bg-opacity-20 p-4">
+          <div className="flex items-start justify-between gap-3 mb-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300 font-bold">{title}</p>
+              <p className="text-xs text-cyan-500 mt-1">{subtitle}</p>
+            </div>
+            <span className="text-xs px-2 py-1 rounded-full bg-cyan-900 bg-opacity-60 text-cyan-200">
+              {playlist.clips?.length || 0} clips
+            </span>
+          </div>
+          <h4 className="text-lg font-bold leading-tight">{playlist.name}</h4>
+          <p className="text-sm text-cyan-100 mt-1">
+            by @{playlist.createdBy || playlist.ownerDisplayName || 'community'} · runtime {formatSeconds(playlist.runtimeSeconds)}
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => handlePlayPlaylist(playlist)}
+              className="flex-1 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-500 text-black rounded-xl font-semibold transition hover:shadow-lg flex items-center justify-center gap-2"
+            >
+              <Play size={16} fill="currentColor" />
+              Preview
+            </button>
+            {user?.uid && (
+              <button
+                onClick={() => handleAddToQueue(playlist)}
+                className={`px-3 py-2.5 rounded-xl text-sm font-semibold transition ${playlistQueue.some(p => p.id === playlist.id) ? 'bg-yellow-600 text-white' : 'bg-cyan-900 bg-opacity-50 text-cyan-200 hover:bg-opacity-80'}`}
+              >
+                {playlistQueue.some(p => p.id === playlist.id) ? 'In Queue' : '+ Queue'}
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+)}
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-green-700 border-opacity-50 mt-6">
@@ -2392,7 +2611,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             <div>
               <p className="font-bold text-lg">{playlist.name}</p>
                 <p className="text-sm text-green-400">
-                  {playlist.clips?.length || 0}/10 clips  {playlist.isPublic !== false ? '🌍 Public' : '🔒 Private'}
+                  {playlist.clips?.length || 0}/10 clips  {playlist.isPublic !== false ? '🌍 Public' : '🔒 Private'}{playlist.isFeatured ? '  ⭐ Featured' : ''}
                 </p>
             </div>
             <div className="flex gap-2">
@@ -2609,7 +2828,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           <span className="text-2xl font-bold text-purple-400 w-8">{idx + 1}</span>
           <div className="relative w-16 h-16 rounded-full overflow-hidden border-2 border-purple-600 group-hover:border-yellow-400 transition flex-shrink-0">
             {artistImages[item.artist] ? (
-              <img src={artistImages[item.artist]} alt={item.artist} className="w-full h-full object-cover" />
+              <Image
+                src={artistImages[item.artist]}
+                alt={item.artist}
+                fill
+                sizes="64px"
+                className="object-cover"
+              />
             ) : (
               <div className="w-full h-full bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
                 <Music size={32} className="text-white" />

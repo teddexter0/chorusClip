@@ -84,7 +84,7 @@ export default function PaymentModal({ onClose, userEmail, onSuccess }) {
               />
             </div>
             <p className="text-sm text-purple-300 mt-2">
-              Format: 0712345678 or 712345678 (we'll add +254)
+              Format: 0712345678 or 712345678 (we&apos;ll add +254)
             </p>
           </div>
 
@@ -104,7 +104,7 @@ export default function PaymentModal({ onClose, userEmail, onSuccess }) {
         </form>
 
         <p className="text-sm text-purple-300 text-center mt-4">
-          You'll be redirected to Pesapal to complete payment
+          You&apos;ll be redirected to Pesapal to complete payment
         </p>
       </div>
     </div>

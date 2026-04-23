@@ -239,21 +239,20 @@ export const checkAndResetDailyLimit = async (uid) => {
 
 // Add to firebase.js:
 
-// TRENDING - Most played clips in the last 30 days
+// TRENDING - Top clips by all-time play count
 export const getTrendingClipsByPlays = async (limitCount = 5) => {
   try {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    // Filter to recent clips, then client-side sort by plays
     const q = query(
       collection(db, 'clips'),
-      where('createdAt', '>=', thirtyDaysAgo),
-      orderBy('createdAt', 'desc'),
-      limit(100)
+      orderBy('plays', 'desc'),
+      limit(limitCount)
     );
     const snapshot = await getDocs(q);
-    const clips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const clips = snapshot.docs.map(doc => {
+      const data = doc.data();
+      const plays = data.plays ?? data.playCount ?? 0;
+      return { id: doc.id, ...data, plays };
+    });
     return clips.sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, limitCount);
   } catch (error) {
     console.error('Trending clips error:', error);

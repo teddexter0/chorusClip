@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Sparkles, LogOut, Users, TrendingUp, Music, ChevronDown, ChevronUp, UserPlus, Bell } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Sparkles, LogOut, Users, Music, ChevronDown, ChevronUp, UserPlus, Bell } from 'lucide-react';
 
 // Use relative imports instead of @/
 import Notification from '../components/ui/Notifications';
@@ -72,8 +72,8 @@ const [topArtists, setTopArtists] = useState([]);
 const [feedExpanded, setFeedExpanded] = useState(false);
 const [feedPage, setFeedPage] = useState(1);
 const FEED_PAGE_SIZE = 15;
+const [feedSort, setFeedSort] = useState('latest');
 const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
-const [trendingExpanded, setTrendingExpanded] = useState(false);
 const [artistsExpanded, setArtistsExpanded] = useState(false);
 
 // Friends panel
@@ -101,6 +101,18 @@ const getCreatedAtValue = (value) => {
   if (typeof value.seconds === 'number') return value.seconds * 1000;
   return 0;
 };
+
+const formatCreatedDate = (value) => {
+  const timestamp = getCreatedAtValue(value);
+  if (!timestamp) return 'date unknown';
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(new Date(timestamp));
+};
+
+const getClipPlayCount = (clip) => clip?.plays ?? clip?.playCount ?? 0;
 
 const getPlaylistRuntime = (playlist) =>
   (playlist?.clips || []).reduce((playlistTotal, clip) => {
@@ -180,6 +192,21 @@ const loadTrendingData = async () => {
 
   const showNotification = (message, type = 'info') => {
     setNotification({ message, type });
+  };
+
+  const updateClipStatInLists = (clipId, field, delta) => {
+    const applyDelta = (clip) => (
+      clip.id === clipId
+        ? { ...clip, [field]: Math.max(0, (clip[field] || 0) + delta) }
+        : clip
+    );
+    setClips(prev => prev.map(applyDelta));
+    setTrendingByPlays(prev => {
+      const updated = prev.map(applyDelta);
+      return field === 'plays'
+        ? updated.sort((a, b) => getClipPlayCount(b) - getClipPlayCount(a))
+        : updated;
+    });
   };
 
   
@@ -796,6 +823,74 @@ const handlePlayQueue = (startIdx = 0) => {
   }
 };
 
+const handlePlayStagedClips = () => {
+  if (selectedClipsForPlaylist.length === 0) {
+    showNotification('Add clips to the queue first!', 'error');
+    return;
+  }
+
+  if (currentPlaylistPlayer) {
+    currentPlaylistPlayer.stop();
+  }
+
+  const clipQueue = {
+    id: 'staged-clip-queue',
+    name: 'Clip Queue',
+    clips: selectedClipsForPlaylist.slice(0, 10)
+  };
+
+  const player = new PlaylistPlayer(clipQueue, playerRef, {
+    onClipChange: (clip, index, total) => {
+      setCurrentPlaylistInfo({ name: clipQueue.name, currentIndex: index, total, currentClip: clip });
+      setLoops(clip.loops);
+      setVideoTitle(clip.title);
+      setArtist(clip.artist);
+      setVideoId(clip.youtubeVideoId);
+      setIsReadOnlyMode(true);
+      loopsRef.current = clip.loops;
+      currentLoopIndexRef.current = 0;
+      currentLoopIterationRef.current = 0;
+      skipTrackingUntilRef.current = Date.now() + 800;
+
+      if (clip.id) {
+        updateClipStatInLists(clip.id, 'plays', 1);
+        import('../lib/firebase').then(async ({ db }) => {
+          const { doc, updateDoc, increment } = await import('firebase/firestore');
+          updateDoc(doc(db, 'clips', clip.id), { plays: increment(1) }).catch(() => {});
+        });
+      }
+    },
+    onPlaylistComplete: () => {
+      currentPlaylistPlayerRef.current = null;
+      setIsPlayingPlaylist(false);
+      setCurrentPlaylistInfo(null);
+      setCurrentPlaylistPlayer(null);
+      showNotification('Clip queue finished!', 'success');
+    },
+    showNotification
+  }, playlistMode);
+
+  currentPlaylistPlayerRef.current = player;
+  setCurrentPlaylistPlayer(player);
+  setIsPlayingPlaylist(true);
+  showNotification(`Playing clip queue (${clipQueue.clips.length}/10)`, 'success');
+
+  if (playerRef.current?.loadVideoById) {
+    player.playNext();
+  } else if (window.YT?.Player) {
+    playerRef.current = new window.YT.Player('youtube-player', {
+      videoId: clipQueue.clips[0].youtubeVideoId,
+      playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
+      events: {
+        onReady: () => player.playNext(),
+        onStateChange: onPlayerStateChange
+      }
+    });
+  } else {
+    showNotification('YouTube not ready - paste a URL first or wait a moment.', 'error');
+  }
+};
+
   const onPlayerReady = (event) => {
   const title = event.target.getVideoData().title;
   setVideoTitle(title);
@@ -821,10 +916,19 @@ const handlePlayQueue = (startIdx = 0) => {
       const loops = loopsRef.current;
       const idx = currentLoopIndexRef.current;
       if (loops && loops[idx]) {
-        // Restart current section — don't reset iteration count, let normal logic handle it
+        // Keep playback inside the saved clip boundary; if whole-clip loop is on,
+        // restart from the first section instead of replaying only the last section.
         setTimeout(() => {
           try {
-            playerRef.current?.seekTo(loops[idx].start, true);
+            if (standaloneLoopRef.current) {
+              currentLoopIndexRef.current = 0;
+              currentLoopIterationRef.current = 0;
+              setCurrentLoopIndex(0);
+              setCurrentLoopIteration(0);
+              playerRef.current?.seekTo(loops[0].start, true);
+            } else {
+              playerRef.current?.seekTo(loops[idx].start, true);
+            }
             playerRef.current?.playVideo();
           } catch (e) {}
         }, 300);
@@ -841,12 +945,11 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
     }
 
     // Increment play count (fire-and-forget – don't block UX)
-    if (user?.uid) {
-      import('../lib/firebase').then(async ({ db }) => {
-        const { doc, updateDoc, increment } = await import('firebase/firestore');
-        updateDoc(doc(db, 'clips', clipId), { plays: increment(1) }).catch(() => {});
-      });
-    }
+    updateClipStatInLists(clipId, 'plays', 1);
+    import('../lib/firebase').then(async ({ db }) => {
+      const { doc, updateDoc, increment } = await import('firebase/firestore');
+      updateDoc(doc(db, 'clips', clipId), { plays: increment(1) }).catch(() => {});
+    });
 
     // Normalize loops: ensure each has its own loopCount (backward compat with old clips)
     const rawLoops = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
@@ -1207,8 +1310,9 @@ const startTimeTracking = () => {
 
       setUser(prev => ({
         ...prev,
-        likedClips: [...prev.likedClips, clipId]
+        likedClips: [...(prev.likedClips || []), clipId]
       }));
+      updateClipStatInLists(clipId, 'likes', 1);
 
       showNotification('❤️ Clip liked!', 'success');
     } catch (error) {
@@ -1303,8 +1407,9 @@ const handleUnlikeClip = async (clipId) => {
 
     setUser(prev => ({
       ...prev,
-      likedClips: prev.likedClips.filter(id => id !== clipId)
+      likedClips: (prev.likedClips || []).filter(id => id !== clipId)
     }));
+    updateClipStatInLists(clipId, 'likes', -1);
 
     showNotification('💔 Unliked!', 'info');
   } catch (error) {
@@ -1420,6 +1525,10 @@ const handleUnlikeClip = async (clipId) => {
   }, []); 
 
   const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
+  const feedIsMostPlayed = feedSort === 'most-played';
+  const visibleFeedClips = feedIsMostPlayed
+    ? trendingByPlays.slice(0, 5)
+    : (feedExpanded ? clips.slice(0, feedPage * FEED_PAGE_SIZE) : clips.slice(0, 5));
   
   return (
     <div className="min-h-screen text-white relative overflow-hidden">
@@ -2357,27 +2466,51 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             <div className="card">
               <button
                 className="w-full flex justify-between items-center mb-4"
-                onClick={() => setFeedExpanded(v => !v)}
+                onClick={() => !feedIsMostPlayed && setFeedExpanded(v => !v)}
               >
                 <h2 className="text-3xl font-black tracking-tight">Trending Clips</h2>
                 <span className="flex items-center gap-2 text-purple-400 text-sm font-semibold">
-                  {feedExpanded ? `${clips.length} loaded` : `${Math.min(clips.length, 5)} shown`}
-                  {feedExpanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
+                  {feedIsMostPlayed ? 'Top 5 played' : feedExpanded ? `${clips.length} loaded` : `${Math.min(clips.length, 5)} shown`}
+                  {!feedIsMostPlayed && (feedExpanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>)}
                 </span>
               </button>
-              <p className="text-xs text-purple-400 mb-4">Latest uploads first. Expand and keep loading to browse older history.</p>
-              {feedLoading && clips.length === 0 ? (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {[
+                  { key: 'latest', label: 'Latest uploads' },
+                  { key: 'most-played', label: 'Most played' },
+                ].map(opt => (
+                  <button
+                    key={opt.key}
+                    onClick={() => setFeedSort(opt.key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-bold transition border ${
+                      feedSort === opt.key
+                        ? 'bg-purple-600 border-purple-400 text-white'
+                        : 'bg-purple-900 bg-opacity-40 border-purple-700 text-purple-300 hover:border-purple-500'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-purple-400 mb-4">
+                {feedIsMostPlayed ? 'Top 5 clips by play count.' : 'Latest uploads first. Expand and keep loading to browse older history.'}
+              </p>
+              {discoveryLoading && feedIsMostPlayed ? (
                 <div className="text-center py-12 text-purple-300">
                   <p className="text-xl mb-2">Loading clips...</p>
                 </div>
-              ) : clips.length === 0 ? (
+              ) : feedLoading && clips.length === 0 ? (
+                <div className="text-center py-12 text-purple-300">
+                  <p className="text-xl mb-2">Loading clips...</p>
+                </div>
+              ) : visibleFeedClips.length === 0 ? (
                 <div className="text-center py-12 text-purple-300">
                   <p className="text-xl mb-2">No clips yet!</p>
                   <p className="text-base">Be the first to post a clip</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {(feedExpanded ? clips.slice(0, feedPage * FEED_PAGE_SIZE) : clips.slice(0, 5)).map((clip) => {
+                  {visibleFeedClips.map((clip) => {
                     const clipSections = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30 }];
                     const firstSection = clipSections[0];
                     return (
@@ -2392,7 +2525,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                             <h3 className="font-bold text-base sm:text-lg leading-tight truncate">{clip.title}</h3>
                             <p className="text-sm text-purple-300 truncate">{clip.artist}</p>
                             <p className="text-xs text-purple-500 mt-0.5 truncate">
-                              @{clip.createdBy} · {clipSections.length} section{clipSections.length > 1 ? 's' : ''}
+                              @{clip.createdBy} · {formatCreatedDate(clip.createdAt)} · {clipSections.length} section{clipSections.length > 1 ? 's' : ''}
                             </p>
                           </div>
                           {clip.userId === user?.uid && (
@@ -2448,7 +2581,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                               aria-label={`Play ${clip.title}`}
                             >
                               <Play size={16} fill="currentColor" />
-                              <span className="text-xs font-semibold">{clip.plays || 0}</span>
+                              <span className="text-xs font-semibold">{getClipPlayCount(clip)}</span>
                             </button>
 
                             {/* Share */}
@@ -2464,14 +2597,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (!user?.uid) { showNotification('Sign in to create playlists!', 'error'); setShowAuthModal(true); return; }
-                                if (selectedClipsForPlaylist.length >= 10) { showNotification('Playlist cap is 10 clips!', 'error'); return; }
+                                if (selectedClipsForPlaylist.length >= 10) { showNotification('Clip queue holds max 10 clips!', 'error'); return; }
                                 if (isClipDuplicate(clip, selectedClipsForPlaylist)) { showNotification('Already in your queue!', 'info'); return; }
                                 setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
-                                showNotification(`Added! (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
+                                showNotification(`Added to clip queue (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
                               }}
                               className="text-green-400 hover:text-green-300 transition"
-                              aria-label="Add to playlist"
+                              aria-label="Add to clip queue"
                             >
                               <Plus size={16} />
                             </button>
@@ -2481,7 +2613,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     );
                   })}
 
-                  {clips.length > 5 && (
+                  {!feedIsMostPlayed && clips.length > 5 && (
                     <div className="space-y-2">
                       {!feedExpanded && (
                         <button
@@ -2759,49 +2891,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               )}
             </div>
 
-<div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mb-6">
-  <button
-    className="w-full flex justify-between items-center mb-1"
-    onClick={() => setTrendingExpanded(v => !v)}
-  >
-    <h3 className="font-black text-xl flex items-center gap-2">
-      <TrendingUp size={22} className="text-green-400" />
-      Trending Clips
-    </h3>
-    <span className="flex items-center gap-1 text-purple-400 text-sm">
-      Most played {trendingExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
-    </span>
-  </button>
-  <p className="text-xs text-purple-400 mb-4">Most played in the last 30 days</p>
-  {discoveryLoading ? (
-    <div className="flex items-center justify-center py-6 gap-2 text-purple-400 text-sm">
-      <span className="animate-spin">◌</span> Loading
-    </div>
-  ) : trendingByPlays.length === 0 ? (
-    <p className="text-center text-purple-400 py-4 text-sm">No clips yet  be the first to post!</p>
-  ) : (
-    <>
-      {(trendingExpanded ? trendingByPlays : trendingByPlays.slice(0, 5)).map((clip, idx) => (
-        <div key={clip.id} className="flex justify-between items-center bg-purple-900 bg-opacity-30 p-4 rounded-xl mb-2">
-          <div>
-            <p className="font-bold">{idx + 1}. {clip.title}</p>
-            <p className="text-sm text-purple-300">{clip.artist}</p>
-          </div>
-          <span className="text-green-400 font-bold">{clip.plays || 0} plays</span>
-        </div>
-      ))}
-      {trendingByPlays.length > 5 && (
-        <button
-          onClick={() => setTrendingExpanded(v => !v)}
-          className="w-full mt-1 py-2.5 bg-purple-800 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"
-        >
-          {trendingExpanded ? <><ChevronUp size={16}/> Show less</> : <><ChevronDown size={16}/> Show {trendingByPlays.length - 5} more</>}
-        </button>
-      )}
-    </>
-  )}
-</div>
-
 <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
   <button
     className="w-full flex justify-between items-center mb-4"
@@ -2812,12 +2901,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       Top Artists
     </h3>
     <span className="flex items-center gap-1 text-purple-400 text-sm">
-      Last 30 days {artistsExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+      {artistsExpanded ? 'Show less' : 'Show more'} {artistsExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
     </span>
   </button>
   {discoveryLoading ? (
     <div className="flex items-center justify-center py-6 gap-2 text-purple-400 text-sm">
-      <span className="animate-spin">◌</span> Loading
     </div>
   ) : topArtists.length === 0 ? (
     <p className="text-center text-purple-400 py-4 text-sm">No artist data yet</p>
@@ -2883,7 +2971,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             )}
             {selectedClipsForPlaylist.length > 0 && (
               <span className="text-green-300 font-bold text-sm">
-                + {selectedClipsForPlaylist.length} clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''} staged
+                Clip Queue: {selectedClipsForPlaylist.length}/10
               </span>
             )}
           </div>
@@ -2916,6 +3004,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               className="px-4 py-2 bg-red-800 hover:bg-red-700 rounded-xl text-sm font-semibold transition"
             >
               Clear Queue
+            </button>
+          )}
+          {selectedClipsForPlaylist.length > 0 && (
+            <button
+              onClick={handlePlayStagedClips}
+              className="px-4 py-2 bg-gradient-to-r from-green-500 to-cyan-500 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
+            >
+              <Play size={14} fill="currentColor" /> Play Clips
             </button>
           )}
           {selectedClipsForPlaylist.length > 0 && (

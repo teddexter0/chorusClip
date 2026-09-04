@@ -2754,6 +2754,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               <p className="text-base text-purple-200 mb-4">
                 Experiencing issues? Have feedback? We&apos;d love to hear from you!
               </p>
+              <div className="bg-purple-900 bg-opacity-40 rounded-xl px-4 py-3 mb-4 text-sm">
+                <p className="font-bold text-purple-200 mb-1">📱 Listen on mobile like an app</p>
+                <p className="text-purple-400 text-xs leading-relaxed">
+                  On iPhone: tap Share → &quot;Add to Home Screen&quot;.<br/>
+                  On Android: tap the browser menu → &quot;Add to Home Screen&quot; or &quot;Install app&quot;.<br/>
+                  This lets ChorusClip run fullscreen and keeps audio playing when you switch apps.
+                </p>
+              </div>
               <a 
                 href="mailto:ted.sande@strathmore.edu?subject=ChorusClip Support Request"
                 className="block w-full py-4 text-lg bg-gradient-to-r from-red-600 to-pink-600 rounded-xl font-bold text-center hover:shadow-xl transition"

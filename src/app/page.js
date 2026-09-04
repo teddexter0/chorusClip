@@ -1715,7 +1715,39 @@ const handleUnlikeClip = async (clipId) => {
     };
   }, []); 
 
-  const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
+  // Media Session API — enables lock screen playback controls on mobile
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: videoTitle || 'ChorusClip',
+      artist: artist || '',
+      album: 'ChorusClip',
+    });
+
+    navigator.mediaSession.setActionHandler('play', () => {
+      playerRef.current?.playVideo?.();
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+      playerRef.current?.pauseVideo?.();
+    });
+    navigator.mediaSession.setActionHandler('previoustrack', () => {
+      if (currentPlaylistPlayerRef.current) {
+        currentPlaylistPlayerRef.current.previous?.();
+      } else {
+        handleLoopRestart();
+      }
+    });
+    navigator.mediaSession.setActionHandler('nexttrack', () => {
+      if (currentPlaylistPlayerRef.current) {
+        currentPlaylistPlayerRef.current.skip?.();
+      }
+    });
+
+    navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+  }, [isPlaying, videoTitle, artist]);
+
+const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   const feedIsMostPlayed = feedSort === 'most-played';
   const filteredClips = clipSearchQuery
     ? clips.filter(c => fuzzyMatch(clipSearchQuery, c))

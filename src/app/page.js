@@ -42,6 +42,7 @@ const [clipSearchQuery, setClipSearchQuery] = useState('');
 const [playlistSearchQuery, setPlaylistSearchQuery] = useState('');
 const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
+const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
 
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
@@ -861,6 +862,14 @@ const handleRemoveFromQueue = (playlistId) => {
       saveQueueToFirestore(user.uid, newQueue.map(p => p.id));
     });
   }
+};
+
+const handleMoveStagedClip = (index, dir) => {
+  const newClips = [...selectedClipsForPlaylist];
+  const target = dir === 'up' ? index - 1 : index + 1;
+  if (target < 0 || target >= newClips.length) return;
+  [newClips[index], newClips[target]] = [newClips[target], newClips[index]];
+  setSelectedClipsForPlaylist(newClips);
 };
 
 const handleMoveQueueItem = (index, dir) => {
@@ -3387,6 +3396,53 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
         )}
 
+        {/* Staged clips edit section */}
+        {selectedClipsForPlaylist.length > 0 && !queueBannerCollapsed && (
+          <div className="px-5 pt-2 pb-1 border-t border-purple-700 border-opacity-40">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-green-300 font-bold text-sm">
+                🎵 {selectedClipsForPlaylist.length} clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''} staged
+              </span>
+              <button
+                onClick={() => setStagedClipsEditMode(v => !v)}
+                className={`text-xs font-bold px-3 py-1 rounded-lg transition ${stagedClipsEditMode ? 'bg-green-500 text-black' : 'bg-purple-800 text-purple-300 hover:text-white'}`}
+              >
+                {stagedClipsEditMode ? 'Done' : 'Edit Order'}
+              </button>
+            </div>
+
+            {stagedClipsEditMode && (
+              <div className="space-y-1.5 mb-2 max-h-40 overflow-y-auto">
+                {selectedClipsForPlaylist.map((clip, idx) => (
+                  <div key={clip.id || idx} className="flex items-center gap-2 bg-green-900 bg-opacity-20 px-3 py-2 rounded-xl">
+                    <span className="text-green-400 font-bold w-5 text-xs shrink-0">{idx + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold truncate">{clip.title}</p>
+                      <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button
+                        onClick={() => handleMoveStagedClip(idx, 'up')}
+                        disabled={idx === 0}
+                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-green-800 bg-opacity-50 hover:bg-opacity-80 disabled:opacity-20 transition text-green-200 text-xs"
+                      >▲</button>
+                      <button
+                        onClick={() => handleMoveStagedClip(idx, 'down')}
+                        disabled={idx === selectedClipsForPlaylist.length - 1}
+                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-green-800 bg-opacity-50 hover:bg-opacity-80 disabled:opacity-20 transition text-green-200 text-xs"
+                      >▼</button>
+                      <button
+                        onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
+                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-red-800 bg-opacity-50 hover:bg-opacity-80 transition text-red-300 text-xs"
+                      >✕</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Actions row */}
         <div className="flex flex-wrap gap-2 px-5 py-3">
           {playlistQueue.length > 0 && !isPlayingQueue && (
@@ -3431,7 +3487,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           )}
           {selectedClipsForPlaylist.length > 0 && (
             <button
-              onClick={() => setSelectedClipsForPlaylist([])}
+              onClick={() => { setSelectedClipsForPlaylist([]); setStagedClipsEditMode(false); }}
               className="px-4 py-2 bg-purple-800 hover:bg-purple-700 rounded-xl text-sm font-semibold transition"
             >
               Clear Staged

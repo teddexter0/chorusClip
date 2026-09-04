@@ -135,54 +135,33 @@ const getClipRuntime = (clip) => {
   }, 0);
 };
 
-const normalizeText = (value) =>
-  (value || '')
-    .toString()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+// Real-time search: matches artist, title, or creator in any word order
+// Handles typos via character-overlap scoring
+const fuzzyMatch = (query, clip) => {
+  if (!query || !query.trim()) return true;
+  const terms = query.trim().toLowerCase().split(/\s+/);
+  const haystack = [
+    clip.title || '',
+    clip.artist || '',
+    clip.createdBy || ''
+  ].join(' ').toLowerCase();
 
-const editDistanceWithin = (source, target, maxDistance = 2) => {
-  if (!source || !target) return false;
-  if (Math.abs(source.length - target.length) > maxDistance) return false;
-
-  const prev = Array.from({ length: target.length + 1 }, (_, index) => index);
-  for (let i = 1; i <= source.length; i++) {
-    let left = i;
-    let diag = i - 1;
-    let rowMin = left;
-    for (let j = 1; j <= target.length; j++) {
-      const oldAbove = prev[j];
-      const cost = source[i - 1] === target[j - 1] ? 0 : 1;
-      const next = Math.min(prev[j] + 1, left + 1, diag + cost);
-      prev[j] = next;
-      diag = oldAbove;
-      left = next;
-      rowMin = Math.min(rowMin, next);
-    }
-    if (rowMin > maxDistance) return false;
-    prev[0] = i;
-  }
-  return prev[target.length] <= maxDistance;
-};
-
-const fuzzyMatches = (item, query, fields) => {
-  const normalizedQuery = normalizeText(query);
-  if (!normalizedQuery) return true;
-
-  const haystack = normalizeText(fields.map(field => item?.[field]).join(' '));
-  if (haystack.includes(normalizedQuery)) return true;
-
-  const haystackTokens = haystack.split(' ').filter(Boolean);
-  return normalizedQuery.split(' ').filter(Boolean).every(queryToken =>
-    haystackTokens.some(token =>
-      token.includes(queryToken) ||
-      queryToken.includes(token) ||
-      editDistanceWithin(queryToken, token, queryToken.length > 5 ? 2 : 1)
-    )
-  );
+  return terms.every(term => {
+    // Exact substring match first (fastest)
+    if (haystack.includes(term)) return true;
+    // Word-boundary partial match (e.g. "drak" matches "drake")
+    const words = haystack.split(/\s+/);
+    return words.some(word => {
+      if (word.startsWith(term)) return true;
+      // Character overlap: at least 75% of term chars appear in word in order
+      if (term.length < 3) return false;
+      let ti = 0;
+      for (let i = 0; i < word.length && ti < term.length; i++) {
+        if (word[i] === term[ti]) ti++;
+      }
+      return ti / term.length >= 0.75;
+    });
+  });
 };
 
 const getPlaylistRuntime = (playlist) =>
@@ -1739,7 +1718,7 @@ const handleUnlikeClip = async (clipId) => {
   const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   const feedIsMostPlayed = feedSort === 'most-played';
   const filteredClips = clipSearchQuery
-    ? clips.filter(c => fuzzyMatches(c, clipSearchQuery, ['title', 'artist', 'createdBy']))
+    ? clips.filter(c => fuzzyMatch(clipSearchQuery, c))
     : clips;
   const topPlayCounts = [...clips].sort((a,b)=>(b.plays||0)-(a.plays||0)).slice(0,3).map(c=>c.id);
   const visibleFeedClips = feedIsMostPlayed
@@ -2781,18 +2760,34 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 <input
                   type="text"
                   value={clipSearchQuery}
-                  onChange={e => { setClipSearchQuery(e.target.value); setFeedExpanded(!!e.target.value); setFeedPage(1); }}
-                  placeholder="Search clips, artists, creators..."
-                  className="w-full pl-9 pr-4 py-2.5 bg-purple-900 bg-opacity-40 border border-purple-700 rounded-xl text-sm text-white placeholder-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  onChange={e => {
+                    setClipSearchQuery(e.target.value);
+                    if (e.target.value) {
+                      setFeedExpanded(true);
+                      setFeedPage(1);
+                    } else {
+                      setFeedExpanded(false);
+                    }
+                  }}
+                  placeholder="Search by artist, song, or creator..."
+                  className="w-full pl-9 pr-8 py-2.5 bg-purple-900 bg-opacity-40 border border-purple-700 rounded-xl text-sm text-white placeholder-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 text-sm">🔍</span>
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 text-sm pointer-events-none">🔍</span>
                 {clipSearchQuery && (
                   <button
                     onClick={() => { setClipSearchQuery(''); setFeedExpanded(false); }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-purple-400 hover:text-white text-xs"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-purple-400 hover:text-white text-xs w-5 h-5 flex items-center justify-center"
+                    aria-label="Clear search"
                   >✕</button>
                 )}
               </div>
+              {clipSearchQuery && (
+                <p className="text-xs text-purple-400 mb-3 -mt-2">
+                  {filteredClips.length === 0
+                    ? 'No clips found'
+                    : `${filteredClips.length} clip${filteredClips.length !== 1 ? 's' : ''} found`}
+                </p>
+              )}
               <button
                 className="w-full flex justify-between items-center mb-4"
                 onClick={() => !feedIsMostPlayed && setFeedExpanded(v => !v)}

@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Base font size — was browser default 16px which renders small with Tailwind's rem scale */
+html {
+  font-size: 17px; /* bump from 16px — affects all rem-based sizes */
+}
+
+body {
+  font-size: 1rem; /* 17px */
+  line-height: 1.6;
+}
+
 * {
   margin: 0;
   padding: 0;

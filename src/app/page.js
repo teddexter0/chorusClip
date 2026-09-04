@@ -2701,16 +2701,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   </h3>
   <ul className="space-y-3 text-base text-purple-200">
     <li className="flex items-start gap-2">
-      <span className="text-blue-400 text-lg">💒</span>
-      <span><strong>Weddings:</strong> Practice walking down the aisle to your perfect song moment</span>
-    </li>
-    <li className="flex items-start gap-2">
       <span className="text-blue-400 text-lg">🎤</span>
       <span><strong>Choirs:</strong> Master tricky vocal parts by looping specific sections</span>
-    </li>
-    <li className="flex items-start gap-2">
-      <span className="text-blue-400 text-lg">🙏</span>
-      <span><strong>Worship:</strong> Meditate on powerful worship moments endlessly</span>
     </li>
     <li className="flex items-start gap-2">
       <span className="text-blue-400 text-lg">💪</span>

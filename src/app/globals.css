@@ -146,3 +146,33 @@ select option {
     border: 4px solid #10b981;
   }
 }
+
+/* ===== GOLD / ELECTRIC THEME ===== */
+.theme-electric {
+  --accent-1: #f59e0b;
+  --accent-2: #d97706;
+  --accent-3: #fbbf24;
+}
+
+.theme-electric .bg-purple-900 { background-color: rgba(120, 80, 0, 0.9) !important; }
+.theme-electric .bg-purple-800 { background-color: rgba(100, 65, 0, 0.8) !important; }
+.theme-electric .bg-purple-700 { background-color: rgba(80, 52, 0, 0.7) !important; }
+.theme-electric .border-purple-700 { border-color: rgba(251, 191, 36, 0.3) !important; }
+.theme-electric .border-purple-500 { border-color: rgba(251, 191, 36, 0.5) !important; }
+.theme-electric .text-purple-300 { color: #fcd34d !important; }
+.theme-electric .text-purple-400 { color: #f59e0b !important; }
+.theme-electric .text-purple-200 { color: #fef3c7 !important; }
+.theme-electric .from-purple-900 { --tw-gradient-from: #78350f !important; }
+.theme-electric .via-indigo-900 { --tw-gradient-via: #92400e !important; }
+.theme-electric .to-purple-800 { --tw-gradient-to: #78350f !important; }
+.theme-electric .from-purple-600 { --tw-gradient-from: #d97706 !important; }
+.theme-electric .to-pink-600 { --tw-gradient-to: #f59e0b !important; }
+.theme-electric ::-webkit-scrollbar-thumb { background: rgba(245, 158, 11, 0.5); }
+.theme-electric ::-webkit-scrollbar-thumb:hover { background: rgba(245, 158, 11, 0.7); }
+
+/* ===== CLASSIC / PURPLE THEME ===== */
+.theme-classic {
+  --accent-1: #a855f7;
+  --accent-2: #9333ea;
+  --accent-3: #c084fc;
+}

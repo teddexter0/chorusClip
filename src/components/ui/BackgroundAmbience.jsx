@@ -3,8 +3,9 @@
 
 import React, { useEffect, useRef } from 'react';
 
-const BackgroundAmbience = () => {
+const BackgroundAmbience = ({ theme = 'electric' }) => {
   const videoRef = useRef(null);
+  const isElectric = theme === 'electric';
 
   useEffect(() => {
     // Force play on mount
@@ -33,13 +34,17 @@ const BackgroundAmbience = () => {
       </video>
 
       {/* Dark overlay */}
-      <div className="absolute inset-0 bg-gradient-to-br from-purple-900/95 via-indigo-900/92 to-purple-800/95" />
+      <div className={`absolute inset-0 bg-gradient-to-br ${
+        isElectric
+          ? 'from-yellow-950/95 via-orange-900/92 to-black/95'
+          : 'from-purple-900/95 via-indigo-900/92 to-purple-800/95'
+      }`} />
 
       {/* Animated blobs */}
       <div className="absolute inset-0 opacity-20">
-        <div className="absolute top-20 left-20 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl animate-blob"></div>
-        <div className="absolute top-40 right-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-2000"></div>
-        <div className="absolute bottom-20 left-40 w-72 h-72 bg-indigo-500 rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-4000"></div>
+        <div className={`absolute top-20 left-20 w-72 h-72 ${isElectric ? 'bg-yellow-400' : 'bg-purple-500'} rounded-full mix-blend-multiply filter blur-xl animate-blob`}></div>
+        <div className={`absolute top-40 right-20 w-72 h-72 ${isElectric ? 'bg-red-500' : 'bg-pink-500'} rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-2000`}></div>
+        <div className={`absolute bottom-20 left-40 w-72 h-72 ${isElectric ? 'bg-orange-500' : 'bg-indigo-500'} rounded-full mix-blend-multiply filter blur-xl animate-blob animation-delay-4000`}></div>
       </div>
     </div>
   );

@@ -103,7 +103,13 @@ export class PlaylistPlayer {
         // loopCount 0 means "infinite" — cap at ENDLESS_CAP in a playlist context
         count = (loop.loopCount === 0) ? ENDLESS_CAP_IN_PLAYLIST : (loop.loopCount ?? 1);
       }
-      return { ...loop, loopCount: count };
+      return {
+        ...loop,
+        youtubeVideoId: loop.youtubeVideoId || clip.youtubeVideoId,
+        title: loop.title || clip.title,
+        artist: loop.artist || clip.artist,
+        loopCount: count
+      };
     });
     return { ...clip, loops: normalizedLoops };
   }
@@ -158,7 +164,7 @@ export class PlaylistPlayer {
 
     if (this.playerRef.current?.loadVideoById) {
       this.playerRef.current.loadVideoById({
-        videoId: clip.youtubeVideoId,
+        videoId: clip.loops[0]?.youtubeVideoId || clip.youtubeVideoId,
         startSeconds: clip.loops[0]?.start ?? 0
       });
       // Give the player time to buffer before calling playVideo

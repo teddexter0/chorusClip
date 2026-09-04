@@ -11,7 +11,7 @@ export default function Notification({ message, type, onClose }) {
  useEffect(() => {
   const timer = setTimeout(() => {
     onClose();
-  }, 4000); // Disappears after 4 seconds
+  }, 2200); // Disappears after 2.2 seconds
 
   return () => clearTimeout(timer);
 }, [onClose]);

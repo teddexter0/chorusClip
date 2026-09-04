@@ -382,6 +382,7 @@ export const signUpUser = async (email, password, displayName) => {
       email: user.email,
       displayName: displayName,
       isPremium: false,
+      appTheme: 'electric',
       accountCreated: new Date(),
       songsToday: 0,
       lastResetDate: new Date().toDateString()

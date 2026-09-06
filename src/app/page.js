@@ -36,6 +36,7 @@ const [managingPlaylist, setManagingPlaylist] = useState(null); // playlist open
 const [artistImages, setArtistImages] = useState({});
 const [publicPlaylists, setPublicPlaylists] = useState([]);
 const [queueBannerCollapsed, setQueueBannerCollapsed] = useState(false);
+const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
 const [themeMode, setThemeMode] = useState('electric');
 const [pendingAction, setPendingAction] = useState(null);
 const [clipSearchQuery, setClipSearchQuery] = useState('');
@@ -1681,6 +1682,21 @@ const handleUnlikeClip = async (clipId) => {
     }
   };
 
+  const handleProfilePicUpload = async (file) => {
+  if (!user?.uid || !file) return;
+  setPendingAction('avatar');
+  try {
+    const { uploadProfilePicture } = await import('../lib/firebase');
+    const url = await uploadProfilePicture(user.uid, file);
+    setUser(prev => ({ ...prev, photoURL: url }));
+    showNotification('✅ Profile picture updated!', 'success');
+  } catch (e) {
+    showNotification('Upload failed: ' + e.message, 'error');
+  } finally {
+    setPendingAction(null);
+  }
+};
+
   const handleChangeUsername = async () => {
   if (!user?.uid) {
     showNotification('Please sign in first!', 'error');
@@ -2233,26 +2249,84 @@ className="btn-primary w-full py-5 text-xl">
               {themeMode === 'electric' ? '⚡' : '💜'}
             </button>
 
-            {/* User info — tap to edit username on desktop; hidden on mobile */}
-            <button
-              onClick={handleChangeUsername}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white bg-opacity-10 hover:bg-opacity-15 transition min-w-0"
-              aria-label="Change username"
-              title={`${USERNAME_CHANGE_QUOTA - (user.usernameChanges ?? 0)} change(s) remaining`}
-            >
-              <span className="text-sm font-semibold truncate max-w-[140px]">{user.displayName}</span>
-              <span className="text-xs text-purple-300 shrink-0">Edit</span>
-            </button>
+            {/* User info — avatar upload + username edit on desktop; hidden on mobile */}
+            {pendingAction === 'avatar' ? (
+              <div className="hidden sm:flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-purple-800 flex items-center justify-center shrink-0">
+                  <span className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                </div>
+              </div>
+            ) : (
+              <div className="hidden sm:flex items-center gap-2 min-w-0">
+                {/* Avatar — click to upload */}
+                <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer shrink-0 group" title="Change profile picture">
+                  {user.photoURL ? (
+                    <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-xs font-black">
+                      {(user.displayName || 'U')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition flex items-center justify-center">
+                    <span className="text-white text-xs opacity-0 group-hover:opacity-100 transition">📷</span>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleProfilePicUpload(file);
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+                {/* Username — click to edit */}
+                <button
+                  onClick={handleChangeUsername}
+                  className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-white bg-opacity-10 hover:bg-opacity-15 transition min-w-0"
+                  aria-label="Change username"
+                  title={`${USERNAME_CHANGE_QUOTA - (user.usernameChanges ?? 0)} change(s) remaining`}
+                >
+                  <span className="text-sm font-semibold truncate max-w-[120px]">{user.displayName}</span>
+                  <span className="text-xs text-purple-300 shrink-0">Edit</span>
+                </button>
+              </div>
+            )}
 
-            {/* Mobile: avatar circle with first letter, tap = sign out menu alternative */}
-            <button
-              onClick={handleChangeUsername}
-              className="sm:hidden w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-sm font-black shrink-0"
-              aria-label="Edit username"
-              title={user.displayName}
-            >
-              {(user.displayName || 'U')[0].toUpperCase()}
-            </button>
+            {/* Mobile: avatar upload — tap to upload profile picture */}
+            {pendingAction === 'avatar' ? (
+              <div className="sm:hidden w-9 h-9 rounded-full bg-purple-800 flex items-center justify-center shrink-0">
+                <span className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            ) : (
+              <label
+                className="sm:hidden relative w-9 h-9 rounded-full overflow-hidden cursor-pointer shrink-0 group"
+                title="Tap to change profile picture"
+              >
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-sm font-black">
+                    {(user.displayName || 'U')[0].toUpperCase()}
+                  </div>
+                )}
+                {/* Hover overlay */}
+                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition flex items-center justify-center">
+                  <span className="text-white text-xs opacity-0 group-hover:opacity-100 transition">📷</span>
+                </div>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleProfilePicUpload(file);
+                    e.target.value = ''; // reset so same file can be re-selected
+                  }}
+                />
+              </label>
+            )}
 
             {/* Sign out */}
             <button
@@ -3231,61 +3305,97 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         : `Infinite sections play ${ENDLESS_CAP_IN_PLAYLIST}× max`}
     </p>
 
-    <div className="grid grid-cols-2 gap-3">
-      {playlists.map((playlist) => (
-        <div
-          key={playlist.id}
-          className="bg-gradient-to-b from-green-900 to-teal-900 bg-opacity-50 border border-green-700 border-opacity-40 rounded-2xl p-4 flex flex-col gap-3 hover:border-green-500 transition"
-        >
-          {/* Header */}
-          <div>
-            <p className="font-bold text-base leading-tight line-clamp-1">{playlist.name}</p>
-            <p className="text-xs text-green-400 mt-0.5">
-              {playlist.clips?.length || 0}/10 · {playlist.isPublic !== false ? '🌍' : '🔒'}
-            </p>
-          </div>
+    <div className="space-y-2">
+      {playlists.map((playlist) => {
+        const isExpanded = expandedPlaylistId === playlist.id;
+        const inQueue = playlistQueue.some(p => p.id === playlist.id);
+        return (
+          <div
+            key={playlist.id}
+            className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
+              isExpanded
+                ? 'border-green-500 border-opacity-60 bg-gradient-to-b from-green-900 to-teal-900 bg-opacity-60'
+                : 'border-green-700 border-opacity-30 bg-green-900 bg-opacity-20 hover:bg-opacity-30'
+            }`}
+          >
+            {/* Row header — always visible, tap to expand */}
+            <button
+              onClick={() => setExpandedPlaylistId(isExpanded ? null : playlist.id)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="text-green-400 text-lg shrink-0">
+                  {isExpanded ? '▾' : '▸'}
+                </span>
+                <div className="min-w-0">
+                  <p className="font-bold text-base leading-tight truncate">{playlist.name}</p>
+                  <p className="text-xs text-green-400 mt-0.5">
+                    {playlist.clips?.length || 0}/10 clips · {playlist.isPublic !== false ? '🌍' : '🔒'}
+                  </p>
+                </div>
+              </div>
+              {inQueue && (
+                <span className="text-xs bg-yellow-600 text-black px-2 py-0.5 rounded-full font-bold shrink-0 ml-2">
+                  In Queue
+                </span>
+              )}
+            </button>
 
-          {/* Clip preview — first 3 titles */}
-          <div className="flex-1 space-y-0.5">
-            {(playlist.clips || []).slice(0, 3).map((clip, i) => (
-              <p key={i} className="text-xs text-green-300 truncate">
-                {i + 1}. {clip.title}
-              </p>
-            ))}
-            {(playlist.clips?.length || 0) > 3 && (
-              <p className="text-xs text-green-600">+{playlist.clips.length - 3} more</p>
+            {/* Expanded body */}
+            {isExpanded && (
+              <div className="px-4 pb-4 space-y-3">
+                {/* Clip preview list */}
+                {(playlist.clips || []).length === 0 ? (
+                  <p className="text-xs text-green-600 text-center py-2">No clips yet</p>
+                ) : (
+                  <div className="space-y-1">
+                    {(playlist.clips || []).slice(0, 5).map((clip, i) => (
+                      <div key={i} className="flex items-center gap-2 py-1 border-b border-green-800 border-opacity-30 last:border-0">
+                        <span className="text-xs text-green-600 w-4 shrink-0">{i + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold truncate text-white">{clip.title}</p>
+                          <p className="text-xs text-green-400 truncate">{clip.artist}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {(playlist.clips?.length || 0) > 5 && (
+                      <p className="text-xs text-green-600 pt-1">+{playlist.clips.length - 5} more clips</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => handlePlayPlaylist(playlist)}
+                    className="flex-1 min-w-[80px] py-2.5 bg-gradient-to-r from-green-600 to-teal-600 rounded-xl text-sm font-bold flex items-center justify-center gap-1 hover:shadow-lg transition"
+                  >
+                    <Play size={14} fill="currentColor" /> Play
+                  </button>
+                  <button
+                    onClick={() => handleAddToQueue(playlist)}
+                    className={`px-3 py-2.5 rounded-xl text-sm font-bold transition ${
+                      inQueue
+                        ? 'bg-yellow-600 text-black'
+                        : 'bg-yellow-900 bg-opacity-50 text-yellow-300 hover:bg-opacity-80'
+                    }`}
+                    title={inQueue ? 'Remove from queue' : 'Add to queue'}
+                  >
+                    {inQueue ? '✓Q' : '+Q'}
+                  </button>
+                  <button
+                    onClick={() => setManagingPlaylist(playlist)}
+                    className="px-3 py-2.5 bg-purple-800 hover:bg-purple-700 rounded-xl text-sm font-semibold transition"
+                    title="Manage playlist"
+                  >
+                    ⋯
+                  </button>
+                </div>
+              </div>
             )}
           </div>
-
-          {/* Actions */}
-          <div className="flex gap-1.5">
-            <button
-              onClick={() => handlePlayPlaylist(playlist)}
-              className="flex-1 py-2 bg-gradient-to-r from-green-600 to-teal-600 rounded-xl text-xs font-bold flex items-center justify-center gap-1 hover:shadow-lg transition"
-            >
-              <Play size={12} fill="currentColor" /> Play
-            </button>
-            <button
-              onClick={() => handleAddToQueue(playlist)}
-              className={`px-2 py-2 rounded-xl text-xs font-bold transition ${
-                playlistQueue.some(p => p.id === playlist.id)
-                  ? 'bg-yellow-600 text-black'
-                  : 'bg-yellow-900 bg-opacity-50 text-yellow-300 hover:bg-opacity-80'
-              }`}
-              title="Add to queue"
-            >
-              {playlistQueue.some(p => p.id === playlist.id) ? '✓Q' : '+Q'}
-            </button>
-            <button
-              onClick={() => setManagingPlaylist(playlist)}
-              className="px-2 py-2 bg-purple-800 hover:bg-purple-700 rounded-xl text-xs font-semibold transition"
-              title="Manage"
-            >
-              ⋯
-            </button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
 
     {/* Playlist Queue Panel */}

@@ -186,3 +186,12 @@ select option {
   --accent-2: #9333ea;
   --accent-3: #c084fc;
 }
+
+/* Hide scrollbar on horizontal scroll lanes (still scrollable) */
+.overflow-x-auto {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE */
+}
+.overflow-x-auto::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}

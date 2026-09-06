@@ -5,7 +5,7 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata = {
   title: "ChorusClip - Loop Your Favorite Song Moments",
-  description: "Create and share loops of your favorite parts of any YouTube song. Perfect for worship, study, and workouts.",
+  description: "Create and share loops of your favorite parts of any YouTube song. Perfect for study, workouts, and choirs.",
 };
 
 export default function RootLayout({ children }) {

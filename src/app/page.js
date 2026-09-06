@@ -43,6 +43,7 @@ const [playlistSearchQuery, setPlaylistSearchQuery] = useState('');
 const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
 const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
+const [myClips, setMyClips] = useState([]);
 
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
@@ -301,9 +302,20 @@ const loadTrendingData = async () => {
       loadTrendingData();
       loadPublicPlaylists();
 
+      // Expose one-time migrations on window so they can be run from the browser console once
+      window.__migrateClipsToPrivate = handleMigrateClipsToPrivate;
+      window.__migrateAllPlaylistsToPrivate = handleMigratePlaylistsToPrivate;
+
       if (user?.uid) {
         loadUserPlaylists();
         loadSavedQueue();
+        let unsubUserClips;
+        import('../lib/firebase').then(({ subscribeToUserClips }) => {
+          unsubUserClips = subscribeToUserClips(user.uid, (userClips) => {
+            setMyClips(userClips);
+          });
+        });
+        return () => { if (unsubUserClips) unsubUserClips(); };
       }
     }
     // These loaders intentionally re-run when auth identity changes.
@@ -1058,16 +1070,45 @@ const completeCurrentClipPlayback = () => {
   stopTimeTracking();
 
   if (currentPlaylistPlayerRef.current) {
+    try { playerRef.current?.pauseVideo(); } catch(e) {}
     currentPlaylistPlayerRef.current.advanceToNextClip();
   } else if (standaloneLoopRef.current && loopsRef.current[0]) {
     skipTrackingUntilRef.current = Date.now() + 800;
     playerRef.current.seekTo(loopsRef.current[0].start, true);
     startTimeTracking();
   } else {
-    try { playerRef.current?.pauseVideo(); } catch (e) {}
+    try { playerRef.current?.pauseVideo(); } catch(e) {}
     setIsPlaying(false);
   }
 };
+
+  const handleMigrateClipsToPrivate = async () => {
+    if (!user?.uid) return;
+    setGlobalLoading(true);
+    try {
+      const { migrateAllClipsToPrivate } = await import('../lib/firebase');
+      const count = await migrateAllClipsToPrivate();
+      showNotification(`✅ ${count} clips set to private`, 'success');
+    } catch (e) {
+      showNotification('Migration failed: ' + e.message, 'error');
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
+
+  const handleMigratePlaylistsToPrivate = async () => {
+    if (!user?.uid) return;
+    setGlobalLoading(true);
+    try {
+      const { migrateAllPlaylistsToPrivate } = await import('../lib/firebase');
+      const count = await migrateAllPlaylistsToPrivate();
+      showNotification(`✅ ${count} playlists set to private`, 'success');
+    } catch (e) {
+      showNotification('Migration failed: ' + e.message, 'error');
+    } finally {
+      setGlobalLoading(false);
+    }
+  };
 
   const onPlayerReady = (event) => {
   const title = event.target.getVideoData().title;
@@ -1089,19 +1130,10 @@ const completeCurrentClipPlayback = () => {
       stopTimeTracking();
 
       if (currentPlaylistPlayerRef.current) {
+        // Don't restart — let playlist advance
         currentPlaylistPlayerRef.current.advanceToNextClip();
-      } else {
-        const loops = loopsRef.current;
-        const idx = currentLoopIndexRef.current;
-        if (loops && loops[idx]) {
-          setTimeout(() => {
-            try {
-              playerRef.current?.seekTo(loops[idx].start, true);
-              playerRef.current?.playVideo();
-            } catch (e) {}
-          }, 300);
-        }
       }
+      // If NOT in playlist, do nothing — let user press play again
     }
   };
   
@@ -1466,6 +1498,7 @@ const startTimeTracking = () => {
     likes: 0,
     plays: 0,
     shares: 0,
+    isPublic: false,  // PRIVATE BY DEFAULT
     createdAt: new Date()
   };
 
@@ -2336,7 +2369,17 @@ className="input"/>
                   )}
 
                   {loops.map((loop, idx) => (
-                    <div key={idx} className={`bg-purple-900 bg-opacity-30 p-6 rounded-2xl border border-opacity-50 ${idx === currentLoopIndex && isPlaying ? 'border-pink-500' : 'border-purple-700'}`}>
+                    <div key={idx} className={`p-6 rounded-2xl border border-opacity-60 ${
+                      idx === currentLoopIndex && isPlaying
+                        ? 'border-pink-500'
+                        : (loop.youtubeVideoId && loop.youtubeVideoId !== videoId)
+                        ? 'border-yellow-500 border-opacity-50'
+                        : 'border-purple-700'
+                    } ${
+                      (loop.youtubeVideoId && loop.youtubeVideoId !== videoId)
+                        ? 'bg-gradient-to-br from-yellow-900 via-amber-900 to-orange-900 bg-opacity-40'
+                        : 'bg-purple-900 bg-opacity-30'
+                    }`}>
                       {/* Section header: title + reorder + remove */}
                       <div className="flex justify-between items-center mb-5">
                         <div className="flex items-center gap-2">
@@ -2372,6 +2415,32 @@ className="input"/>
                           </button>
                         )}
                       </div>
+
+                      {/* Mix song display — prominent when this section plays a different song */}
+                      {loop.youtubeVideoId && loop.youtubeVideoId !== videoId && (
+                        <div className="mb-3 flex items-center gap-2 bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 rounded-xl px-3 py-2">
+                          <span className="text-yellow-400 text-lg">🎵</span>
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-yellow-400 uppercase tracking-wide">Mix Song</p>
+                            <p className="text-sm font-semibold text-white truncate">{loop.title || loop.youtubeVideoId}</p>
+                            {loop.artist && <p className="text-xs text-yellow-300 truncate">{loop.artist}</p>}
+                          </div>
+                          {!isReadOnlyMode && (
+                            <button
+                              onClick={() => {
+                                const newLoops = [...loops];
+                                const { youtubeVideoId, title, artist, ...rest } = newLoops[idx];
+                                newLoops[idx] = rest;
+                                setLoops(newLoops);
+                                showNotification('Mix section cleared', 'info');
+                              }}
+                              className="ml-auto text-yellow-500 hover:text-red-400 transition text-xs shrink-0"
+                            >
+                              ✕ Clear
+                            </button>
+                          )}
+                        </div>
+                      )}
 
                       {/* Per-section repeat count */}
                       <div className="mb-5">
@@ -2521,56 +2590,54 @@ className="input"/>
 
       {loops[idx]._showMixPanel && (
         <div className="mt-3 space-y-2">
-          <input
-            type="text"
-            placeholder="YouTube URL for this section..."
-            className="w-full px-3 py-2 bg-purple-950 border border-purple-600 rounded-xl text-sm text-white placeholder-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-            defaultValue={loops[idx].youtubeVideoId && loops[idx].youtubeVideoId !== videoId ? `https://youtube.com/watch?v=${loops[idx].youtubeVideoId}` : ''}
-            onBlur={(e) => {
-              const url = e.target.value.trim();
-              if (!url) {
+          <div className="flex gap-2">
+            <input
+              id={`mix-url-${idx}`}
+              type="text"
+              placeholder="YouTube URL for this section..."
+              className="flex-1 px-3 py-2 bg-black bg-opacity-40 border border-yellow-600 rounded-xl text-sm text-white placeholder-yellow-900 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+              defaultValue={loops[idx].youtubeVideoId && loops[idx].youtubeVideoId !== videoId ? `https://youtube.com/watch?v=${loops[idx].youtubeVideoId}` : ''}
+            />
+            <button
+              onClick={() => {
+                const input = document.getElementById(`mix-url-${idx}`);
+                const url = input?.value?.trim();
+                if (!url) {
+                  const newLoops = [...loops];
+                  const { youtubeVideoId, title, artist, _showMixPanel, ...rest } = newLoops[idx];
+                  newLoops[idx] = { ...rest, _showMixPanel: true };
+                  setLoops(newLoops);
+                  return;
+                }
+                const newVideoId = extractVideoId(url);
+                if (!newVideoId) { showNotification('Invalid YouTube URL', 'error'); return; }
                 const newLoops = [...loops];
-                newLoops[idx] = {
-                  ...newLoops[idx],
-                  youtubeVideoId: videoId,
-                  title: videoTitle,
-                  artist: artist,
-                  _showMixPanel: true
-                };
+                newLoops[idx] = { ...newLoops[idx], youtubeVideoId: newVideoId, title: 'Loading…', artist: '', _showMixPanel: true };
                 setLoops(newLoops);
-                return;
-              }
-              const newVideoId = extractVideoId(url);
-              if (!newVideoId) { showNotification('Invalid YouTube URL', 'error'); return; }
-              const newLoops = [...loops];
-              newLoops[idx] = {
-                ...newLoops[idx],
-                youtubeVideoId: newVideoId,
-                title: 'Loading...',
-                artist: '',
-                _showMixPanel: true
-              };
-              setLoops(newLoops);
-              fetch(`https://www.youtube.com/oembed?url=https://youtube.com/watch?v=${newVideoId}&format=json`)
-                .then(r => r.json())
-                .then(data => {
-                  const titleParts = (data.title || '').split(' - ');
-                  const sectionArtist = titleParts.length > 1 ? titleParts[0].trim() : data.author_name || '';
-                  const sectionTitle = titleParts.length > 1 ? titleParts.slice(1).join(' - ').trim() : data.title;
-                  setLoops(prev => {
-                    const updated = [...prev];
-                    updated[idx] = { ...updated[idx], title: sectionTitle, artist: sectionArtist };
-                    return updated;
-                  });
-                })
-                .catch(() => {});
-              showNotification(`Section ${idx + 1} will use a different song`, 'success');
-            }}
-          />
-          <p className="text-xs text-purple-500">
+                fetch(`https://www.youtube.com/oembed?url=https://youtube.com/watch?v=${newVideoId}&format=json`)
+                  .then(r => r.json())
+                  .then(data => {
+                    const parts = (data.title || '').split(' - ');
+                    const sectionArtist = parts.length > 1 ? parts[0].trim() : data.author_name || '';
+                    const sectionTitle = parts.length > 1 ? parts.slice(1).join(' - ').trim() : data.title;
+                    setLoops(prev => {
+                      const updated = [...prev];
+                      updated[idx] = { ...updated[idx], title: sectionTitle, artist: sectionArtist };
+                      return updated;
+                    });
+                  })
+                  .catch(() => {});
+                showNotification(`✅ Section ${idx + 1} set to a different song`, 'success');
+              }}
+              className="px-3 py-2 bg-yellow-600 hover:bg-yellow-500 rounded-xl text-sm font-bold text-black transition"
+            >
+              Set
+            </button>
+          </div>
+          <p className="text-xs text-yellow-600">
             {loops[idx].youtubeVideoId && loops[idx].youtubeVideoId !== videoId
-              ? `${loops[idx].title || loops[idx].youtubeVideoId} — starts at ${Math.floor(loops[idx].start/60)}:${(loops[idx].start%60).toString().padStart(2,'0')}`
-              : 'Paste a YouTube URL. Leave blank to use the same song as above.'}
+              ? `Currently: ${loops[idx].title || loops[idx].youtubeVideoId}`
+              : 'Leave blank to use the same song as Section 1'}
           </p>
         </div>
       )}
@@ -2698,10 +2765,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                       </button>
                     )}
                     <button
-                      onClick={handlePostToFeed}
-                      className="flex-1 min-w-[200px] py-5 text-lg bg-gradient-to-r from-pink-600 to-purple-600 rounded-xl font-bold hover:shadow-xl transition"
+                      onClick={async () => { setPendingAction('post'); await handlePostToFeed(); setPendingAction(null); }}
+                      disabled={pendingAction === 'post'}
+                      className="flex-1 min-w-[200px] py-5 text-lg bg-gradient-to-r from-pink-600 to-purple-600 rounded-xl font-bold hover:shadow-xl transition disabled:opacity-60 flex items-center justify-center gap-2"
                     >
-                      Post to Feed
+                      {pendingAction === 'post' ? (
+                        <><span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" /> Posting…</>
+                      ) : 'Post to Feed'}
                     </button>
                   </div>
                   )}
@@ -2742,10 +2812,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">✨</span>
                   <span>Auto-detect the chorus/hook section of any song</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-purple-400 text-lg">🙏</span>
-                  <span>Perfect for worship, study, workouts, and choirs</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">🎵</span>
@@ -2894,14 +2960,38 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                             </p>
                           </div>
                           {clip.userId === user?.uid && (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); handleDeleteClip(clip.id); }}
-                              className="text-red-400 hover:text-red-300 transition shrink-0"
-                              title="Delete clip"
-                              aria-label="Delete clip"
-                            >
-                              <X size={16} />
-                            </button>
+                            <div className="flex flex-col items-end gap-2 shrink-0">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDeleteClip(clip.id); }}
+                                className="text-red-400 hover:text-red-300 transition shrink-0"
+                                title="Delete clip"
+                                aria-label="Delete clip"
+                              >
+                                <X size={16} />
+                              </button>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const newVal = !(clip.isPublic);
+                                  try {
+                                    const { db } = await import('../lib/firebase');
+                                    const { doc, updateDoc } = await import('firebase/firestore');
+                                    await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
+                                    showNotification(newVal ? '🌍 Clip is now public' : '🔒 Clip set to private', 'success');
+                                  } catch(e) {
+                                    showNotification('Failed to update', 'error');
+                                  }
+                                }}
+                                className={`text-xs px-2 py-1 rounded-full font-semibold transition border ${
+                                  clip.isPublic
+                                    ? 'border-green-500 text-green-400 hover:bg-green-900 hover:bg-opacity-30'
+                                    : 'border-purple-600 text-purple-400 hover:bg-purple-900 hover:bg-opacity-30'
+                                }`}
+                                title={clip.isPublic ? 'Clip is public — tap to make private' : 'Clip is private — tap to make public'}
+                              >
+                                {clip.isPublic ? '🌍 Public' : '🔒 Private'}
+                              </button>
+                            </div>
                           )}
                         </div>
 
@@ -2928,16 +3018,20 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                           <div className="flex items-center gap-3 ml-auto">
                             {/* Like with count */}
                             <button
-                              onClick={() =>
-                                user.likedClips?.includes(clip.id)
-                                  ? handleUnlikeClip(clip.id)
-                                  : handleLikeClip(clip.id)
-                              }
-                              className={`flex items-center gap-1 transition ${user.likedClips?.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'}`}
+                              onClick={async () => {
+                                setPendingAction(`like-${clip.id}`);
+                                await (user.likedClips?.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id));
+                                setPendingAction(null);
+                              }}
+                              disabled={pendingAction === `like-${clip.id}`}
+                              className={`flex items-center gap-1 transition ${user.likedClips?.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'} disabled:opacity-60`}
                               aria-label={user.likedClips?.includes(clip.id) ? `Unlike ${clip.title}` : `Like ${clip.title}`}
                               aria-pressed={user.likedClips?.includes(clip.id)}
                             >
-                              <Heart size={16} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                              {pendingAction === `like-${clip.id}`
+                                ? <span className="w-3 h-3 border border-pink-400 border-t-transparent rounded-full animate-spin" />
+                                : <Heart size={16} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                              }
                               <span className="text-xs font-semibold">{clip.likes || 0}</span>
                             </button>
 
@@ -3015,6 +3109,40 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               )}
             </div>
+{user?.uid && (
+  (() => {
+    const myPrivateClips = myClips.filter(c => !c.isPublic);
+    return (
+      <div className="mt-4 border-t border-purple-700 border-opacity-40 pt-4">
+        <p className="text-xs font-bold text-purple-400 uppercase tracking-wide mb-3">Your Private Clips</p>
+        {myPrivateClips.length === 0 ? (
+          <p className="text-xs text-purple-500 text-center py-2">No private clips yet</p>
+        ) : (
+          <div className="space-y-2">
+            {myPrivateClips.map((clip) => (
+              <div key={clip.id} className="flex items-center justify-between gap-2 bg-purple-900 bg-opacity-30 rounded-xl px-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate">{clip.title}</p>
+                  <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+                </div>
+                <button
+                  onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+                  className="text-purple-300 hover:text-purple-100 transition shrink-0"
+                  aria-label={`Play ${clip.title}`}
+                >
+                  <Play size={16} fill="currentColor" />
+                </button>
+              </div>
+            ))}
+            <p className="text-xs text-purple-500">
+              {myPrivateClips.length} private clip(s) — toggle 🌍 Public to share
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  })()
+)}
 {publicPlaylistShowcase.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-cyan-700 border-opacity-50 mt-6">
     <div className="flex items-start justify-between gap-3 mb-4">
@@ -3103,35 +3231,59 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         : `Infinite sections play ${ENDLESS_CAP_IN_PLAYLIST}× max`}
     </p>
 
-    <div className="space-y-3">
+    <div className="grid grid-cols-2 gap-3">
       {playlists.map((playlist) => (
-        <div key={playlist.id} className="bg-green-900 bg-opacity-30 p-4 rounded-xl transition">
-          <div className="flex justify-between items-center mb-3">
-            <div>
-              <p className="font-bold text-lg">{playlist.name}</p>
-                <p className="text-sm text-green-400">
-                  {playlist.clips?.length || 0}/10 clips  {playlist.isPublic !== false ? '🌍 Public' : '🔒 Private'}{playlist.isFeatured ? '  ⭐ Featured' : ''}
-                </p>
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleAddToQueue(playlist)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistQueue.some(p => p.id === playlist.id) ? 'bg-yellow-600 text-white' : 'bg-yellow-900 bg-opacity-40 text-yellow-300 hover:bg-opacity-70'}`}
-                title="Add to playlist queue"
-              >
-                {playlistQueue.some(p => p.id === playlist.id) ? 'In Queue' : '+ Queue'}
-              </button>
-              <button onClick={() => setManagingPlaylist(playlist)}
-                className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 rounded-lg text-sm font-semibold transition">
-                Manage
-              </button>
-            </div>
+        <div
+          key={playlist.id}
+          className="bg-gradient-to-b from-green-900 to-teal-900 bg-opacity-50 border border-green-700 border-opacity-40 rounded-2xl p-4 flex flex-col gap-3 hover:border-green-500 transition"
+        >
+          {/* Header */}
+          <div>
+            <p className="font-bold text-base leading-tight line-clamp-1">{playlist.name}</p>
+            <p className="text-xs text-green-400 mt-0.5">
+              {playlist.clips?.length || 0}/10 · {playlist.isPublic !== false ? '🌍' : '🔒'}
+            </p>
           </div>
-          <button onClick={() => handlePlayPlaylist(playlist)}
-            className="w-full py-3 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl font-semibold hover:shadow-lg transition flex items-center justify-center gap-2">
-            <Play size={18} fill="currentColor" />
-            {playlistMode === 'once' ? 'Play Once Each' : 'Play'}
-          </button>
+
+          {/* Clip preview — first 3 titles */}
+          <div className="flex-1 space-y-0.5">
+            {(playlist.clips || []).slice(0, 3).map((clip, i) => (
+              <p key={i} className="text-xs text-green-300 truncate">
+                {i + 1}. {clip.title}
+              </p>
+            ))}
+            {(playlist.clips?.length || 0) > 3 && (
+              <p className="text-xs text-green-600">+{playlist.clips.length - 3} more</p>
+            )}
+          </div>
+
+          {/* Actions */}
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => handlePlayPlaylist(playlist)}
+              className="flex-1 py-2 bg-gradient-to-r from-green-600 to-teal-600 rounded-xl text-xs font-bold flex items-center justify-center gap-1 hover:shadow-lg transition"
+            >
+              <Play size={12} fill="currentColor" /> Play
+            </button>
+            <button
+              onClick={() => handleAddToQueue(playlist)}
+              className={`px-2 py-2 rounded-xl text-xs font-bold transition ${
+                playlistQueue.some(p => p.id === playlist.id)
+                  ? 'bg-yellow-600 text-black'
+                  : 'bg-yellow-900 bg-opacity-50 text-yellow-300 hover:bg-opacity-80'
+              }`}
+              title="Add to queue"
+            >
+              {playlistQueue.some(p => p.id === playlist.id) ? '✓Q' : '+Q'}
+            </button>
+            <button
+              onClick={() => setManagingPlaylist(playlist)}
+              className="px-2 py-2 bg-purple-800 hover:bg-purple-700 rounded-xl text-xs font-semibold transition"
+              title="Manage"
+            >
+              ⋯
+            </button>
+          </div>
         </div>
       ))}
     </div>
@@ -3368,26 +3520,32 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
 
             {queueEditMode && (
-              <div className="space-y-1.5 mb-2 max-h-48 overflow-y-auto">
+              <div className="flex gap-2 overflow-x-auto pb-2 px-1 snap-x snap-mandatory">
                 {playlistQueue.map((pl, qi) => (
-                  <div key={pl.id} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
-                    <span className="text-yellow-400 font-bold w-5 text-xs shrink-0">{qi + 1}</span>
-                    <span className="flex-1 text-sm font-semibold truncate">{pl.name}</span>
-                    <div className="flex gap-1 shrink-0">
+                  <div
+                    key={pl.id}
+                    className="snap-start shrink-0 w-44 bg-gradient-to-b from-yellow-900 to-amber-900 bg-opacity-60 border border-yellow-600 border-opacity-40 rounded-2xl p-3 flex flex-col gap-2"
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="text-yellow-400 font-black text-lg leading-none">{qi + 1}</span>
+                      <button
+                        onClick={() => handleRemoveFromQueue(pl.id)}
+                        className="text-red-400 hover:text-red-300 transition text-xs leading-none"
+                      >✕</button>
+                    </div>
+                    <p className="text-sm font-bold text-white leading-tight line-clamp-2">{pl.name}</p>
+                    <p className="text-xs text-yellow-300">{pl.clips?.length || 0} clips</p>
+                    <div className="flex gap-1 mt-auto">
                       <button
                         onClick={() => handleMoveQueueItem(qi, 'up')}
                         disabled={qi === 0}
-                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-yellow-800 bg-opacity-50 hover:bg-opacity-80 disabled:opacity-20 transition text-yellow-200 text-xs"
-                      >▲</button>
+                        className="flex-1 py-1.5 rounded-lg bg-yellow-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-yellow-200 text-xs font-bold"
+                      >◀</button>
                       <button
                         onClick={() => handleMoveQueueItem(qi, 'down')}
                         disabled={qi === playlistQueue.length - 1}
-                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-yellow-800 bg-opacity-50 hover:bg-opacity-80 disabled:opacity-20 transition text-yellow-200 text-xs"
-                      >▼</button>
-                      <button
-                        onClick={() => handleRemoveFromQueue(pl.id)}
-                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-red-800 bg-opacity-50 hover:bg-opacity-80 transition text-red-300 text-xs"
-                      >✕</button>
+                        className="flex-1 py-1.5 rounded-lg bg-yellow-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-yellow-200 text-xs font-bold"
+                      >▶</button>
                     </div>
                   </div>
                 ))}
@@ -3412,29 +3570,32 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
 
             {stagedClipsEditMode && (
-              <div className="space-y-1.5 mb-2 max-h-40 overflow-y-auto">
+              <div className="flex gap-2 overflow-x-auto pb-2 px-1 snap-x snap-mandatory">
                 {selectedClipsForPlaylist.map((clip, idx) => (
-                  <div key={clip.id || idx} className="flex items-center gap-2 bg-green-900 bg-opacity-20 px-3 py-2 rounded-xl">
-                    <span className="text-green-400 font-bold w-5 text-xs shrink-0">{idx + 1}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold truncate">{clip.title}</p>
-                      <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+                  <div
+                    key={clip.id || idx}
+                    className="snap-start shrink-0 w-40 bg-gradient-to-b from-green-900 to-teal-900 bg-opacity-60 border border-green-600 border-opacity-40 rounded-2xl p-3 flex flex-col gap-2"
+                  >
+                    <div className="flex items-start justify-between gap-1">
+                      <span className="text-green-400 font-black text-lg leading-none">{idx + 1}</span>
+                      <button
+                        onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
+                        className="text-red-400 hover:text-red-300 transition text-xs leading-none"
+                      >✕</button>
                     </div>
-                    <div className="flex gap-1 shrink-0">
+                    <p className="text-sm font-bold text-white leading-tight line-clamp-2">{clip.title}</p>
+                    <p className="text-xs text-green-300 truncate">{clip.artist}</p>
+                    <div className="flex gap-1 mt-auto">
                       <button
                         onClick={() => handleMoveStagedClip(idx, 'up')}
                         disabled={idx === 0}
-                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-green-800 bg-opacity-50 hover:bg-opacity-80 disabled:opacity-20 transition text-green-200 text-xs"
-                      >▲</button>
+                        className="flex-1 py-1.5 rounded-lg bg-green-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-green-200 text-xs font-bold"
+                      >◀</button>
                       <button
                         onClick={() => handleMoveStagedClip(idx, 'down')}
                         disabled={idx === selectedClipsForPlaylist.length - 1}
-                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-green-800 bg-opacity-50 hover:bg-opacity-80 disabled:opacity-20 transition text-green-200 text-xs"
-                      >▼</button>
-                      <button
-                        onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
-                        className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-red-800 bg-opacity-50 hover:bg-opacity-80 transition text-red-300 text-xs"
-                      >✕</button>
+                        className="flex-1 py-1.5 rounded-lg bg-green-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-green-200 text-xs font-bold"
+                      >▶</button>
                     </div>
                   </div>
                 ))}

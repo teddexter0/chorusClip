@@ -13,7 +13,7 @@ export const createPlaylist = async (userId, name, clips, ownerDisplayName = '')
     clips: clips.slice(0, PLAYLIST_MAX_CLIPS),
     createdAt: new Date(),
     plays: 0,
-    isPublic: true,
+    isPublic: false,
     createdBy: ownerDisplayName || 'Community'
   };
 
@@ -149,6 +149,9 @@ export class PlaylistPlayer {
         this.currentIndex = 0;
         return this.playNext();
       } else {
+        // Stop player hard before firing completion
+        try { this.playerRef.current?.pauseVideo(); } catch(e) {}
+        try { this.playerRef.current?.stopVideo(); } catch(e) {}
         this.callbacks.onPlaylistComplete?.();
         this.callbacks.showNotification('🎉 Playlist finished!', 'success');
         return;
@@ -180,8 +183,10 @@ export class PlaylistPlayer {
    * have completed. Advances to the next clip.
    */
   advanceToNextClip() {
+    // Stop the player immediately — prevent any further tracking ticks
+    try { this.playerRef.current?.pauseVideo(); } catch(e) {}
     this.currentIndex++;
-    setTimeout(() => this.playNext(), 400);
+    setTimeout(() => this.playNext(), 500);
   }
 
   stop() {

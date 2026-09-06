@@ -48,7 +48,12 @@ export { auth, db };
 // REAL-TIME CLIPS SUBSCRIPTION
 export const subscribeToTrendingClips = (callback) => {
   try {
-    const q = query(collection(db, 'clips'), orderBy('createdAt', 'desc'), limit(20));
+    const q = query(
+      collection(db, 'clips'),
+      where('isPublic', '==', true),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
     return onSnapshot(q, (snapshot) => {
       const clips = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -59,6 +64,24 @@ export const subscribeToTrendingClips = (callback) => {
   } catch (error) {
     console.error('Subscribe error:', error);
     return () => {}; // Return empty cleanup function
+  }
+};
+
+export const subscribeToUserClips = (uid, callback) => {
+  try {
+    const q = query(
+      collection(db, 'clips'),
+      where('userId', '==', uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
+    );
+    return onSnapshot(q, (snapshot) => {
+      const clips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      callback(clips);
+    });
+  } catch (error) {
+    console.error('User clips subscribe error:', error);
+    return () => {};
   }
 };
 
@@ -74,6 +97,7 @@ export const getLeaderboard = async (limitCount = 10) => {
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const q = query(
         collection(db, 'clips'),
+        where('isPublic', '==', true),
         where('createdAt', '>=', sevenDaysAgo),
         orderBy('createdAt', 'desc'),
         limit(200)
@@ -82,7 +106,12 @@ export const getLeaderboard = async (limitCount = 10) => {
       clipDocs = snap.docs.map(d => d.data());
     } catch {
       // Composite index not yet created — fall back to most-recent 200 clips (all time)
-      const q = query(collection(db, 'clips'), orderBy('createdAt', 'desc'), limit(200));
+      const q = query(
+        collection(db, 'clips'),
+        where('isPublic', '==', true),
+        orderBy('createdAt', 'desc'),
+        limit(200)
+      );
       const snap = await getDocs(q);
       clipDocs = snap.docs.map(d => d.data());
     }
@@ -149,9 +178,9 @@ export const getTrendingClips = async (limitCount = 20) => {
 
 export const getClipsPage = async (limitCount = 15, lastVisibleDoc = null) => {
   try {
-    const constraints = [orderBy('createdAt', 'desc'), limit(limitCount)];
+    const constraints = [where('isPublic', '==', true), orderBy('createdAt', 'desc'), limit(limitCount)];
     if (lastVisibleDoc) {
-      constraints.splice(1, 0, startAfter(lastVisibleDoc));
+      constraints.splice(2, 0, startAfter(lastVisibleDoc));
     }
 
     const q = query(collection(db, 'clips'), ...constraints);
@@ -244,6 +273,7 @@ export const getTrendingClipsByPlays = async (limitCount = 5) => {
   try {
     const q = query(
       collection(db, 'clips'),
+      where('isPublic', '==', true),
       orderBy('plays', 'desc'),
       limit(limitCount)
     );
@@ -268,6 +298,7 @@ export const getTopArtists = async (limitCount = 5) => {
 
     const q = query(
       collection(db, 'clips'),
+      where('isPublic', '==', true),
       where('createdAt', '>=', thirtyDaysAgo),
       orderBy('createdAt', 'desc'),
       limit(200)
@@ -427,4 +458,50 @@ export const loadQueueFromFirestore = async (userId) => {
     console.error('Failed to load queue:', e);
     return [];
   }
+};
+
+// ONE-TIME MIGRATION: set all clips to private
+// Call this from an admin button or a useEffect with a flag
+export const migrateAllClipsToPrivate = async () => {
+  const { collection, getDocs, writeBatch, doc } = await import('firebase/firestore');
+  const snapshot = await getDocs(collection(db, 'clips'));
+  const batches = [];
+  let batch = writeBatch(db);
+  let count = 0;
+
+  for (const clipDoc of snapshot.docs) {
+    batch.update(doc(db, 'clips', clipDoc.id), { isPublic: false });
+    count++;
+    if (count % 499 === 0) {
+      batches.push(batch.commit());
+      batch = writeBatch(db);
+    }
+  }
+  if (count % 499 !== 0) batches.push(batch.commit());
+  await Promise.all(batches);
+  console.log(`✅ Migrated ${count} clips to private`);
+  return count;
+};
+
+// ONE-TIME MIGRATION: set all playlists to private
+// Call this from an admin button or a useEffect with a flag
+export const migrateAllPlaylistsToPrivate = async () => {
+  const { collection, getDocs, writeBatch, doc } = await import('firebase/firestore');
+  const snapshot = await getDocs(collection(db, 'playlists'));
+  const batches = [];
+  let batch = writeBatch(db);
+  let count = 0;
+
+  for (const playlistDoc of snapshot.docs) {
+    batch.update(doc(db, 'playlists', playlistDoc.id), { isPublic: false });
+    count++;
+    if (count % 499 === 0) {
+      batches.push(batch.commit());
+      batch = writeBatch(db);
+    }
+  }
+  if (count % 499 !== 0) batches.push(batch.commit());
+  await Promise.all(batches);
+  console.log(`✅ Migrated ${count} playlists to private`);
+  return count;
 };

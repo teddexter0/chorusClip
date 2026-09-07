@@ -173,7 +173,7 @@ export class PlaylistPlayer {
       // Give the player time to buffer before calling playVideo
       setTimeout(() => {
         try { this.playerRef.current?.playVideo(); } catch (e) {}
-      }, 700);
+      }, 1000); // increased from 700ms — mobile needs more buffer
     }
     // No setupCompletionListener — startTimeTracking handles completion and calls advanceToNextClip().
   }

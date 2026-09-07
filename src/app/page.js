@@ -45,6 +45,9 @@ const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
 const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
 const [myClips, setMyClips] = useState([]);
+const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
+const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
+const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list'
 
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
@@ -795,6 +798,8 @@ const handlePlayPlaylist = (playlist) => {
     return;
   }
 
+  setGlobalLoading(true);
+
   if (currentPlaylistPlayer) {
     currentPlaylistPlayer.stop();
   }
@@ -802,6 +807,7 @@ const handlePlayPlaylist = (playlist) => {
   const player = new PlaylistPlayer(playlist, playerRef, {
     // clip.loops are already normalized by PlaylistPlayer.normalizeClip()
     onClipChange: (clip, index, total) => {
+      setGlobalLoading(false); // clear once first clip loads
       setCurrentPlaylistInfo({ name: playlist.name, currentIndex: index, total, currentClip: clip });
       setLoops(clip.loops);
       setVideoTitle(clip.title);
@@ -830,21 +836,39 @@ const handlePlayPlaylist = (playlist) => {
   showNotification(`▶️ Playing: ${playlist.name}`, 'success');
 
   if (playerRef.current?.loadVideoById) {
+    player.playNext();
+  } else {
+    initAndPlay(playlist, player, () => player.playNext());
+  }
+};
+
+const initAndPlay = (targetPlaylist, player, onReady) => {
+  if (playerRef.current?.loadVideoById) {
     // Existing player — hand off immediately
     player.playNext();
   } else if (window.YT?.Player) {
-    // No player yet — #youtube-player div is always in DOM (moved outside {videoId &&}),
-    // so we can safely create the player right now without a React re-render race.
     playerRef.current = new window.YT.Player('youtube-player', {
-      videoId: playlist.clips[0].youtubeVideoId,
-      playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
+      videoId: targetPlaylist.clips[0].youtubeVideoId,
+      playerVars: { autoplay: 1, controls: 1, enablejsapi: 1, origin: window.location.origin },
       events: {
-        onReady: () => player.playNext(),
+        onReady: () => {
+          // Give player 300ms to stabilise before advancing
+          setTimeout(() => onReady(), 300);
+        },
         onStateChange: onPlayerStateChange
       }
     });
   } else {
-    showNotification('YouTube not ready — paste a URL first or wait a moment.', 'error');
+    // YT API not loaded yet — wait and retry
+    let retries = 0;
+    const wait = setInterval(() => {
+      retries++;
+      if (window.YT?.Player || retries > 20) {
+        clearInterval(wait);
+        if (window.YT?.Player) initAndPlay(targetPlaylist, player, onReady);
+        else showNotification('YouTube not ready — try again in a moment', 'error');
+      }
+    }, 300);
   }
 };
 
@@ -964,15 +988,8 @@ const handlePlayQueue = (startIdx = 0) => {
 
   if (playerRef.current?.loadVideoById) {
     player.playNext();
-  } else if (window.YT?.Player) {
-    playerRef.current = new window.YT.Player('youtube-player', {
-      videoId: targetPlaylist.clips[0].youtubeVideoId,
-      playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
-      events: {
-        onReady: () => player.playNext(),
-        onStateChange: onPlayerStateChange
-      }
-    });
+  } else {
+    initAndPlay(targetPlaylist, player, () => player.playNext());
   }
 };
 
@@ -1515,8 +1532,14 @@ const startTimeTracking = () => {
     try {
       const { createClip } = await import('../lib/firebase');
       await createClip(clipData);
-      showNotification(`✅ Clip posted with ${loops.length} section(s)!`, 'success');
+      showNotification(`✅ Clip posted! Toggle it 🌍 Public to share in the feed.`, 'success');
       setPendingAction(null);
+      // Force myClips to refresh (subscribeToUserClips should catch it, but trigger manually as backup)
+      if (user?.uid) {
+        import('../lib/firebase').then(({ subscribeToUserClips }) => {
+          subscribeToUserClips(user.uid, (clips) => setMyClips(clips));
+        });
+      }
       return;
     } catch (error) {
       lastError = error;
@@ -1819,8 +1842,18 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
 
     {/* Global loading overlay */}
     {globalLoading && (
-      <div className="fixed inset-0 z-[60] bg-black bg-opacity-40 flex items-center justify-center pointer-events-none">
-        <div className="w-12 h-12 border-4 border-purple-400 border-t-transparent rounded-full animate-spin" />
+      <div className="fixed inset-0 z-[100] bg-black bg-opacity-60 backdrop-blur-sm flex flex-col items-center justify-center pointer-events-auto cursor-wait">
+        {/* Outer ring */}
+        <div className="relative w-20 h-20">
+          <div className="absolute inset-0 rounded-full border-4 border-purple-800 border-opacity-30" />
+          <div className="absolute inset-0 rounded-full border-4 border-t-purple-400 border-r-pink-400 border-b-transparent border-l-transparent animate-spin" />
+          <div className="absolute inset-2 rounded-full border-4 border-t-transparent border-r-transparent border-b-yellow-400 border-l-purple-400 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '0.8s' }} />
+          {/* Music note at center */}
+          <div className="absolute inset-0 flex items-center justify-center text-2xl">🎵</div>
+        </div>
+        <p className="text-purple-300 text-sm font-semibold mt-4 animate-pulse">
+          {pendingAction === 'post' ? 'Posting clip...' : 'Loading...'}
+        </p>
       </div>
     )}
     
@@ -2973,6 +3006,16 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     {opt.label}
                   </button>
                 ))}
+                <div className="ml-auto flex items-center gap-1 bg-purple-900 bg-opacity-40 rounded-xl p-1">
+                  <button
+                    onClick={() => setClipsViewMode('grid')}
+                    className={`px-2 py-1 rounded-lg text-xs font-bold transition ${clipsViewMode === 'grid' ? 'bg-purple-600 text-white' : 'text-purple-400 hover:text-purple-200'}`}
+                  >⊞ Grid</button>
+                  <button
+                    onClick={() => setClipsViewMode('list')}
+                    className={`px-2 py-1 rounded-lg text-xs font-bold transition ${clipsViewMode === 'list' ? 'bg-purple-600 text-white' : 'text-purple-400 hover:text-purple-200'}`}
+                  >≡ List</button>
+                </div>
               </div>
               <p className="text-xs text-purple-400 mb-4">
                 {feedIsMostPlayed ? 'Top 5 clips by play count.' : 'Latest uploads first. Expand and keep loading to browse older history.'}
@@ -2991,6 +3034,56 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                   <p className="text-base">Be the first to post a clip</p>
                 </div>
               ) : (
+                <>
+                {clipsViewMode === 'grid' ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {visibleFeedClips.map((clip) => {
+                    const clipSections = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30 }];
+                    const playCount = getClipPlayCount(clip);
+                    return (
+                      <div
+                        key={clip.id}
+                        className="relative rounded-2xl overflow-hidden border border-purple-700 border-opacity-40 hover:border-purple-500 transition group cursor-pointer"
+                        onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+                      >
+                        {/* YouTube thumbnail */}
+                        <div className="relative aspect-video bg-purple-900">
+                          <img
+                            src={`https://img.youtube.com/vi/${clip.youtubeVideoId}/mqdefault.jpg`}
+                            alt={clip.title}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                          {/* Play overlay */}
+                          <div className="absolute inset-0 bg-black bg-opacity-30 group-hover:bg-opacity-10 transition flex items-center justify-center">
+                            <div className="w-10 h-10 rounded-full bg-white bg-opacity-90 flex items-center justify-center shadow-lg">
+                              <Play size={16} fill="black" className="text-black ml-0.5" />
+                            </div>
+                          </div>
+                          {/* Duration badge */}
+                          <span className="absolute bottom-1.5 right-1.5 bg-black bg-opacity-80 text-white text-xs px-1.5 py-0.5 rounded font-mono">
+                            {Math.max(0, (clipSections[0]?.end || 30) - (clipSections[0]?.start || 0))}s
+                          </span>
+                        </div>
+                        {/* Info */}
+                        <div className="p-2 bg-purple-950 bg-opacity-80">
+                          <p className="text-xs font-bold text-white truncate leading-tight">{clip.title}</p>
+                          <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs text-purple-500">❤️ {clip.likes || 0}</span>
+                            <span className="text-xs text-purple-500">▶ {playCount}</span>
+                            {clip.userId === user?.uid && (
+                              <span className={`text-xs ml-auto ${clip.isPublic ? 'text-green-400' : 'text-purple-500'}`}>
+                                {clip.isPublic ? '🌍' : '🔒'}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                ) : (
                 <div className="space-y-4">
                   {visibleFeedClips.map((clip) => {
                     const clipSections = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30 }];
@@ -3124,6 +3217,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                       </div>
                     );
                   })}
+                </div>
+                )}
 
                   {!feedIsMostPlayed && clips.length > 5 && (
                     <div className="space-y-2">
@@ -3157,7 +3252,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                       )}
                     </div>
                   )}
-                </div>
+                </>
               )}
             </div>
             </div>
@@ -3307,24 +3402,25 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             {/* Row header — always visible, tap to expand */}
             <button
               onClick={() => setExpandedPlaylistId(isExpanded ? null : playlist.id)}
-              className="w-full flex items-center justify-between px-4 py-3 text-left"
+              className="w-full flex items-center justify-between px-4 py-3.5 text-left"
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="text-green-400 text-lg shrink-0">
-                  {isExpanded ? '▾' : '▸'}
-                </span>
-                <div className="min-w-0">
-                  <p className="font-bold text-base leading-tight truncate">{playlist.name}</p>
-                  <p className="text-xs text-green-400 mt-0.5">
-                    {playlist.clips?.length || 0}/10 clips · {playlist.isPublic !== false ? '🌍' : '🔒'}
-                  </p>
-                </div>
+              <div className="flex-1 min-w-0 mr-3">
+                <p className="font-bold text-base leading-tight truncate">{playlist.name}</p>
+                <p className="text-xs text-green-400 mt-0.5">
+                  {playlist.clips?.length || 0}/10
+                  {inQueue && <span className="ml-2 text-yellow-400 font-bold">· In Queue</span>}
+                </p>
               </div>
-              {inQueue && (
-                <span className="text-xs bg-yellow-600 text-black px-2 py-0.5 rounded-full font-bold shrink-0 ml-2">
-                  In Queue
-                </span>
-              )}
+              {/* Glowing expand button — right side */}
+              <span className={`
+                flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all
+                ${isExpanded
+                  ? 'bg-green-500 text-black shadow-lg shadow-green-500/50 ring-2 ring-green-400'
+                  : 'bg-green-900 bg-opacity-60 text-green-400 hover:shadow-md hover:shadow-green-500/30 ring-1 ring-green-700'
+                }
+              `}>
+                {isExpanded ? '▲' : '▼'}
+              </span>
             </button>
 
             {/* Expanded body */}
@@ -3422,9 +3518,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     )}
   </div>
 )}
+</div>
+
+{/* FEED WRAPPER — Leaderboard + Top Artists (discovery content) */}
+<div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
 
             {/* STRATHMORE LEADERBOARD SECTION */}
-            <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
+            <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
               <button
                 className="w-full flex justify-between items-center mb-1"
                 onClick={() => setLeaderboardExpanded(v => !v)}
@@ -3572,91 +3672,32 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       
       
 
-{/* STICKY BOTTOM BANNER */}
-{(playlistQueue.length > 0 || selectedClipsForPlaylist.length > 0) && (
+{/* STICKY BOTTOM BANNER — staged clips only (playlist queue lives in the side drawer) */}
+{selectedClipsForPlaylist.length > 0 && (
   <div className={`fixed bottom-0 left-0 right-0 z-40 transition-transform duration-300 ${queueBannerCollapsed ? 'translate-y-[calc(100%-48px)]' : 'translate-y-0'}`}>
     <div className="max-w-2xl mx-auto px-4 pb-4">
-      <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-purple-900 border border-purple-500 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="bg-gradient-to-r from-green-900 via-teal-900 to-green-900 border border-green-500 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header / collapse toggle */}
         <button
           onClick={() => setQueueBannerCollapsed(v => !v)}
-          className="w-full flex items-center justify-between px-5 py-3 border-b border-purple-700 hover:bg-white hover:bg-opacity-5 transition"
+          className="w-full flex items-center justify-between px-5 py-3 border-b border-green-700 hover:bg-white hover:bg-opacity-5 transition"
         >
           <div className="flex items-center gap-4 flex-wrap">
-            {playlistQueue.length > 0 && (
-              <span className="text-yellow-300 font-bold text-sm flex items-center gap-1">
-                🎵 Queue: {playlistQueue.length}/10
-                {isPlayingQueue && <span className="text-xs text-yellow-400 animate-pulse ml-1"> playing</span>}
-              </span>
-            )}
-            {selectedClipsForPlaylist.length > 0 && (
-              <span className="text-green-300 font-bold text-sm">
-                Clip Queue: {selectedClipsForPlaylist.length}/10
-              </span>
-            )}
+            <span className="text-green-300 font-bold text-sm">
+              🎵 {selectedClipsForPlaylist.length} clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''} staged
+            </span>
           </div>
-          <span className="text-purple-400 text-xs font-semibold shrink-0">
+          <span className="text-green-400 text-xs font-semibold shrink-0">
             {queueBannerCollapsed ? ' show' : ' hide'}
           </span>
         </button>
 
-        {/* Queue edit section */}
-        {playlistQueue.length > 0 && !queueBannerCollapsed && (
-          <div className="px-5 pt-3 pb-1">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-yellow-300 font-bold text-sm">
-                Queue: {playlistQueue.length}/10
-                {isPlayingQueue && <span className="text-xs text-yellow-400 animate-pulse ml-1">▶ playing</span>}
-              </span>
-              <button
-                onClick={(e) => { e.stopPropagation(); setQueueEditMode(v => !v); }}
-                className={`text-xs font-bold px-3 py-1 rounded-lg transition ${queueEditMode ? 'bg-yellow-500 text-black' : 'bg-purple-800 text-purple-300 hover:text-white'}`}
-              >
-                {queueEditMode ? 'Done' : 'Edit Order'}
-              </button>
-            </div>
-
-            {queueEditMode && (
-              <div className="flex gap-2 overflow-x-auto pb-2 px-1 snap-x snap-mandatory">
-                {playlistQueue.map((pl, qi) => (
-                  <div
-                    key={pl.id}
-                    className="snap-start shrink-0 w-44 bg-gradient-to-b from-yellow-900 to-amber-900 bg-opacity-60 border border-yellow-600 border-opacity-40 rounded-2xl p-3 flex flex-col gap-2"
-                  >
-                    <div className="flex items-start justify-between gap-1">
-                      <span className="text-yellow-400 font-black text-lg leading-none">{qi + 1}</span>
-                      <button
-                        onClick={() => handleRemoveFromQueue(pl.id)}
-                        className="text-red-400 hover:text-red-300 transition text-xs leading-none"
-                      >✕</button>
-                    </div>
-                    <p className="text-sm font-bold text-white leading-tight line-clamp-2">{pl.name}</p>
-                    <p className="text-xs text-yellow-300">{pl.clips?.length || 0} clips</p>
-                    <div className="flex gap-1 mt-auto">
-                      <button
-                        onClick={() => handleMoveQueueItem(qi, 'up')}
-                        disabled={qi === 0}
-                        className="flex-1 py-1.5 rounded-lg bg-yellow-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-yellow-200 text-xs font-bold"
-                      >◀</button>
-                      <button
-                        onClick={() => handleMoveQueueItem(qi, 'down')}
-                        disabled={qi === playlistQueue.length - 1}
-                        className="flex-1 py-1.5 rounded-lg bg-yellow-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-yellow-200 text-xs font-bold"
-                      >▶</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Staged clips edit section */}
-        {selectedClipsForPlaylist.length > 0 && !queueBannerCollapsed && (
-          <div className="px-5 pt-2 pb-1 border-t border-purple-700 border-opacity-40">
+        {!queueBannerCollapsed && (
+          <div className="px-5 pt-2 pb-1">
             <div className="flex items-center justify-between mb-2">
               <span className="text-green-300 font-bold text-sm">
-                🎵 {selectedClipsForPlaylist.length} clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''} staged
+                Drag ⠿ to reorder
               </span>
               <button
                 onClick={() => setStagedClipsEditMode(v => !v)}
@@ -3667,33 +3708,37 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
 
             {stagedClipsEditMode && (
-              <div className="flex gap-2 overflow-x-auto pb-2 px-1 snap-x snap-mandatory">
+              <div className="space-y-1.5 max-h-64 overflow-y-auto pb-2">
                 {selectedClipsForPlaylist.map((clip, idx) => (
                   <div
                     key={clip.id || idx}
-                    className="snap-start shrink-0 w-40 bg-gradient-to-b from-green-900 to-teal-900 bg-opacity-60 border border-green-600 border-opacity-40 rounded-2xl p-3 flex flex-col gap-2"
+                    draggable
+                    onDragStart={() => setDraggedQueueIdx(idx)}
+                    onDragOver={(e) => { e.preventDefault(); }}
+                    onDrop={() => {
+                      if (draggedQueueIdx === null || draggedQueueIdx === idx) return;
+                      const newClips = [...selectedClipsForPlaylist];
+                      const [moved] = newClips.splice(draggedQueueIdx, 1);
+                      newClips.splice(idx, 0, moved);
+                      setSelectedClipsForPlaylist(newClips);
+                      setDraggedQueueIdx(null);
+                    }}
+                    onDragEnd={() => setDraggedQueueIdx(null)}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${
+                      draggedQueueIdx === idx
+                        ? 'opacity-40 border-green-400 bg-green-900 bg-opacity-40'
+                        : 'border-green-700 border-opacity-30 bg-green-900 bg-opacity-20 hover:bg-opacity-30'
+                    }`}
                   >
-                    <div className="flex items-start justify-between gap-1">
-                      <span className="text-green-400 font-black text-lg leading-none">{idx + 1}</span>
-                      <button
-                        onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
-                        className="text-red-400 hover:text-red-300 transition text-xs leading-none"
-                      >✕</button>
+                    <span className="text-green-400 font-bold text-sm w-5 shrink-0">{idx + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-white truncate">{clip.title}</p>
+                      <p className="text-xs text-green-400 truncate">{clip.artist}</p>
                     </div>
-                    <p className="text-sm font-bold text-white leading-tight line-clamp-2">{clip.title}</p>
-                    <p className="text-xs text-green-300 truncate">{clip.artist}</p>
-                    <div className="flex gap-1 mt-auto">
-                      <button
-                        onClick={() => handleMoveStagedClip(idx, 'up')}
-                        disabled={idx === 0}
-                        className="flex-1 py-1.5 rounded-lg bg-green-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-green-200 text-xs font-bold"
-                      >◀</button>
-                      <button
-                        onClick={() => handleMoveStagedClip(idx, 'down')}
-                        disabled={idx === selectedClipsForPlaylist.length - 1}
-                        className="flex-1 py-1.5 rounded-lg bg-green-800 bg-opacity-60 hover:bg-opacity-90 disabled:opacity-20 transition text-green-200 text-xs font-bold"
-                      >▶</button>
-                    </div>
+                    <button
+                      onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
+                      className="w-8 h-8 flex items-center justify-center rounded-full bg-red-900 bg-opacity-50 hover:bg-opacity-80 text-red-400 text-xs transition shrink-0"
+                    >✕</button>
                   </div>
                 ))}
               </div>
@@ -3703,30 +3748,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
         {/* Actions row */}
         <div className="flex flex-wrap gap-2 px-5 py-3">
-          {playlistQueue.length > 0 && !isPlayingQueue && (
-            <button
-              onClick={() => handlePlayQueue(0)}
-              className="px-4 py-2 bg-gradient-to-r from-yellow-500 to-orange-500 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
-            >
-              ▶ Play Queue
-            </button>
-          )}
-          {playlistQueue.length > 0 && (
-            <button
-              onClick={() => {
-                setPlaylistQueue([]);
-                playlistQueueRef.current = [];
-                if (user?.uid) {
-                  import('../lib/firebase').then(({ saveQueueToFirestore }) => {
-                    saveQueueToFirestore(user.uid, []);
-                  });
-                }
-              }}
-              className="px-4 py-2 bg-red-800 hover:bg-red-700 rounded-xl text-sm font-semibold transition"
-            >
-              Clear Queue
-            </button>
-          )}
           {selectedClipsForPlaylist.length > 0 && (
             <button
               onClick={handlePlayStagedClips}
@@ -3752,6 +3773,122 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </button>
           )}
         </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Floating queue indicator — always visible when queue has items */}
+{playlistQueue.length > 0 && (
+  <button
+    onClick={() => setQueueDrawerOpen(v => !v)}
+    className="fixed right-0 top-1/2 -translate-y-1/2 z-50 bg-yellow-600 hover:bg-yellow-500 text-black font-black py-6 px-2 rounded-l-2xl shadow-xl transition-all"
+    style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+    aria-label="Toggle queue"
+  >
+    <span className="text-xs font-black">QUEUE {playlistQueue.length}</span>
+  </button>
+)}
+
+{/* Side drawer — playlist queue */}
+{queueDrawerOpen && (
+  <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setQueueDrawerOpen(false)}>
+    <div
+      className="w-80 max-w-[85vw] h-full bg-gradient-to-b from-yellow-900 to-amber-950 border-l border-yellow-700 shadow-2xl overflow-y-auto flex flex-col"
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between px-5 py-4 border-b border-yellow-700">
+        <h3 className="font-black text-lg text-yellow-300">Play Queue ({playlistQueue.length}/10)</h3>
+        <button onClick={() => setQueueDrawerOpen(false)} className="text-yellow-400 hover:text-white text-xl">✕</button>
+      </div>
+
+      {/* Edit Order toggle */}
+      <div className="px-5 py-3 border-b border-yellow-800">
+        <button
+          onClick={() => setQueueEditMode(v => !v)}
+          className={`text-sm font-bold px-4 py-2 rounded-xl transition ${queueEditMode ? 'bg-yellow-500 text-black' : 'bg-yellow-900 text-yellow-300 hover:bg-yellow-800'}`}
+        >
+          {queueEditMode ? 'Done Editing' : 'Edit Order'}
+        </button>
+      </div>
+
+      {/* Queue items — drag sortable when editing */}
+      <div className="flex-1 px-4 py-3 space-y-2">
+        {playlistQueue.length === 0 ? (
+          <p className="text-center text-yellow-600 text-sm py-6">Queue is empty</p>
+        ) : (
+          playlistQueue.map((pl, qi) => (
+            <div
+              key={pl.id}
+              draggable={queueEditMode}
+              onDragStart={() => queueEditMode && setDraggedQueueIdx(qi)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => {
+                if (!queueEditMode || draggedQueueIdx === null || draggedQueueIdx === qi) return;
+                const newQueue = [...playlistQueue];
+                const [moved] = newQueue.splice(draggedQueueIdx, 1);
+                newQueue.splice(qi, 0, moved);
+                setPlaylistQueue(newQueue);
+                playlistQueueRef.current = newQueue;
+                setDraggedQueueIdx(null);
+                if (user?.uid) {
+                  import('../lib/firebase').then(({ saveQueueToFirestore }) => {
+                    saveQueueToFirestore(user.uid, newQueue.map(p => p.id));
+                  });
+                }
+              }}
+              onDragEnd={() => setDraggedQueueIdx(null)}
+              className={`flex items-center gap-3 p-3 rounded-xl border transition ${
+                draggedQueueIdx === qi ? 'opacity-40' : ''
+              } ${isPlayingQueue && playlistQueueIndex === qi
+                ? 'border-yellow-400 bg-yellow-800 bg-opacity-60'
+                : 'border-yellow-800 bg-yellow-900 bg-opacity-30'
+              }`}
+            >
+              {queueEditMode && <span className="text-yellow-500 text-lg cursor-grab">⠿</span>}
+              <span className={`font-black text-sm w-5 shrink-0 ${isPlayingQueue && playlistQueueIndex === qi ? 'text-yellow-300' : 'text-yellow-600'}`}>
+                {isPlayingQueue && playlistQueueIndex === qi ? '▶' : qi + 1}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold truncate text-white">{pl.name}</p>
+                <p className="text-xs text-yellow-500">{pl.clips?.length || 0} clips</p>
+              </div>
+              {queueEditMode && (
+                <button
+                  onClick={() => handleRemoveFromQueue(pl.id)}
+                  className="w-7 h-7 flex items-center justify-center rounded-full bg-red-900 bg-opacity-50 hover:bg-red-700 text-red-400 text-xs transition"
+                >✕</button>
+              )}
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="px-5 py-4 border-t border-yellow-800 space-y-2">
+        {!isPlayingQueue && (
+          <button
+            onClick={() => { handlePlayQueue(0); setQueueDrawerOpen(false); }}
+            className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black rounded-xl font-black hover:shadow-lg transition flex items-center justify-center gap-2"
+          >
+            ▶ Play Queue
+          </button>
+        )}
+        <button
+          onClick={() => {
+            setPlaylistQueue([]);
+            playlistQueueRef.current = [];
+            if (user?.uid) {
+              import('../lib/firebase').then(({ saveQueueToFirestore }) => {
+                saveQueueToFirestore(user.uid, []);
+              });
+            }
+            setQueueDrawerOpen(false);
+          }}
+          className="w-full py-2.5 bg-red-900 bg-opacity-50 hover:bg-opacity-80 text-red-300 rounded-xl text-sm font-semibold transition"
+        >
+          Clear Queue
+        </button>
       </div>
     </div>
   </div>

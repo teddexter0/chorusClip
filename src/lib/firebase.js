@@ -100,7 +100,6 @@ export const getLeaderboard = async (limitCount = 10) => {
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const q = query(
         collection(db, 'clips'),
-        where('isPublic', '==', true),
         where('createdAt', '>=', sevenDaysAgo),
         orderBy('createdAt', 'desc'),
         limit(200)
@@ -111,7 +110,6 @@ export const getLeaderboard = async (limitCount = 10) => {
       // Composite index not yet created — fall back to most-recent 200 clips (all time)
       const q = query(
         collection(db, 'clips'),
-        where('isPublic', '==', true),
         orderBy('createdAt', 'desc'),
         limit(200)
       );
@@ -276,7 +274,6 @@ export const getTrendingClipsByPlays = async (limitCount = 5) => {
   try {
     const q = query(
       collection(db, 'clips'),
-      where('isPublic', '==', true),
       orderBy('plays', 'desc'),
       limit(limitCount)
     );
@@ -301,7 +298,6 @@ export const getTopArtists = async (limitCount = 5) => {
 
     const q = query(
       collection(db, 'clips'),
-      where('isPublic', '==', true),
       where('createdAt', '>=', thirtyDaysAgo),
       orderBy('createdAt', 'desc'),
       limit(200)

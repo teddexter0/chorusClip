@@ -195,3 +195,10 @@ select option {
 .overflow-x-auto::-webkit-scrollbar {
   display: none; /* Chrome/Safari */
 }
+
+/* Bottom tab bar clearance on mobile */
+@media (max-width: 767px) {
+  .main-content-area {
+    padding-bottom: 80px; /* height of bottom tab bar */
+  }
+}

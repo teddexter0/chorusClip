@@ -93,6 +93,8 @@ const [playlistQueue, setPlaylistQueue] = useState([]);
 const [playlistQueueIndex, setPlaylistQueueIndex] = useState(0);
 const [isPlayingQueue, setIsPlayingQueue] = useState(false);
 const [standaloneLoop, setStandaloneLoop] = useState(false);
+const [mobileTab, setMobileTab] = useState('create'); // 'create' | 'feed' | 'library' | 'more'
+const [expandedSections, setExpandedSections] = useState([0]); // section 0 always open
 const playlistQueueRef = useRef([]);
 const playlistQueueIndexRef = useRef(0);
 
@@ -533,6 +535,7 @@ const handleThemeToggle = async () => {
   setCurrentLoopIteration(0);
   setIsReadOnlyMode(false); // New URL loaded — allow editing
   setLoops([{ start: 0, end: 30, loopCount: 1, youtubeVideoId: id }]); // Reset loops for new song
+  setExpandedSections([0]);
   setVideoDuration(600); // Reset; will be updated once player reports actual duration
 
   setTimeout(() => {
@@ -1168,6 +1171,7 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
     setLoops(loopsToLoad);
     setCurrentLoopIndex(0);
     setCurrentLoopIteration(0);
+    setExpandedSections([0]);
     setIsPlaying(false);
     setIsReadOnlyMode(true); // Playing from feed — lock the edit sliders
 
@@ -1505,14 +1509,23 @@ const startTimeTracking = () => {
 
   console.log('Posting clip with data:', clipData);
 
-  try {
-    const { createClip } = await import('../lib/firebase');
-    await createClip(clipData);
-    showNotification(`✅ Clip posted with ${loops.length} section(s)!`, 'success');
-  } catch (error) {
-    console.error('Post error:', error);
-    showNotification('Failed to post. Try again.', 'error');
+  let attempts = 0;
+  let lastError;
+  while (attempts < 2) {
+    try {
+      const { createClip } = await import('../lib/firebase');
+      await createClip(clipData);
+      showNotification(`✅ Clip posted with ${loops.length} section(s)!`, 'success');
+      setPendingAction(null);
+      return;
+    } catch (error) {
+      lastError = error;
+      attempts++;
+      if (attempts < 2) await new Promise(r => setTimeout(r, 1500));
+    }
   }
+  console.error('Post error after retry:', lastError);
+  showNotification('Failed to post — check your connection or disable ad blocker', 'error');
   } finally {
     setGlobalLoading(false);
   }
@@ -1817,7 +1830,7 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   
   return (
     <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-electric' : 'theme-classic'}`}>
-    <BackgroundAmbience theme={themeMode} />
+    <BackgroundAmbience theme={themeMode === 'electric' ? 'gold' : 'purple'} />
 
     {/* Global loading overlay */}
     {globalLoading && (
@@ -2359,10 +2372,16 @@ className="btn-primary w-full py-5 text-xl">
 </header>
 
       {/* Main content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 relative z-10 pb-28">
+      <div className="main-content-area max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 relative z-10 pb-28">
   <div className="flex flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 xl:gap-10 xl:items-start">
+    {/* YouTube player container — always in DOM so handlePlayPlaylist can create
+        a YT.Player immediately without waiting for a React re-render.
+        Kept outside all tab-hidden containers so audio keeps playing on every
+        mobile tab. Visually hidden; audio plays through the hidden iframe. */}
+    <div id="youtube-player" style={{position:'fixed',top:'-9999px',width:'2px',height:'2px',overflow:'hidden'}} aria-hidden="true"></div>
     {/* LEFT COLUMN - Create Loop */}
-    <div className="space-y-6">
+    <div className={`space-y-6 ${mobileTab !== 'create' && mobileTab !== 'more' ? 'hidden md:block' : ''}`}>
+            <div className={mobileTab === 'more' ? 'hidden md:block' : ''}>
             <div 
 className="card">          
 <div className="flex justify-between items-center mb-6">
@@ -2393,11 +2412,6 @@ className="input"/>
                   ) : 'Load Song'}
                 </button>
               </div>
-
-              {/* YouTube player container — always in DOM so handlePlayPlaylist can create
-                  a YT.Player immediately without waiting for a React re-render.
-                  Visually hidden; audio plays through the hidden iframe. */}
-              <div id="youtube-player" style={{position:'fixed',top:'-9999px',width:'2px',height:'2px',overflow:'hidden'}} aria-hidden="true"></div>
 
               {videoId && (
                 <div className="mt-6 space-y-6">
@@ -2454,18 +2468,32 @@ className="input"/>
                         ? 'bg-gradient-to-br from-yellow-900 via-amber-900 to-orange-900 bg-opacity-40'
                         : 'bg-purple-900 bg-opacity-30'
                     }`}>
-                      {/* Section header: title + reorder + remove */}
-                      <div className="flex justify-between items-center mb-5">
-                        <div className="flex items-center gap-2">
-                          <h4 className="font-bold text-2xl">
+                      {/* Section header — always visible, tap to expand/collapse */}
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <button
+                          onClick={() => setExpandedSections(prev =>
+                            prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
+                          )}
+                          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                          aria-expanded={expandedSections.includes(idx)}
+                        >
+                          <h4 className="font-bold text-xl">
                             Section {idx + 1}
                             {idx === currentLoopIndex && isPlaying && (
-                              <span className="ml-2 text-base text-pink-400 font-semibold animate-pulse">▶ Playing</span>
+                              <span className="ml-2 text-sm text-pink-400 font-semibold animate-pulse">▶ Playing</span>
                             )}
                           </h4>
+                          {!expandedSections.includes(idx) && (
+                            <span className="text-xs text-purple-400">
+                              {Math.floor(loop.start/60)}:{(loop.start%60).toString().padStart(2,'0')}–{Math.floor(loop.end/60)}:{(loop.end%60).toString().padStart(2,'0')} · {loop.loopCount === 0 ? '∞' : `${loop.loopCount}×`}
+                            </span>
+                          )}
+                          <span className="text-purple-400 text-sm ml-auto shrink-0">{expandedSections.includes(idx) ? '▲' : '▼'}</span>
+                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
                           {/* Reorder buttons */}
                           {!isReadOnlyMode && loops.length > 1 && (
-                            <div className="flex gap-1 ml-2">
+                            <>
                               <button
                                 onClick={() => moveLoop(idx, 'up')}
                                 disabled={idx === 0}
@@ -2480,16 +2508,19 @@ className="input"/>
                                 title="Move section down"
                                 aria-label="Move section down"
                               >▼</button>
-                            </div>
+                            </>
+                          )}
+                          {!isReadOnlyMode && loops.length > 1 && (
+                            <button onClick={() => removeLoop(idx)} className="text-red-400 hover:text-red-300 transition ml-1">
+                              <X size={28} />
+                            </button>
                           )}
                         </div>
-                        {!isReadOnlyMode && loops.length > 1 && (
-                          <button onClick={() => removeLoop(idx)} className="text-red-400 hover:text-red-300 transition">
-                            <X size={28} />
-                          </button>
-                        )}
                       </div>
 
+                      {/* Collapsible body */}
+                      {expandedSections.includes(idx) && (
+                      <>
                       {/* Mix song display — prominent when this section plays a different song */}
                       {loop.youtubeVideoId && loop.youtubeVideoId !== videoId && (
                         <div className="mb-3 flex items-center gap-2 bg-yellow-500 bg-opacity-10 border border-yellow-500 border-opacity-30 rounded-xl px-3 py-2">
@@ -2737,6 +2768,8 @@ className="input"/>
     </button>
   )}
 </div>
+                      </>
+                      )}
                     </div>
                   ))}
 
@@ -2785,13 +2818,18 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       
       <button
         onClick={() => currentPlaylistPlayer?.toggleRepeat()}
-        className={`px-5 py-3 rounded-xl transition ${
+        className={`relative px-5 py-3 rounded-xl transition ${
           currentPlaylistPlayer?.repeatPlaylist 
             ? 'bg-pink-600 hover:bg-pink-500' 
             : 'bg-purple-700 hover:bg-purple-600'
         }`}
       >
         <Repeat size={24} />
+        {currentPlaylistPlayer?.repeatPlaylist && (
+          <span className="absolute -top-1 -right-1 w-4 h-4 bg-white text-pink-600 rounded-full text-xs font-black flex items-center justify-center leading-none">
+            1
+          </span>
+        )}
       </button>
       
       <button
@@ -2816,6 +2854,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 >
   <RotateCcw size={28} aria-hidden="true" />
 </button>
+{!isPlayingPlaylist && (
 <button
   onClick={() => setStandaloneLoop(v => !v)}
   className={`px-5 py-5 rounded-xl transition font-bold text-sm ${standaloneLoop ? 'bg-pink-600 hover:bg-pink-500 text-white shadow-lg shadow-pink-500/40' : 'bg-purple-800 bg-opacity-70 hover:bg-opacity-90'}`}
@@ -2824,6 +2863,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 >
   <Repeat size={24} />
 </button>
+)}
                    
                   {/* Download removed — not available in serverless deployment */}
                   </div>
@@ -2852,7 +2892,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               )}
             </div>
+            </div>
 
+            <div className={`${mobileTab !== 'more' ? 'hidden md:block' : ''}`}>
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
               <h3 className="font-black text-xl mb-4 flex items-center gap-2">
                 <Sparkles size={24} className="text-yellow-400" />
@@ -2932,9 +2974,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 Response time: 24-48 hours
               </p>
             </div>
+            </div>
           </div>
 
-          <div className="space-y-6">
+          <div className={`space-y-6 ${mobileTab === 'create' || mobileTab === 'more' ? 'hidden md:block' : ''}`}>
+            <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
             <div className="card">
               {/* Clip search */}
               <div className="relative mb-4">
@@ -3183,6 +3227,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               )}
             </div>
+            </div>
+
+            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
 {user?.uid && (
   (() => {
     const myPrivateClips = myClips.filter(c => !c.isPublic);
@@ -3217,6 +3264,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     );
   })()
 )}
+            </div>
+
+            <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
 {publicPlaylistShowcase.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-cyan-700 border-opacity-50 mt-6">
     <div className="flex items-start justify-between gap-3 mb-4">
@@ -3274,6 +3324,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </div>
   </div>
 )}
+            </div>
+
+            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-green-700 border-opacity-50 mt-6">
@@ -3580,6 +3633,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </button>
   )}
 </div>
+            </div>
           </div>
         </div>
       
@@ -3770,6 +3824,32 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   </div>
 )}
 </div>
+
+{/* Mobile bottom tab bar — hidden on desktop */}
+<nav className="fixed bottom-0 left-0 right-0 z-50 bg-black bg-opacity-90 backdrop-blur-md border-t border-purple-800 border-opacity-50 flex md:hidden">
+  {[
+    { key: 'create', icon: '🎵', label: 'Create' },
+    { key: 'feed', icon: '🔥', label: 'Feed' },
+    { key: 'library', icon: '📋', label: 'Library' },
+    { key: 'more', icon: '☰', label: 'More' },
+  ].map(tab => (
+    <button
+      key={tab.key}
+      onClick={() => setMobileTab(tab.key)}
+      className={`relative flex-1 flex flex-col items-center justify-center py-3 gap-0.5 transition ${
+        mobileTab === tab.key ? 'text-purple-300' : 'text-purple-600 hover:text-purple-400'
+      }`}
+    >
+      <span className="text-xl leading-none">{tab.icon}</span>
+      <span className={`text-xs font-semibold ${mobileTab === tab.key ? 'text-purple-300' : 'text-purple-600'}`}>
+        {tab.label}
+      </span>
+      {mobileTab === tab.key && (
+        <span className="absolute bottom-0 w-8 h-0.5 bg-purple-400 rounded-full" />
+      )}
+    </button>
+  ))}
+</nav>
     </div>
   );
 };

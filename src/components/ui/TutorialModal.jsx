@@ -67,10 +67,16 @@ export default function TutorialModal({ onClose }) {
               <p className="text-purple-200 text-sm">In the sticky bottom banner, tap <strong>Edit Order</strong> next to the queue count to drag/reorder queued playlists on the fly.</p>
               <p className="text-purple-400 text-xs mt-2">→ ▲▼ buttons reorder · ✕ removes from queue</p>
             </div>
-            <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-red-400">
-              <p className="font-semibold mb-1">Playlist privacy</p>
-              <p className="text-purple-200 text-sm">New playlists are <strong>Public</strong> by default. Toggle to Private anytime from the Manage screen.</p>
-              <p className="text-purple-400 text-xs mt-2">→ Tap Manage → toggle the visibility switch</p>
+            <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-green-400">
+              <p className="font-semibold mb-1">Making a playlist public</p>
+              <p className="text-purple-200 text-sm">
+                All playlists start <strong>private</strong>. To share with others:<br/>
+                1. Go to <strong>My Playlists</strong><br/>
+                2. Tap <strong>⋯ Manage</strong> on the playlist<br/>
+                3. Toggle <strong>Visibility</strong> to 🌍 Public<br/>
+                Public playlists appear in the community feed. Your clips inside stay private unless you toggle them public too.
+              </p>
+              <p className="text-purple-400 text-xs mt-2">→ Private clips in public playlists: playable via the playlist, not searchable individually</p>
             </div>
           </div>
         </div>

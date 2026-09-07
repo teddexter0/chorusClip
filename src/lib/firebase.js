@@ -8,7 +8,6 @@ import {
   sendPasswordResetEmail as firebaseSendPasswordReset,
   signOut as firebaseSignOut
 } from 'firebase/auth';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 
 export const resetPassword = async (email) => {
@@ -26,7 +25,6 @@ const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
   authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
   projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
   messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
 };
@@ -34,19 +32,17 @@ const firebaseConfig = {
 let app;
 let auth;
 let db;
-let storage;
 
 try {
   app = initializeApp(firebaseConfig);
   auth = getAuth(app);
   db = getFirestore(app);
-  storage = getStorage(app);
   console.log('✅ Firebase initialized successfully');
 } catch (error) {
   console.error('❌ Firebase init error:', error);
 }
 
-export { auth, db, storage };
+export { auth, db };
 
 // REAL-TIME CLIPS SUBSCRIPTION
 export const subscribeToTrendingClips = (callback) => {
@@ -505,19 +501,4 @@ export const migrateAllPlaylistsToPrivate = async () => {
   return count;
 };
 
-// ── PROFILE PICTURE ────────────────────────────────────────────────────────
 
-export const uploadProfilePicture = async (uid, file) => {
-  // Validate: images only, max 2MB
-  if (!file.type.startsWith('image/')) throw new Error('File must be an image');
-  if (file.size > 2 * 1024 * 1024) throw new Error('Image must be under 2MB');
-
-  const { ref: storageRef, uploadBytes, getDownloadURL } = await import('firebase/storage');
-  const avatarRef = storageRef(storage, `avatars/${uid}`);
-  await uploadBytes(avatarRef, file);
-  const downloadURL = await getDownloadURL(avatarRef);
-
-  // Save URL to Firestore user doc
-  await updateDoc(doc(db, 'users', uid), { photoURL: downloadURL });
-  return downloadURL;
-};

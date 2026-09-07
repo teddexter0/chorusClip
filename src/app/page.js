@@ -1695,21 +1695,6 @@ const handleUnlikeClip = async (clipId) => {
     }
   };
 
-  const handleProfilePicUpload = async (file) => {
-  if (!user?.uid || !file) return;
-  setPendingAction('avatar');
-  try {
-    const { uploadProfilePicture } = await import('../lib/firebase');
-    const url = await uploadProfilePicture(user.uid, file);
-    setUser(prev => ({ ...prev, photoURL: url }));
-    showNotification('✅ Profile picture updated!', 'success');
-  } catch (e) {
-    showNotification('Upload failed: ' + e.message, 'error');
-  } finally {
-    setPendingAction(null);
-  }
-};
-
   const handleChangeUsername = async () => {
   if (!user?.uid) {
     showNotification('Please sign in first!', 'error');
@@ -2262,84 +2247,32 @@ className="btn-primary w-full py-5 text-xl">
               {themeMode === 'electric' ? '⚡' : '💜'}
             </button>
 
-            {/* User info — avatar upload + username edit on desktop; hidden on mobile */}
-            {pendingAction === 'avatar' ? (
-              <div className="hidden sm:flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-purple-800 flex items-center justify-center shrink-0">
-                  <span className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+            {/* User info — avatar + username edit on desktop; hidden on mobile */}
+            <div className="hidden sm:flex items-center gap-2 min-w-0">
+              {/* Avatar — static initial circle */}
+              <div className="relative w-8 h-8 rounded-full overflow-hidden shrink-0">
+                <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-xs font-black">
+                  {(user.displayName || 'U')[0].toUpperCase()}
                 </div>
               </div>
-            ) : (
-              <div className="hidden sm:flex items-center gap-2 min-w-0">
-                {/* Avatar — click to upload */}
-                <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer shrink-0 group" title="Change profile picture">
-                  {user.photoURL ? (
-                    <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-xs font-black">
-                      {(user.displayName || 'U')[0].toUpperCase()}
-                    </div>
-                  )}
-                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-50 transition flex items-center justify-center">
-                    <span className="text-white text-xs opacity-0 group-hover:opacity-100 transition">📷</span>
-                  </div>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleProfilePicUpload(file);
-                      e.target.value = '';
-                    }}
-                  />
-                </label>
-                {/* Username — click to edit */}
-                <button
-                  onClick={handleChangeUsername}
-                  className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-white bg-opacity-10 hover:bg-opacity-15 transition min-w-0"
-                  aria-label="Change username"
-                  title={`${USERNAME_CHANGE_QUOTA - (user.usernameChanges ?? 0)} change(s) remaining`}
-                >
-                  <span className="text-sm font-semibold truncate max-w-[120px]">{user.displayName}</span>
-                  <span className="text-xs text-purple-300 shrink-0">Edit</span>
-                </button>
-              </div>
-            )}
-
-            {/* Mobile: avatar upload — tap to upload profile picture */}
-            {pendingAction === 'avatar' ? (
-              <div className="sm:hidden w-9 h-9 rounded-full bg-purple-800 flex items-center justify-center shrink-0">
-                <span className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-              </div>
-            ) : (
-              <label
-                className="sm:hidden relative w-9 h-9 rounded-full overflow-hidden cursor-pointer shrink-0 group"
-                title="Tap to change profile picture"
+              {/* Username — click to edit */}
+              <button
+                onClick={handleChangeUsername}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-xl bg-white bg-opacity-10 hover:bg-opacity-15 transition min-w-0"
+                aria-label="Change username"
+                title={`${USERNAME_CHANGE_QUOTA - (user.usernameChanges ?? 0)} change(s) remaining`}
               >
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-sm font-black">
-                    {(user.displayName || 'U')[0].toUpperCase()}
-                  </div>
-                )}
-                {/* Hover overlay */}
-                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-40 transition flex items-center justify-center">
-                  <span className="text-white text-xs opacity-0 group-hover:opacity-100 transition">📷</span>
-                </div>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleProfilePicUpload(file);
-                    e.target.value = ''; // reset so same file can be re-selected
-                  }}
-                />
-              </label>
-            )}
+                <span className="text-sm font-semibold truncate max-w-[120px]">{user.displayName}</span>
+                <span className="text-xs text-purple-300 shrink-0">Edit</span>
+              </button>
+            </div>
+
+            {/* Mobile: static avatar initial circle */}
+            <div className="sm:hidden w-9 h-9 rounded-full overflow-hidden shrink-0">
+              <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-sm font-black">
+                {(user.displayName || 'U')[0].toUpperCase()}
+              </div>
+            </div>
 
             {/* Sign out */}
             <button

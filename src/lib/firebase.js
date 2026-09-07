@@ -72,11 +72,14 @@ export const subscribeToUserClips = (uid, callback) => {
       collection(db, 'clips'),
       where('userId', '==', uid),
       orderBy('createdAt', 'desc'),
-      limit(50)
+      limit(200)
     );
     return onSnapshot(q, (snapshot) => {
       const clips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       callback(clips);
+    }, (error) => {
+      console.error('User clips subscription error:', error);
+      callback([]); // don't leave UI stuck
     });
   } catch (error) {
     console.error('User clips subscribe error:', error);

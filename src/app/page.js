@@ -45,6 +45,7 @@ const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
 const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
 const [myClips, setMyClips] = useState([]);
+const [privateClipsLimit, setPrivateClipsLimit] = useState(10);
 const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
 const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
 const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list'
@@ -315,13 +316,35 @@ const loadTrendingData = async () => {
       if (user?.uid) {
         loadUserPlaylists();
         loadSavedQueue();
+
         let unsubUserClips;
-        import('../lib/firebase').then(({ subscribeToUserClips }) => {
-          unsubUserClips = subscribeToUserClips(user.uid, (userClips) => {
-            setMyClips(userClips);
+        let retryTimer;
+
+        const setupUserClipsSubscription = () => {
+          import('../lib/firebase').then(({ subscribeToUserClips }) => {
+            unsubUserClips = subscribeToUserClips(user.uid, (userClips) => {
+              setMyClips(userClips);
+              // If we got clips, clear any pending retry
+              if (userClips.length > 0 && retryTimer) {
+                clearTimeout(retryTimer);
+                retryTimer = null;
+              }
+            });
           });
-        });
-        return () => { if (unsubUserClips) unsubUserClips(); };
+        };
+
+        setupUserClipsSubscription();
+
+        // Retry once after 2s in case of auth timing issue on PC/desktop
+        retryTimer = setTimeout(() => {
+          if (unsubUserClips) unsubUserClips();
+          setupUserClipsSubscription();
+        }, 2000);
+
+        return () => {
+          if (unsubUserClips) unsubUserClips();
+          if (retryTimer) clearTimeout(retryTimer);
+        };
       }
     }
     // These loaders intentionally re-run when auth identity changes.
@@ -1958,11 +1981,14 @@ h1, h2, h3 {
 .card {
   background: rgba(255, 255, 255, 0.08);
   backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 20px;
-  padding: 32px;
+  padding: 20px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05), 0 10px 20px rgba(0, 0, 0, 0.1);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (min-width: 1280px) {
+  .card { padding: 28px; }
 }
 
 .card:hover {
@@ -2109,7 +2135,7 @@ className="btn-primary w-full py-5 text-xl">
                     showNotification('Failed to update', 'error');
                   }
                 }}
-                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 ${managingPlaylist.isPublic !== false ? 'bg-green-500' : 'bg-purple-700'}`}
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 ${managingPlaylist.isPublic !== false ? 'bg-emerald-500' : 'bg-purple-700'}`}
                 aria-label="Toggle playlist visibility"
               >
                 <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${managingPlaylist.isPublic !== false ? 'translate-x-6' : 'translate-x-1'}`} />
@@ -2866,26 +2892,26 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 <Sparkles size={24} className="text-yellow-400" />
                 Why ChorusClip?
               </h3>
-              <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-blue-700 border-opacity-50">
+              <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
   <h3 className="font-black text-xl mb-4 flex items-center gap-2">
-    <Users size={24} className="text-blue-400" />
+    <Users size={24} className="text-purple-400" />
     Who Is This For?
   </h3>
   <ul className="space-y-3 text-base text-purple-200">
     <li className="flex items-start gap-2">
-      <span className="text-blue-400 text-lg">🎤</span>
+      <span className="text-purple-400 text-lg">🎤</span>
       <span><strong>Choirs:</strong> Master tricky vocal parts by looping specific sections</span>
     </li>
     <li className="flex items-start gap-2">
-      <span className="text-blue-400 text-lg">💪</span>
+      <span className="text-purple-400 text-lg">💪</span>
       <span><strong>Workouts:</strong> Loop your most motivating beat drops</span>
     </li>
     <li className="flex items-start gap-2">
-      <span className="text-blue-400 text-lg">📚</span>
+      <span className="text-purple-400 text-lg">📚</span>
       <span><strong>Study:</strong> Focus music on repeat without interruption</span>
     </li>
     <li className="flex items-start gap-2">
-      <span className="text-blue-400 text-lg">🎵</span>
+      <span className="text-purple-400 text-lg">🎵</span>
       <span><strong>Music Lovers:</strong> Obsess over that ONE perfect 6-second kick!</span>
     </li>
   </ul>
@@ -3073,7 +3099,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                             <span className="text-xs text-purple-500">❤️ {clip.likes || 0}</span>
                             <span className="text-xs text-purple-500">▶ {playCount}</span>
                             {clip.userId === user?.uid && (
-                              <span className={`text-xs ml-auto ${clip.isPublic ? 'text-green-400' : 'text-purple-500'}`}>
+                              <span className={`text-xs ml-auto ${clip.isPublic ? 'text-emerald-400' : 'text-purple-500'}`}>
                                 {clip.isPublic ? '🌍' : '🔒'}
                               </span>
                             )}
@@ -3107,11 +3133,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                             <div className="flex flex-col items-end gap-2 shrink-0">
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleDeleteClip(clip.id); }}
-                                className="text-red-400 hover:text-red-300 transition shrink-0"
+                                className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg text-red-400 hover:text-red-300 hover:bg-red-900 hover:bg-opacity-30 transition shrink-0"
                                 title="Delete clip"
                                 aria-label="Delete clip"
                               >
-                                <X size={16} />
+                                <X size={14} />
                               </button>
                               <button
                                 onClick={async (e) => {
@@ -3128,7 +3154,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                                 }}
                                 className={`text-xs px-2 py-1 rounded-full font-semibold transition border ${
                                   clip.isPublic
-                                    ? 'border-green-500 text-green-400 hover:bg-green-900 hover:bg-opacity-30'
+                                    ? 'border-emerald-500 text-emerald-400 hover:bg-emerald-900 hover:bg-opacity-30'
                                     : 'border-purple-600 text-purple-400 hover:bg-purple-900 hover:bg-opacity-30'
                                 }`}
                                 title={clip.isPublic ? 'Clip is public — tap to make private' : 'Clip is private — tap to make public'}
@@ -3159,8 +3185,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                           </span>
 
                           {/* Action buttons — always on same line, tightly spaced */}
-                          <div className="flex items-center gap-3 ml-auto">
-                            {/* Like with count */}
+                          <div className="flex items-center gap-2 ml-auto">
+                            {/* Like */}
                             <button
                               onClick={async () => {
                                 setPendingAction(`like-${clip.id}`);
@@ -3168,49 +3194,53 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                                 setPendingAction(null);
                               }}
                               disabled={pendingAction === `like-${clip.id}`}
-                              className={`flex items-center gap-1 transition ${user.likedClips?.includes(clip.id) ? 'text-pink-500' : 'text-pink-400 hover:text-pink-300'} disabled:opacity-60`}
+                              className={`min-w-[36px] min-h-[36px] flex items-center justify-center gap-1 rounded-xl transition disabled:opacity-60 ${
+                                user.likedClips?.includes(clip.id)
+                                  ? 'text-pink-500 bg-pink-900 bg-opacity-30'
+                                  : 'text-pink-400 hover:text-pink-300 hover:bg-pink-900 hover:bg-opacity-20'
+                              }`}
                               aria-label={user.likedClips?.includes(clip.id) ? `Unlike ${clip.title}` : `Like ${clip.title}`}
-                              aria-pressed={user.likedClips?.includes(clip.id)}
                             >
                               {pendingAction === `like-${clip.id}`
                                 ? <span className="w-3 h-3 border border-pink-400 border-t-transparent rounded-full animate-spin" />
-                                : <Heart size={16} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                                : <Heart size={15} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
                               }
                               <span className="text-xs font-semibold">{clip.likes || 0}</span>
                             </button>
 
-                            {/* Play with count */}
+                            {/* Play */}
                             <button
                               onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-                              className="flex items-center gap-1 text-purple-300 hover:text-purple-100 transition"
+                              className="min-w-[36px] min-h-[36px] flex items-center justify-center gap-1 rounded-xl text-purple-300 hover:text-purple-100 hover:bg-purple-900 hover:bg-opacity-30 transition"
                               aria-label={`Play ${clip.title}`}
                             >
-                              <Play size={16} fill="currentColor" />
+                              <Play size={15} fill="currentColor" />
                               <span className={`text-xs font-semibold ${topPlayCounts.includes(clip.id) ? 'text-red-400 font-bold' : ''}`}>{getClipPlayCount(clip)}</span>
                             </button>
 
                             {/* Share */}
                             <button
                               onClick={() => handleShareClip(clip)}
-                              className="text-purple-400 hover:text-purple-300 transition"
+                              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-purple-400 hover:text-purple-300 hover:bg-purple-900 hover:bg-opacity-30 transition"
                               aria-label={`Share ${clip.title}`}
                             >
-                              <Share2 size={16} />
+                              <Share2 size={15} />
                             </button>
 
-                            {/* Add to playlist */}
+                            {/* Add to playlist staging */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (selectedClipsForPlaylist.length >= 10) { showNotification('Clip queue holds max 10 clips!', 'error'); return; }
-                                if (isClipDuplicate(clip, selectedClipsForPlaylist)) { showNotification('Already in your queue!', 'info'); return; }
+                                if (!user?.uid) { showNotification('Sign in to create playlists!', 'error'); setShowAuthModal(true); return; }
+                                if (selectedClipsForPlaylist.length >= 10) { showNotification('Playlist cap is 10 clips!', 'error'); return; }
+                                if (isClipDuplicate(clip, selectedClipsForPlaylist)) { showNotification('Already staged!', 'info'); return; }
                                 setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
-                                showNotification(`Added to clip queue (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
+                                showNotification(`Added! (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
                               }}
-                              className="text-green-400 hover:text-green-300 transition"
-                              aria-label="Add to clip queue"
+                              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-emerald-400 hover:text-emerald-300 hover:bg-emerald-900 hover:bg-opacity-30 transition"
+                              aria-label="Add to playlist"
                             >
-                              <Plus size={16} />
+                              <Plus size={15} />
                             </button>
                           </div>
                         </div>
@@ -3261,32 +3291,73 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 {user?.uid && (
   (() => {
     const myPrivateClips = myClips.filter(c => !c.isPublic);
+    const visiblePrivate = myPrivateClips.slice(0, privateClipsLimit);
     return (
       <div className="mt-4 border-t border-purple-700 border-opacity-40 pt-4">
-        <p className="text-xs font-bold text-purple-400 uppercase tracking-wide mb-3">Your Private Clips</p>
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-bold text-purple-400 uppercase tracking-wide">
+            Your Private Clips ({myPrivateClips.length})
+          </p>
+          {myPrivateClips.length > 0 && (
+            <p className="text-xs text-purple-600">{visiblePrivate.length}/{myPrivateClips.length} shown</p>
+          )}
+        </div>
         {myPrivateClips.length === 0 ? (
           <p className="text-xs text-purple-500 text-center py-2">No private clips yet</p>
         ) : (
-          <div className="space-y-2">
-            {myPrivateClips.map((clip) => (
-              <div key={clip.id} className="flex items-center justify-between gap-2 bg-purple-900 bg-opacity-30 rounded-xl px-3 py-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold truncate">{clip.title}</p>
-                  <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+          <>
+            <div className="space-y-2">
+              {visiblePrivate.map((clip) => (
+                <div key={clip.id} className="flex items-center justify-between gap-2 bg-purple-900 bg-opacity-20 rounded-xl px-3 py-2.5 border border-purple-800 border-opacity-30">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate text-white">{clip.title}</p>
+                    <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Public/private toggle */}
+                    <button
+                      onClick={async () => {
+                        const newVal = !(clip.isPublic);
+                        try {
+                          const { db } = await import('../lib/firebase');
+                          const { doc, updateDoc } = await import('firebase/firestore');
+                          await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
+                          showNotification(newVal ? '🌍 Now public' : '🔒 Now private', 'success');
+                        } catch(e) { showNotification('Failed', 'error'); }
+                      }}
+                      className="text-xs px-2 py-1 rounded-full border border-purple-600 text-purple-400 hover:border-purple-400 transition"
+                    >
+                      {clip.isPublic ? '🌍' : '🔒'}
+                    </button>
+                    {/* Play */}
+                    <button
+                      onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-emerald-700 hover:bg-emerald-600 transition"
+                      aria-label={`Play ${clip.title}`}
+                    >
+                      <Play size={14} fill="currentColor" />
+                    </button>
+                  </div>
                 </div>
-                <button
-                  onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-                  className="text-purple-300 hover:text-purple-100 transition shrink-0"
-                  aria-label={`Play ${clip.title}`}
-                >
-                  <Play size={16} fill="currentColor" />
-                </button>
-              </div>
-            ))}
-            <p className="text-xs text-purple-500">
-              {myPrivateClips.length} private clip(s) — toggle 🌍 Public to share
-            </p>
-          </div>
+              ))}
+            </div>
+            {myPrivateClips.length > privateClipsLimit && (
+              <button
+                onClick={() => setPrivateClipsLimit(p => p + 10)}
+                className="w-full mt-3 py-2.5 bg-purple-900 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold text-purple-300 transition flex items-center justify-center gap-2"
+              >
+                <ChevronDown size={16} /> Load {Math.min(10, myPrivateClips.length - privateClipsLimit)} more clips
+              </button>
+            )}
+            {myPrivateClips.length > 0 && myPrivateClips.length <= privateClipsLimit && privateClipsLimit > 10 && (
+              <button
+                onClick={() => setPrivateClipsLimit(10)}
+                className="w-full mt-2 py-2 text-xs text-purple-600 hover:text-purple-400 transition"
+              >
+                Show less
+              </button>
+            )}
+          </>
         )}
       </div>
     );
@@ -3296,19 +3367,19 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
             <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
 {publicPlaylistShowcase.length > 0 && (
-  <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-cyan-700 border-opacity-50 mt-6">
+  <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
     <div className="flex items-start justify-between gap-3 mb-4">
       <div>
         <h3 className="font-black text-xl flex items-center gap-2">
-          <Music size={22} className="text-cyan-300" />
+          <Music size={22} className="text-purple-300" />
           Public Playlist Picks
         </h3>
-        <p className="text-sm text-cyan-200 mt-1">Visible even to signed-out listeners. Curated from public playlists only.</p>
+        <p className="text-sm text-purple-200 mt-1">Visible even to signed-out listeners. Curated from public playlists only.</p>
       </div>
       {!user?.uid && (
         <button
           onClick={() => setShowAuthModal(true)}
-          className="px-3 py-2 bg-cyan-700 hover:bg-cyan-600 rounded-xl text-sm font-semibold transition shrink-0"
+          className="px-3 py-2 bg-purple-700 hover:bg-purple-600 rounded-xl text-sm font-semibold transition shrink-0"
         >
           Sign in for queue
         </button>
@@ -3316,24 +3387,24 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </div>
     <div className="grid gap-3 md:grid-cols-2">
       {publicPlaylistShowcase.map(({ key, title, subtitle, playlist }) => (
-        <div key={key} className="rounded-2xl border border-cyan-700 border-opacity-40 bg-cyan-950 bg-opacity-20 p-4">
+        <div key={key} className="rounded-2xl border border-purple-700 border-opacity-40 bg-purple-900 bg-opacity-20 p-4">
           <div className="flex items-start justify-between gap-3 mb-2">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300 font-bold">{title}</p>
-              <p className="text-xs text-cyan-500 mt-1">{subtitle}</p>
+              <p className="text-xs uppercase tracking-[0.2em] text-purple-300 font-bold">{title}</p>
+              <p className="text-xs text-purple-500 mt-1">{subtitle}</p>
             </div>
-            <span className="text-xs px-2 py-1 rounded-full bg-cyan-900 bg-opacity-60 text-cyan-200">
+            <span className="text-xs px-2 py-1 rounded-full bg-purple-900 bg-opacity-60 text-purple-200">
               {playlist.clips?.length || 0} clips
             </span>
           </div>
           <h4 className="text-lg font-bold leading-tight">{playlist.name}</h4>
-          <p className="text-sm text-cyan-100 mt-1">
+          <p className="text-sm text-purple-100 mt-1">
             by @{playlist.createdBy || playlist.ownerDisplayName || 'community'} · runtime {formatSeconds(playlist.runtimeSeconds)}
           </p>
           <div className="mt-3 flex gap-2">
             <button
               onClick={() => handlePlayPlaylist(playlist)}
-              className="flex-1 py-2.5 bg-gradient-to-r from-cyan-500 to-blue-500 text-black rounded-xl font-semibold transition hover:shadow-lg flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-black rounded-xl font-semibold transition hover:shadow-lg flex items-center justify-center gap-2"
             >
               <Play size={16} fill="currentColor" />
               Preview
@@ -3341,7 +3412,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             {user?.uid && (
               <button
                 onClick={() => handleAddToQueue(playlist)}
-                className={`px-3 py-2.5 rounded-xl text-sm font-semibold transition ${playlistQueue.some(p => p.id === playlist.id) ? 'bg-yellow-600 text-white' : 'bg-cyan-900 bg-opacity-50 text-cyan-200 hover:bg-opacity-80'}`}
+                className={`px-3 py-2.5 rounded-xl text-sm font-semibold transition ${playlistQueue.some(p => p.id === playlist.id) ? 'bg-yellow-600 text-white' : 'bg-amber-900 bg-opacity-50 text-amber-200 hover:bg-opacity-80'}`}
               >
                 {playlistQueue.some(p => p.id === playlist.id) ? 'In Queue' : '+ Queue'}
               </button>
@@ -3357,9 +3428,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
-  <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-green-700 border-opacity-50 mt-6">
+  <div className="bg-purple-900 bg-opacity-30 border border-purple-700 border-opacity-40 rounded-2xl mt-6">
     <h3 className="font-black text-xl mb-2 flex items-center gap-2">
-      <Music size={24} className="text-green-400" />
+      <Music size={24} className="text-purple-400" />
       My Playlists
     </h3>
 
@@ -3367,20 +3438,20 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     <div className="flex gap-2 mb-3">
       <button
         onClick={() => setPlaylistMode('default')}
-        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'default' ? 'bg-green-600 text-white' : 'bg-green-900 bg-opacity-40 text-green-300 hover:bg-opacity-60'}`}
+        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'default' ? 'bg-purple-600 text-white' : 'bg-purple-900 bg-opacity-40 text-purple-300 hover:bg-opacity-60'}`}
         title="Each section plays its saved repeat count (infinite capped at 5)"
       >
         Saved Repeats
       </button>
       <button
         onClick={() => setPlaylistMode('once')}
-        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'once' ? 'bg-blue-600 text-white' : 'bg-blue-900 bg-opacity-40 text-blue-300 hover:bg-opacity-60'}`}
+        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'once' ? 'bg-purple-600 text-white' : 'bg-purple-900 bg-opacity-40 text-purple-300 hover:bg-opacity-60'}`}
         title="Every section in every clip plays exactly once"
       >
         Play Once Each
       </button>
     </div>
-    <p className="text-xs text-green-500 mb-4">
+    <p className="text-xs text-purple-500 mb-4">
       {playlistMode === 'once'
         ? 'Every section plays 1× regardless of saved count'
         : `Infinite sections play ${ENDLESS_CAP_IN_PLAYLIST}× max`}
@@ -3395,8 +3466,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             key={playlist.id}
             className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
               isExpanded
-                ? 'border-green-500 border-opacity-60 bg-gradient-to-b from-green-900 to-teal-900 bg-opacity-60'
-                : 'border-green-700 border-opacity-30 bg-green-900 bg-opacity-20 hover:bg-opacity-30'
+                ? 'border-purple-500 border-opacity-60 bg-purple-900 bg-opacity-60'
+                : 'border-purple-700 border-opacity-30 bg-purple-900 bg-opacity-20 hover:bg-opacity-30'
             }`}
           >
             {/* Row header — always visible, tap to expand */}
@@ -3406,7 +3477,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             >
               <div className="flex-1 min-w-0 mr-3">
                 <p className="font-bold text-base leading-tight truncate">{playlist.name}</p>
-                <p className="text-xs text-green-400 mt-0.5">
+                <p className="text-xs text-purple-400 mt-0.5">
                   {playlist.clips?.length || 0}/10
                   {inQueue && <span className="ml-2 text-yellow-400 font-bold">· In Queue</span>}
                 </p>
@@ -3415,8 +3486,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               <span className={`
                 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all
                 ${isExpanded
-                  ? 'bg-green-500 text-black shadow-lg shadow-green-500/50 ring-2 ring-green-400'
-                  : 'bg-green-900 bg-opacity-60 text-green-400 hover:shadow-md hover:shadow-green-500/30 ring-1 ring-green-700'
+                  ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/50 ring-2 ring-purple-400'
+                  : 'bg-purple-900 bg-opacity-60 text-purple-400 hover:shadow-md hover:shadow-purple-500/30 ring-1 ring-purple-700'
                 }
               `}>
                 {isExpanded ? '▲' : '▼'}
@@ -3428,20 +3499,20 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               <div className="px-4 pb-4 space-y-3">
                 {/* Clip preview list */}
                 {(playlist.clips || []).length === 0 ? (
-                  <p className="text-xs text-green-600 text-center py-2">No clips yet</p>
+                  <p className="text-xs text-purple-500 text-center py-2">No clips yet</p>
                 ) : (
                   <div className="space-y-1">
                     {(playlist.clips || []).slice(0, 5).map((clip, i) => (
-                      <div key={i} className="flex items-center gap-2 py-1 border-b border-green-800 border-opacity-30 last:border-0">
-                        <span className="text-xs text-green-600 w-4 shrink-0">{i + 1}</span>
+                      <div key={i} className="flex items-center gap-2 py-1 border-b border-purple-800 border-opacity-30 last:border-0">
+                        <span className="text-xs text-purple-600 w-4 shrink-0">{i + 1}</span>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold truncate text-white">{clip.title}</p>
-                          <p className="text-xs text-green-400 truncate">{clip.artist}</p>
+                          <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
                         </div>
                       </div>
                     ))}
                     {(playlist.clips?.length || 0) > 5 && (
-                      <p className="text-xs text-green-600 pt-1">+{playlist.clips.length - 5} more clips</p>
+                      <p className="text-xs text-purple-500 pt-1">+{playlist.clips.length - 5} more clips</p>
                     )}
                   </div>
                 )}
@@ -3450,7 +3521,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 <div className="flex gap-2 flex-wrap">
                   <button
                     onClick={() => handlePlayPlaylist(playlist)}
-                    className="flex-1 min-w-[80px] py-2.5 bg-gradient-to-r from-green-600 to-teal-600 rounded-xl text-sm font-bold flex items-center justify-center gap-1 hover:shadow-lg transition"
+                    className="flex-1 min-w-[80px] py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-xl text-sm font-bold flex items-center justify-center gap-1 hover:shadow-lg transition"
                   >
                     <Play size={14} fill="currentColor" /> Play
                   </button>
@@ -3519,6 +3590,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   </div>
 )}
 </div>
+
+{/* Section divider */}
+<div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2" />
 
 {/* FEED WRAPPER — Leaderboard + Top Artists (discovery content) */}
 <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
@@ -3610,6 +3684,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               )}
             </div>
 
+            {/* Section divider */}
+            <div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2" />
+
 <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
   <button
     className="w-full flex justify-between items-center mb-4"
@@ -3676,18 +3753,18 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 {selectedClipsForPlaylist.length > 0 && (
   <div className={`fixed bottom-0 left-0 right-0 z-40 transition-transform duration-300 ${queueBannerCollapsed ? 'translate-y-[calc(100%-48px)]' : 'translate-y-0'}`}>
     <div className="max-w-2xl mx-auto px-4 pb-4">
-      <div className="bg-gradient-to-r from-green-900 via-teal-900 to-green-900 border border-green-500 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="bg-gradient-to-r from-amber-900 via-yellow-900 to-amber-900 border border-amber-700 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header / collapse toggle */}
         <button
           onClick={() => setQueueBannerCollapsed(v => !v)}
-          className="w-full flex items-center justify-between px-5 py-3 border-b border-green-700 hover:bg-white hover:bg-opacity-5 transition"
+          className="w-full flex items-center justify-between px-5 py-3 border-b border-amber-700 hover:bg-white hover:bg-opacity-5 transition"
         >
           <div className="flex items-center gap-4 flex-wrap">
-            <span className="text-green-300 font-bold text-sm">
+            <span className="text-amber-300 font-bold text-sm">
               🎵 {selectedClipsForPlaylist.length} clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''} staged
             </span>
           </div>
-          <span className="text-green-400 text-xs font-semibold shrink-0">
+          <span className="text-amber-400 text-xs font-semibold shrink-0">
             {queueBannerCollapsed ? ' show' : ' hide'}
           </span>
         </button>
@@ -3696,12 +3773,12 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         {!queueBannerCollapsed && (
           <div className="px-5 pt-2 pb-1">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-green-300 font-bold text-sm">
+              <span className="text-amber-300 font-bold text-sm">
                 Drag ⠿ to reorder
               </span>
               <button
                 onClick={() => setStagedClipsEditMode(v => !v)}
-                className={`text-xs font-bold px-3 py-1 rounded-lg transition ${stagedClipsEditMode ? 'bg-green-500 text-black' : 'bg-purple-800 text-purple-300 hover:text-white'}`}
+                className={`text-xs font-bold px-3 py-1 rounded-lg transition ${stagedClipsEditMode ? 'bg-amber-500 text-black' : 'bg-purple-800 text-purple-300 hover:text-white'}`}
               >
                 {stagedClipsEditMode ? 'Done' : 'Edit Order'}
               </button>
@@ -3726,14 +3803,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     onDragEnd={() => setDraggedQueueIdx(null)}
                     className={`flex items-center gap-3 px-3 py-2 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${
                       draggedQueueIdx === idx
-                        ? 'opacity-40 border-green-400 bg-green-900 bg-opacity-40'
-                        : 'border-green-700 border-opacity-30 bg-green-900 bg-opacity-20 hover:bg-opacity-30'
+                        ? 'opacity-40 border-amber-400 bg-amber-900 bg-opacity-40'
+                        : 'border-amber-700 border-opacity-30 bg-amber-900 bg-opacity-20 hover:bg-opacity-30'
                     }`}
                   >
-                    <span className="text-green-400 font-bold text-sm w-5 shrink-0">{idx + 1}</span>
+                    <span className="text-amber-400 font-bold text-sm w-5 shrink-0">{idx + 1}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-white truncate">{clip.title}</p>
-                      <p className="text-xs text-green-400 truncate">{clip.artist}</p>
+                      <p className="text-xs text-amber-400 truncate">{clip.artist}</p>
                     </div>
                     <button
                       onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
@@ -3751,7 +3828,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           {selectedClipsForPlaylist.length > 0 && (
             <button
               onClick={handlePlayStagedClips}
-              className="px-4 py-2 bg-gradient-to-r from-green-500 to-cyan-500 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
             >
               <Play size={14} fill="currentColor" /> Play Clips
             </button>
@@ -3759,7 +3836,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           {selectedClipsForPlaylist.length > 0 && (
             <button
               onClick={() => setShowPlaylistModal(true)}
-              className="px-4 py-2 bg-gradient-to-r from-green-600 to-blue-600 rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
+              className="px-4 py-2 bg-gradient-to-r from-amber-600 to-yellow-600 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
             >
               <Plus size={14}/> Save to Playlist
             </button>
@@ -3907,11 +3984,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       key={tab.key}
       onClick={() => setMobileTab(tab.key)}
       className={`relative flex-1 flex flex-col items-center justify-center py-3 gap-0.5 transition ${
-        mobileTab === tab.key ? 'text-purple-300' : 'text-purple-600 hover:text-purple-400'
+        mobileTab === tab.key ? 'text-purple-400' : 'text-purple-700 hover:text-purple-500'
       }`}
     >
       <span className="text-xl leading-none">{tab.icon}</span>
-      <span className={`text-xs font-semibold ${mobileTab === tab.key ? 'text-purple-300' : 'text-purple-600'}`}>
+      <span className={`text-xs font-semibold ${mobileTab === tab.key ? 'text-purple-400' : 'text-purple-700'}`}>
         {tab.label}
       </span>
       {mobileTab === tab.key && (

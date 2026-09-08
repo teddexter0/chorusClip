@@ -105,7 +105,7 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
               onChange={e => setSearchUsername(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSendRequest()}
               placeholder="exact_username"
-              className="flex-1 px-4 py-3 bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl text-white placeholder-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+              className="flex-1 px-4 py-3 bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
             />
             <button
               onClick={handleSendRequest}

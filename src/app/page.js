@@ -63,6 +63,8 @@ const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list'
   // isReadOnlyMode: true when playing a clip from the feed (no editing allowed)
   const [isReadOnlyMode, setIsReadOnlyMode] = useState(false);
   const [playerCurrentTime, setPlayerCurrentTime] = useState(0);
+  // Mobile mini-player: collapsed hides controls to a small pill above the tab bar
+  const [miniPlayerCollapsed, setMiniPlayerCollapsed] = useState(false);
   
   const [showTutorial, setShowTutorial] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -2970,6 +2972,22 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
 
           <div className={`space-y-6 ${mobileTab === 'create' || mobileTab === 'more' ? 'hidden md:block' : ''}`}>
+            {!user?.uid ? (
+              <div className="card flex flex-col items-center justify-center py-16 text-center space-y-4">
+                <span className="text-5xl">🎵</span>
+                <h3 className="text-2xl font-black">Discover ChorusClip</h3>
+                <p className="text-purple-300 text-sm max-w-xs">
+                  Sign in to see trending clips, top artists, and the Strathmore leaderboard.
+                </p>
+                <button
+                  onClick={() => setShowAuthModal(true)}
+                  className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-sm hover:shadow-lg transition"
+                >
+                  Sign In to Explore
+                </button>
+              </div>
+            ) : (
+            <>
             <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
             <div className="card">
               {/* Clip search */}
@@ -2987,7 +3005,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     }
                   }}
                   placeholder="Search by artist, song, or creator..."
-                  className="w-full pl-9 pr-8 py-2.5 bg-purple-900 bg-opacity-40 border border-purple-700 rounded-xl text-sm text-white placeholder-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  className="w-full pl-9 pr-8 py-2.5 bg-purple-900 bg-opacity-40 border border-purple-700 rounded-xl text-sm text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 text-sm pointer-events-none">🔍</span>
                 {clipSearchQuery && (
@@ -3287,84 +3305,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
             </div>
 
-            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
-{user?.uid && (
-  (() => {
-    const myPrivateClips = myClips.filter(c => !c.isPublic);
-    const visiblePrivate = myPrivateClips.slice(0, privateClipsLimit);
-    return (
-      <div className="mt-4 border-t border-purple-700 border-opacity-40 pt-4">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs font-bold text-purple-400 uppercase tracking-wide">
-            Your Private Clips ({myPrivateClips.length})
-          </p>
-          {myPrivateClips.length > 0 && (
-            <p className="text-xs text-purple-600">{visiblePrivate.length}/{myPrivateClips.length} shown</p>
-          )}
-        </div>
-        {myPrivateClips.length === 0 ? (
-          <p className="text-xs text-purple-500 text-center py-2">No private clips yet</p>
-        ) : (
-          <>
-            <div className="space-y-2">
-              {visiblePrivate.map((clip) => (
-                <div key={clip.id} className="flex items-center justify-between gap-2 bg-purple-900 bg-opacity-20 rounded-xl px-3 py-2.5 border border-purple-800 border-opacity-30">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold truncate text-white">{clip.title}</p>
-                    <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {/* Public/private toggle */}
-                    <button
-                      onClick={async () => {
-                        const newVal = !(clip.isPublic);
-                        try {
-                          const { db } = await import('../lib/firebase');
-                          const { doc, updateDoc } = await import('firebase/firestore');
-                          await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
-                          showNotification(newVal ? '🌍 Now public' : '🔒 Now private', 'success');
-                        } catch(e) { showNotification('Failed', 'error'); }
-                      }}
-                      className="text-xs px-2 py-1 rounded-full border border-purple-600 text-purple-400 hover:border-purple-400 transition"
-                    >
-                      {clip.isPublic ? '🌍' : '🔒'}
-                    </button>
-                    {/* Play */}
-                    <button
-                      onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-emerald-700 hover:bg-emerald-600 transition"
-                      aria-label={`Play ${clip.title}`}
-                    >
-                      <Play size={14} fill="currentColor" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {myPrivateClips.length > privateClipsLimit && (
-              <button
-                onClick={() => setPrivateClipsLimit(p => p + 10)}
-                className="w-full mt-3 py-2.5 bg-purple-900 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold text-purple-300 transition flex items-center justify-center gap-2"
-              >
-                <ChevronDown size={16} /> Load {Math.min(10, myPrivateClips.length - privateClipsLimit)} more clips
-              </button>
-            )}
-            {myPrivateClips.length > 0 && myPrivateClips.length <= privateClipsLimit && privateClipsLimit > 10 && (
-              <button
-                onClick={() => setPrivateClipsLimit(10)}
-                className="w-full mt-2 py-2 text-xs text-purple-600 hover:text-purple-400 transition"
-              >
-                Show less
-              </button>
-            )}
-          </>
-        )}
-      </div>
-    );
-  })()
-)}
-            </div>
-
             <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
 {publicPlaylistShowcase.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
@@ -3424,172 +3364,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   </div>
 )}
             </div>
-
-            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
-{/* MY PLAYLISTS SECTION */}
-{user?.uid && playlists.length > 0 && (
-  <div className="bg-purple-900 bg-opacity-30 border border-purple-700 border-opacity-40 rounded-2xl mt-6">
-    <h3 className="font-black text-xl mb-2 flex items-center gap-2">
-      <Music size={24} className="text-purple-400" />
-      My Playlists
-    </h3>
-
-    {/* Play mode toggle */}
-    <div className="flex gap-2 mb-3">
-      <button
-        onClick={() => setPlaylistMode('default')}
-        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'default' ? 'bg-purple-600 text-white' : 'bg-purple-900 bg-opacity-40 text-purple-300 hover:bg-opacity-60'}`}
-        title="Each section plays its saved repeat count (infinite capped at 5)"
-      >
-        Saved Repeats
-      </button>
-      <button
-        onClick={() => setPlaylistMode('once')}
-        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'once' ? 'bg-purple-600 text-white' : 'bg-purple-900 bg-opacity-40 text-purple-300 hover:bg-opacity-60'}`}
-        title="Every section in every clip plays exactly once"
-      >
-        Play Once Each
-      </button>
-    </div>
-    <p className="text-xs text-purple-500 mb-4">
-      {playlistMode === 'once'
-        ? 'Every section plays 1× regardless of saved count'
-        : `Infinite sections play ${ENDLESS_CAP_IN_PLAYLIST}× max`}
-    </p>
-
-    <div className="space-y-2">
-      {playlists.map((playlist) => {
-        const isExpanded = expandedPlaylistId === playlist.id;
-        const inQueue = playlistQueue.some(p => p.id === playlist.id);
-        return (
-          <div
-            key={playlist.id}
-            className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
-              isExpanded
-                ? 'border-purple-500 border-opacity-60 bg-purple-900 bg-opacity-60'
-                : 'border-purple-700 border-opacity-30 bg-purple-900 bg-opacity-20 hover:bg-opacity-30'
-            }`}
-          >
-            {/* Row header — always visible, tap to expand */}
-            <button
-              onClick={() => setExpandedPlaylistId(isExpanded ? null : playlist.id)}
-              className="w-full flex items-center justify-between px-4 py-3.5 text-left"
-            >
-              <div className="flex-1 min-w-0 mr-3">
-                <p className="font-bold text-base leading-tight truncate">{playlist.name}</p>
-                <p className="text-xs text-purple-400 mt-0.5">
-                  {playlist.clips?.length || 0}/10
-                  {inQueue && <span className="ml-2 text-yellow-400 font-bold">· In Queue</span>}
-                </p>
-              </div>
-              {/* Glowing expand button — right side */}
-              <span className={`
-                flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all
-                ${isExpanded
-                  ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/50 ring-2 ring-purple-400'
-                  : 'bg-purple-900 bg-opacity-60 text-purple-400 hover:shadow-md hover:shadow-purple-500/30 ring-1 ring-purple-700'
-                }
-              `}>
-                {isExpanded ? '▲' : '▼'}
-              </span>
-            </button>
-
-            {/* Expanded body */}
-            {isExpanded && (
-              <div className="px-4 pb-4 space-y-3">
-                {/* Clip preview list */}
-                {(playlist.clips || []).length === 0 ? (
-                  <p className="text-xs text-purple-500 text-center py-2">No clips yet</p>
-                ) : (
-                  <div className="space-y-1">
-                    {(playlist.clips || []).slice(0, 5).map((clip, i) => (
-                      <div key={i} className="flex items-center gap-2 py-1 border-b border-purple-800 border-opacity-30 last:border-0">
-                        <span className="text-xs text-purple-600 w-4 shrink-0">{i + 1}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-semibold truncate text-white">{clip.title}</p>
-                          <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {(playlist.clips?.length || 0) > 5 && (
-                      <p className="text-xs text-purple-500 pt-1">+{playlist.clips.length - 5} more clips</p>
-                    )}
-                  </div>
-                )}
-
-                {/* Actions */}
-                <div className="flex gap-2 flex-wrap">
-                  <button
-                    onClick={() => handlePlayPlaylist(playlist)}
-                    className="flex-1 min-w-[80px] py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-xl text-sm font-bold flex items-center justify-center gap-1 hover:shadow-lg transition"
-                  >
-                    <Play size={14} fill="currentColor" /> Play
-                  </button>
-                  <button
-                    onClick={() => handleAddToQueue(playlist)}
-                    className={`px-3 py-2.5 rounded-xl text-sm font-bold transition ${
-                      inQueue
-                        ? 'bg-yellow-600 text-black'
-                        : 'bg-yellow-900 bg-opacity-50 text-yellow-300 hover:bg-opacity-80'
-                    }`}
-                    title={inQueue ? 'Remove from queue' : 'Add to queue'}
-                  >
-                    {inQueue ? '✓Q' : '+Q'}
-                  </button>
-                  <button
-                    onClick={() => setManagingPlaylist(playlist)}
-                    className="px-3 py-2.5 bg-purple-800 hover:bg-purple-700 rounded-xl text-sm font-semibold transition"
-                    title="Manage playlist"
-                  >
-                    ⋯
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-
-    {/* Playlist Queue Panel */}
-    {playlistQueue.length > 0 && (
-      <div className="mt-5 bg-yellow-900 bg-opacity-30 border border-yellow-600 border-opacity-50 rounded-2xl p-4">
-        <div className="flex justify-between items-center mb-3">
-          <p className="font-bold text-yellow-300 flex items-center gap-2">
-            Playlist Queue ({playlistQueue.length}/10)
-          </p>
-          {isPlayingQueue && (
-            <span className="text-xs text-yellow-400 animate-pulse font-semibold">▶ Playing queue…</span>
-          )}
-        </div>
-        <div className="space-y-2 mb-3">
-          {playlistQueue.map((pl, qi) => (
-            <div key={pl.id} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
-              <span className="text-yellow-400 font-bold w-5 text-sm">{qi + 1}</span>
-              <span className="flex-1 text-sm font-semibold truncate">{pl.name}</span>
-              <div className="flex gap-1">
-                <button onClick={() => handleMoveQueueItem(qi, 'up')} disabled={qi === 0}
-                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▲</button>
-                <button onClick={() => handleMoveQueueItem(qi, 'down')} disabled={qi === playlistQueue.length - 1}
-                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▼</button>
-                <button onClick={() => handleRemoveFromQueue(pl.id)}
-                  className="text-red-400 hover:text-red-300 ml-1"><X size={14}/></button>
-              </div>
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={() => handlePlayQueue(0)}
-          className="w-full py-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl font-bold hover:shadow-lg transition flex items-center justify-center gap-2"
-        >
-          <Play size={18} fill="currentColor" />
-          Play Queue ({playlistQueue.length} playlist{playlistQueue.length > 1 ? 's' : ''})
-        </button>
-      </div>
-    )}
-  </div>
-)}
-</div>
 
 {/* Section divider */}
 <div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2" />
@@ -3734,7 +3508,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       ))}
     </div>
   )}
-  {topArtists.length > 5 && (
+{topArtists.length > 5 && (
     <button
       onClick={() => setArtistsExpanded(v => !v)}
       className="w-full mt-3 py-2.5 bg-purple-800 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold transition flex items-center justify-center gap-2"
@@ -3743,6 +3517,331 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </button>
   )}
 </div>
+            </div>
+            </>
+            )}
+
+            {/* Library empty state — signed-in user with no clips and no playlists */}
+            {user?.uid && playlists.length === 0 && myClips.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-20 text-center px-6">
+                <div className="text-6xl mb-4 animate-bounce">🎵</div>
+                <h3 className="text-2xl font-black mb-2">
+                  Nothing here yet{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
+                </h3>
+                <p className="text-purple-300 text-sm mb-6 leading-relaxed max-w-xs">
+                  Your library is empty. Here&apos;s how to fill it up:
+                </p>
+                <div className="space-y-3 w-full max-w-xs text-left">
+                  <div className="flex items-start gap-3 bg-purple-900 bg-opacity-30 rounded-xl p-3">
+                    <span className="text-xl shrink-0">1️⃣</span>
+                    <div>
+                      <p className="font-bold text-sm">Create a Clip</p>
+                      <p className="text-xs text-purple-400">Go to the <strong>Create</strong> tab → paste a YouTube URL → set your loop sections</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 bg-purple-900 bg-opacity-30 rounded-xl p-3">
+                    <span className="text-xl shrink-0">2️⃣</span>
+                    <div>
+                      <p className="font-bold text-sm">Build a Playlist</p>
+                      <p className="text-xs text-purple-400">Go to <strong>Feed</strong> tab → tap <strong>+</strong> on clips → save them as a playlist</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 bg-purple-900 bg-opacity-30 rounded-xl p-3">
+                    <span className="text-xl shrink-0">3️⃣</span>
+                    <div>
+                      <p className="font-bold text-sm">Queue &amp; Play</p>
+                      <p className="text-xs text-purple-400">Add playlists to the queue → tap the yellow <strong>QUEUE</strong> tab on the right edge → hit Play</p>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setMobileTab('create')}
+                  className="mt-6 px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-sm hover:shadow-lg transition"
+                >
+                  Create My First Clip →
+                </button>
+              </div>
+            )}
+
+            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
+{user?.uid && (
+  (() => {
+    const myPrivateClips = myClips.filter(c => !c.isPublic);
+    const visiblePrivate = myPrivateClips.slice(0, privateClipsLimit);
+    return (
+      <div className="mt-4 border-t border-purple-700 border-opacity-40 pt-4">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs font-bold text-purple-400 uppercase tracking-wide">
+            Your Private Clips ({myPrivateClips.length})
+          </p>
+          {myPrivateClips.length > 0 && (
+            <p className="text-xs text-purple-600">{visiblePrivate.length}/{myPrivateClips.length} shown</p>
+          )}
+        </div>
+        {myPrivateClips.length === 0 ? (
+          <p className="text-xs text-purple-500 text-center py-2">No private clips yet</p>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {visiblePrivate.map((clip) => (
+                <div key={clip.id} className="flex items-center justify-between gap-2 bg-purple-900 bg-opacity-20 rounded-xl px-3 py-2.5 border border-purple-800 border-opacity-30">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate text-white">{clip.title}</p>
+                    <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Public/private toggle */}
+                    <button
+                      onClick={async () => {
+                        const newVal = !(clip.isPublic);
+                        try {
+                          const { db } = await import('../lib/firebase');
+                          const { doc, updateDoc } = await import('firebase/firestore');
+                          await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
+                          showNotification(newVal ? '🌍 Now public' : '🔒 Now private', 'success');
+                        } catch(e) { showNotification('Failed', 'error'); }
+                      }}
+                      className="text-xs px-2 py-1 rounded-full border border-purple-600 text-purple-400 hover:border-purple-400 transition"
+                    >
+                      {clip.isPublic ? '🌍' : '🔒'}
+                    </button>
+                    {/* Edit button — loads clip into Create editor */}
+                    <button
+                      onClick={() => {
+                        setYoutubeUrl(`https://youtube.com/watch?v=${clip.youtubeVideoId}`);
+                        setVideoId(clip.youtubeVideoId);
+                        setVideoTitle(clip.title);
+                        setArtist(clip.artist);
+                        setLoops(clip.loops || [{ start: 0, end: 30, loopCount: 1 }]);
+                        setCurrentLoopIndex(0);
+                        setCurrentLoopIteration(0);
+                        setIsReadOnlyMode(false);
+                        setExpandedSections([0]);
+                        setMobileTab('create');
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                        showNotification('✏️ Clip loaded for editing — adjust and re-post', 'info');
+                        setTimeout(() => {
+                          if (window.YT?.Player && !playerRef.current?.loadVideoById) {
+                            loadYouTubePlayer(clip.youtubeVideoId);
+                          } else if (playerRef.current?.loadVideoById) {
+                            playerRef.current.loadVideoById({ videoId: clip.youtubeVideoId, startSeconds: clip.loops?.[0]?.start || 0 });
+                          }
+                        }, 400);
+                      }}
+                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-purple-800 hover:bg-purple-700 text-purple-300 text-xs transition"
+                      title="Edit clip"
+                      aria-label="Edit clip"
+                    >
+                      ✏️
+                    </button>
+                    {/* Delete button */}
+                    <button
+                      onClick={() => handleDeleteClip(clip.id)}
+                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-red-900 bg-opacity-50 hover:bg-opacity-80 text-red-400 transition"
+                      title="Delete clip"
+                    >
+                      <X size={12} />
+                    </button>
+                    {/* Play */}
+                    <button
+                      onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-emerald-700 hover:bg-emerald-600 transition"
+                      aria-label={`Play ${clip.title}`}
+                    >
+                      <Play size={14} fill="currentColor" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {myPrivateClips.length > privateClipsLimit && (
+              <button
+                onClick={() => setPrivateClipsLimit(p => p + 10)}
+                className="w-full mt-3 py-2.5 bg-purple-900 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold text-purple-300 transition flex items-center justify-center gap-2"
+              >
+                <ChevronDown size={16} /> Load {Math.min(10, myPrivateClips.length - privateClipsLimit)} more clips
+              </button>
+            )}
+            {myPrivateClips.length > 0 && myPrivateClips.length <= privateClipsLimit && privateClipsLimit > 10 && (
+              <button
+                onClick={() => setPrivateClipsLimit(10)}
+                className="w-full mt-2 py-2 text-xs text-purple-600 hover:text-purple-400 transition"
+              >
+                Show less
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    );
+  })()
+)}
+            </div>
+
+            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
+{/* MY PLAYLISTS SECTION */}
+{user?.uid && playlists.length > 0 && (
+  <div className="bg-purple-900 bg-opacity-30 border border-purple-700 border-opacity-40 rounded-2xl mt-6">
+    <h3 className="font-black text-xl mb-2 flex items-center gap-2">
+      <Music size={24} className="text-purple-400" />
+      My Playlists
+    </h3>
+
+    {/* Play mode toggle */}
+    <div className="flex gap-2 mb-3">
+      <button
+        onClick={() => setPlaylistMode('default')}
+        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'default' ? 'bg-purple-600 text-white' : 'bg-purple-900 bg-opacity-40 text-purple-300 hover:bg-opacity-60'}`}
+        title="Each section plays its saved repeat count (infinite capped at 5)"
+      >
+        Saved Repeats
+      </button>
+      <button
+        onClick={() => setPlaylistMode('once')}
+        className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition ${playlistMode === 'once' ? 'bg-purple-600 text-white' : 'bg-purple-900 bg-opacity-40 text-purple-300 hover:bg-opacity-60'}`}
+        title="Every section in every clip plays exactly once"
+      >
+        Play Once Each
+      </button>
+    </div>
+    <p className="text-xs text-purple-500 mb-4">
+      {playlistMode === 'once'
+        ? 'Every section plays 1× regardless of saved count'
+        : `Infinite sections play ${ENDLESS_CAP_IN_PLAYLIST}× max`}
+    </p>
+
+    <div className="space-y-2">
+      {playlists.map((playlist) => {
+        const isExpanded = expandedPlaylistId === playlist.id;
+        const inQueue = playlistQueue.some(p => p.id === playlist.id);
+        return (
+          <div
+            key={playlist.id}
+            className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
+              isExpanded
+                ? 'border-purple-500 border-opacity-60 bg-purple-900 bg-opacity-60'
+                : 'border-purple-700 border-opacity-30 bg-purple-900 bg-opacity-20 hover:bg-opacity-30'
+            }`}
+          >
+            {/* Row header — always visible, tap to expand */}
+            <button
+              onClick={() => setExpandedPlaylistId(isExpanded ? null : playlist.id)}
+              className="w-full flex items-center justify-between px-4 py-3.5 text-left"
+            >
+              <div className="flex-1 min-w-0 mr-3">
+                <p className="font-bold text-base leading-tight truncate text-white">{playlist.name}</p>
+                <p className="text-xs text-purple-400 mt-0.5">
+                  {playlist.clips?.length || 0}/10
+                  {inQueue && <span className="ml-2 text-yellow-400 font-bold">· In Queue</span>}
+                </p>
+              </div>
+              {/* Glowing expand button — right side */}
+              <span className={`
+                flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all
+                ${isExpanded
+                  ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/50 ring-2 ring-purple-400'
+                  : 'bg-purple-900 bg-opacity-60 text-purple-400 hover:shadow-md hover:shadow-purple-500/30 ring-1 ring-purple-700'
+                }
+              `}>
+                {isExpanded ? '▲' : '▼'}
+              </span>
+            </button>
+
+            {/* Expanded body */}
+            {isExpanded && (
+              <div className="px-4 pb-4 space-y-3">
+                {/* Clip preview list */}
+                {(playlist.clips || []).length === 0 ? (
+                  <p className="text-xs text-purple-500 text-center py-2">No clips yet</p>
+                ) : (
+                  <div className="space-y-1">
+                    {(playlist.clips || []).slice(0, 5).map((clip, i) => (
+                      <div key={i} className="flex items-center gap-2 py-1 border-b border-purple-800 border-opacity-30 last:border-0">
+                        <span className="text-xs text-purple-600 w-4 shrink-0">{i + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold truncate text-white">{clip.title}</p>
+                          <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {(playlist.clips?.length || 0) > 5 && (
+                      <p className="text-xs text-purple-500 pt-1">+{playlist.clips.length - 5} more clips</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => handlePlayPlaylist(playlist)}
+                    className="flex-1 min-w-[80px] py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-xl text-sm font-bold flex items-center justify-center gap-1 hover:shadow-lg transition"
+                  >
+                    <Play size={14} fill="currentColor" /> Play
+                  </button>
+                  <button
+                    onClick={() => handleAddToQueue(playlist)}
+                    className={`px-3 py-2.5 rounded-xl text-sm font-bold transition ${
+                      inQueue
+                        ? 'bg-yellow-600 text-black'
+                        : 'bg-yellow-900 bg-opacity-50 text-yellow-300 hover:bg-opacity-80'
+                    }`}
+                    title={inQueue ? 'Remove from queue' : 'Add to queue'}
+                  >
+                    {inQueue ? '✓Q' : '+Q'}
+                  </button>
+                  <button
+                    onClick={() => setManagingPlaylist(playlist)}
+                    className="px-3 py-2.5 bg-purple-800 hover:bg-purple-700 rounded-xl text-sm font-semibold transition"
+                    title="Manage playlist"
+                  >
+                    ⋯
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+
+    {/* Playlist Queue Panel */}
+    {playlistQueue.length > 0 && (
+      <div className="mt-5 bg-yellow-900 bg-opacity-30 border border-yellow-600 border-opacity-50 rounded-2xl p-4">
+        <div className="flex justify-between items-center mb-3">
+          <p className="font-bold text-yellow-300 flex items-center gap-2">
+            Playlist Queue ({playlistQueue.length}/10)
+          </p>
+          {isPlayingQueue && (
+            <span className="text-xs text-yellow-400 animate-pulse font-semibold">▶ Playing queue…</span>
+          )}
+        </div>
+        <div className="space-y-2 mb-3">
+          {playlistQueue.map((pl, qi) => (
+            <div key={pl.id} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
+              <span className="text-yellow-400 font-bold w-5 text-sm">{qi + 1}</span>
+              <span className="flex-1 text-sm font-semibold truncate">{pl.name}</span>
+              <div className="flex gap-1">
+                <button onClick={() => handleMoveQueueItem(qi, 'up')} disabled={qi === 0}
+                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▲</button>
+                <button onClick={() => handleMoveQueueItem(qi, 'down')} disabled={qi === playlistQueue.length - 1}
+                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▼</button>
+                <button onClick={() => handleRemoveFromQueue(pl.id)}
+                  className="text-red-400 hover:text-red-300 ml-1"><X size={14}/></button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <button
+          onClick={() => handlePlayQueue(0)}
+          className="w-full py-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl font-bold hover:shadow-lg transition flex items-center justify-center gap-2"
+        >
+          <Play size={18} fill="currentColor" />
+          Play Queue ({playlistQueue.length} playlist{playlistQueue.length > 1 ? 's' : ''})
+        </button>
+      </div>
+    )}
+  </div>
+)}
             </div>
           </div>
         </div>
@@ -3972,6 +4071,79 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 )}
 </div>
 
+{/* Mobile mini-player — persistent controls above the tab bar when a track is loaded */}
+{videoTitle && (
+  <div className="fixed bottom-16 left-0 right-0 z-40 px-3 flex justify-center md:hidden pointer-events-none">
+    {miniPlayerCollapsed ? (
+      <button
+        onClick={() => setMiniPlayerCollapsed(false)}
+        className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-black bg-opacity-90 backdrop-blur-md border border-purple-700 border-opacity-60 rounded-full shadow-2xl text-purple-300 text-xs font-semibold"
+      >
+        <ChevronUp size={16} className="text-purple-400" />
+        {isPlaying ? <Pause size={14}/> : <Play size={14}/>}
+        <Music size={14} className="text-purple-400" />
+        <span className="max-w-[160px] truncate">{videoTitle}</span>
+      </button>
+    ) : (
+      <div className="pointer-events-auto w-full max-w-md bg-black bg-opacity-90 backdrop-blur-md border border-purple-700 border-opacity-60 rounded-2xl px-3 py-2.5 shadow-2xl flex items-center gap-3">
+        <button
+          onClick={() => setMiniPlayerCollapsed(true)}
+          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-purple-400 hover:text-white transition"
+          aria-label="Minimize player"
+        >
+          <ChevronUp size={20} />
+        </button>
+        <div className="shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
+          <Music size={18} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold truncate text-white">{videoTitle}</p>
+          <p className="text-xs text-purple-400 truncate">{artist || 'ChorusClip'}</p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => currentPlaylistPlayer ? currentPlaylistPlayer.previous?.() : handleLoopRestart()}
+            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-purple-800 transition"
+            aria-label="Previous track"
+          >
+            <SkipBack size={18} />
+          </button>
+          <button
+            onClick={togglePlayPause}
+            className="w-11 h-11 flex items-center justify-center rounded-full bg-gradient-to-r from-purple-600 to-pink-600 hover:shadow-lg hover:shadow-purple-500/40 transition"
+            aria-label={isPlaying ? 'Pause' : 'Play'}
+          >
+            {isPlaying ? <Pause size={20}/> : <Play size={20} className="translate-x-[1px]"/>}
+          </button>
+          <button
+            onClick={() => {
+              if (currentPlaylistPlayer) {
+                currentPlaylistPlayer.skip?.();
+              } else if (loops.length > 1) {
+                const nextIdx = (currentLoopIndex + 1) % loops.length;
+                setCurrentLoopIndex(nextIdx);
+                currentLoopIndexRef.current = nextIdx;
+                setCurrentLoopIteration(0);
+                currentLoopIterationRef.current = 0;
+                if (playerRef.current?.seekTo) {
+                  playerRef.current.seekTo(loops[nextIdx].start, true);
+                }
+                if (!isPlaying) {
+                  playerRef.current?.playVideo?.();
+                }
+              }
+            }}
+            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-purple-800 transition"
+            aria-label="Next track"
+          >
+            <SkipForward size={18} />
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+)}
+
 {/* Mobile bottom tab bar — hidden on desktop */}
 <nav className="fixed bottom-0 left-0 right-0 z-50 bg-black bg-opacity-90 backdrop-blur-md border-t border-purple-800 border-opacity-50 flex md:hidden">
   {[
@@ -3984,11 +4156,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       key={tab.key}
       onClick={() => setMobileTab(tab.key)}
       className={`relative flex-1 flex flex-col items-center justify-center py-3 gap-0.5 transition ${
-        mobileTab === tab.key ? 'text-purple-400' : 'text-purple-700 hover:text-purple-500'
+        mobileTab === tab.key ? 'text-white' : 'text-purple-700 hover:text-purple-500'
       }`}
     >
       <span className="text-xl leading-none">{tab.icon}</span>
-      <span className={`text-xs font-semibold ${mobileTab === tab.key ? 'text-purple-400' : 'text-purple-700'}`}>
+      <span className={`text-xs font-semibold ${mobileTab === tab.key ? 'text-white' : 'text-purple-700'}`}>
         {tab.label}
       </span>
       {mobileTab === tab.key && (

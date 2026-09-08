@@ -273,6 +273,7 @@ export const getTrendingClipsByPlays = async (limitCount = 5) => {
   try {
     const q = query(
       collection(db, 'clips'),
+      where('isPublic', '==', true),
       orderBy('plays', 'desc'),
       limit(limitCount)
     );
@@ -297,6 +298,7 @@ export const getTopArtists = async (limitCount = 5) => {
 
     const q = query(
       collection(db, 'clips'),
+      where('isPublic', '==', true),
       where('createdAt', '>=', thirtyDaysAgo),
       orderBy('createdAt', 'desc'),
       limit(200)

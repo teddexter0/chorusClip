@@ -4,22 +4,10 @@ import React, { useEffect, useRef, useState } from 'react';
 // Verified free MP4s — Pixabay (no attribution required)
 // Mixed 16:9 and 9:16 to cover landscape + portrait devices
 const BG_VIDEOS = [
-  {
-    src: 'https://cdn.pixabay.com/video/2016/01/12/1892-151989763_large.mp4',
-    orientation: 'landscape'
-  },
-  {
-    src: 'https://cdn.pixabay.com/video/2022/04/12/113880-699487224_large.mp4',
-    orientation: 'landscape'
-  },
-  {
-    src: 'https://cdn.pixabay.com/video/2020/07/30/46156-447087551_large.mp4',
-    orientation: 'landscape'
-  },
-  {
-    src: 'https://cdn.pixabay.com/video/2019/04/09/23020-329537754_large.mp4',
-    orientation: 'landscape'
-  },
+  'https://cdn.pixabay.com/video/2016/01/12/1892-151989763_large.mp4',
+  'https://cdn.pixabay.com/video/2022/04/12/113880-699487224_large.mp4',
+  'https://cdn.pixabay.com/video/2020/07/30/46156-447087551_large.mp4',
+  'https://cdn.pixabay.com/video/2019/04/09/23020-329537754_large.mp4',
 ];
 
 const BackgroundAmbience = ({ theme = 'purple' }) => {
@@ -67,10 +55,11 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
         muted
         playsInline
         preload="auto"
+        onError={() => setCurrentIdx((currentIdx + 1) % BG_VIDEOS.length)}
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${transitioning ? 'opacity-0' : 'opacity-100'}`}
         style={{ filter: 'brightness(0.3) saturate(1.3)' }}
       >
-        <source src={BG_VIDEOS[currentIdx].src} type="video/mp4" />
+        <source src={BG_VIDEOS[currentIdx]} type="video/mp4" />
       </video>
 
       {/* Next video preloading (hidden) */}
@@ -80,10 +69,11 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
         muted
         playsInline
         preload="auto"
+        onError={() => setNextIdx((nextIdx + 1) % BG_VIDEOS.length)}
         className="absolute inset-0 w-full h-full object-cover opacity-0 pointer-events-none"
         style={{ filter: 'brightness(0.3) saturate(1.3)' }}
       >
-        <source src={BG_VIDEOS[nextIdx].src} type="video/mp4" />
+        <source src={BG_VIDEOS[nextIdx]} type="video/mp4" />
       </video>
 
       {/* Gradient overlay — theme-aware */}

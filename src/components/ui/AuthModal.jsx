@@ -83,7 +83,7 @@ export default function AuthModal({ onClose, onSuccess }) {
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                   placeholder="john_doe"
-                  className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-500"
+                  className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-400"
                   required
                 />
               </div>
@@ -99,7 +99,7 @@ export default function AuthModal({ onClose, onSuccess }) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="your.name@strathmore.edu"
-                className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-500"
+                className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-400"
                 required
               />
             </div>
@@ -115,7 +115,7 @@ export default function AuthModal({ onClose, onSuccess }) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-500"
+                  className="w-full pl-11 pr-4 py-3.5 text-base bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500 text-white placeholder-purple-400"
                   required
                 />
               </div>

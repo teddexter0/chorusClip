@@ -215,6 +215,25 @@ export const getClipsPage = async (limitCount = 15, lastVisibleDoc = null) => {
     };
   } catch (error) {
     console.error('Clip pagination error:', error.code, error.message);
+    if (error.code === 'failed-precondition') {
+      // Composite index not ready — fall back to simple public-clip query (single-field index)
+      try {
+        const fallbackConstraints = [where('isPublic', '==', true), limit(limitCount)];
+        if (lastVisibleDoc) {
+          fallbackConstraints.splice(1, 0, startAfter(lastVisibleDoc));
+        }
+        const snap = await getDocs(query(collection(db, 'clips'), ...fallbackConstraints));
+        const clips = snap.docs.map(entry => ({ id: entry.id, ...entry.data() }));
+        return {
+          clips,
+          lastVisibleDoc: snap.docs[snap.docs.length - 1] || null,
+          hasMore: snap.docs.length === limitCount,
+          error: 'failed-precondition'
+        };
+      } catch (fallbackError) {
+        console.error('Fallback clip query failed:', fallbackError);
+      }
+    }
     return {
       clips: [],
       lastVisibleDoc: null,
@@ -305,6 +324,24 @@ export const getTrendingClipsByPlays = async (limitCount = 5) => {
     return clips.sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, limitCount);
   } catch (error) {
     console.error('Trending clips error:', error);
+    if (error.code === 'failed-precondition') {
+      // Composite index not ready — fetch public clips and rank by plays in-memory
+      try {
+        const snap = await getDocs(query(
+          collection(db, 'clips'),
+          where('isPublic', '==', true),
+          limit(200)
+        ));
+        const clips = snap.docs.map(doc => {
+          const data = doc.data();
+          const plays = data.plays ?? data.playCount ?? 0;
+          return { id: doc.id, ...data, plays };
+        });
+        return clips.sort((a, b) => (b.plays || 0) - (a.plays || 0)).slice(0, limitCount);
+      } catch (fallbackError) {
+        console.error('Trending fallback failed:', fallbackError);
+      }
+    }
     return [];
   }
 };
@@ -336,6 +373,27 @@ export const getTopArtists = async (limitCount = 5) => {
       .map(([artist, count]) => ({ artist, clips: count }));
   } catch (error) {
     console.error('Top artists error:', error);
+    if (error.code === 'failed-precondition') {
+      // Composite index not ready — rank by all public clips instead of 30-day window
+      try {
+        const snap = await getDocs(query(
+          collection(db, 'clips'),
+          where('isPublic', '==', true),
+          limit(200)
+        ));
+        const artistCounts = {};
+        snap.docs.forEach(doc => {
+          const artist = doc.data().artist || 'Unknown';
+          artistCounts[artist] = (artistCounts[artist] || 0) + 1;
+        });
+        return Object.entries(artistCounts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, limitCount)
+          .map(([artist, count]) => ({ artist, clips: count }));
+      } catch (fallbackError) {
+        console.error('Top artists fallback failed:', fallbackError);
+      }
+    }
     return [];
   }
 };

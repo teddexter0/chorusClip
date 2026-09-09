@@ -251,6 +251,7 @@ const loadTrendingData = async () => {
   const standaloneLoopRef = useRef(false);
   const playCreditRef = useRef(null);
   const creditedClipIdsRef = useRef(new Set());
+  const indexHintShownRef = useRef(false);
   const lastTrackingTimeRef = useRef(null);
 
   // Keep refs in sync with state so setInterval callbacks always see current values
@@ -447,9 +448,10 @@ const handleThemeToggle = async () => {
       setFeedCursor(firstPage.lastVisibleDoc);
       setFeedHasMore(firstPage.hasMore);
       setFeedPage(1);
-      if (firstPage.error === 'failed-precondition') {
-        console.warn('Feed index still building — returning no clips', firstPage.error);
-        showNotification('Feed index still building — public clips may take a minute to appear.', 'error');
+      if (firstPage.error === 'failed-precondition' && !indexHintShownRef.current) {
+        indexHintShownRef.current = true;
+        console.warn('Feed index still building — using fallback public-clip ordering', firstPage.error);
+        showNotification('Feed showing quickly — Firestore index still building. Clips may be in simple order for now.', 'info');
       }
     } catch (error) {
       console.log('Using demo clips');

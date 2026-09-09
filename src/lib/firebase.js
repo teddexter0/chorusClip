@@ -74,15 +74,33 @@ export const subscribeToUserClips = (uid, callback) => {
       orderBy('createdAt', 'desc'),
       limit(200)
     );
-    return onSnapshot(q, (snapshot) => {
-      const clips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      callback(clips);
-    }, (error) => {
-      console.error('User clips subscription error:', error);
-      callback([]); // don't leave UI stuck
-    });
+    return onSnapshot(q,
+      (snapshot) => {
+        const clips = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        console.log(`✅ User clips loaded: ${clips.length} clips for ${uid}`);
+        callback(clips);
+      },
+      (error) => {
+        console.error('❌ subscribeToUserClips error:', error.code, error.message);
+        // If index missing, fall back to simpler query without orderBy
+        if (error.code === 'failed-precondition') {
+          console.warn('Index missing — falling back to unordered query');
+          const fallbackQ = query(
+            collection(db, 'clips'),
+            where('userId', '==', uid),
+            limit(200)
+          );
+          onSnapshot(fallbackQ, (snap) => {
+            const clips = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            callback(clips);
+          });
+        } else {
+          callback([]);
+        }
+      }
+    );
   } catch (error) {
-    console.error('User clips subscribe error:', error);
+    console.error('subscribeToUserClips setup error:', error);
     return () => {};
   }
 };

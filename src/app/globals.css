@@ -167,43 +167,44 @@ select option {
   }
 }
 
-/* ===== GOLD / ELECTRIC THEME ===== */
-.theme-electric {
-  --accent-1: #d97706;
-  --accent-2: #b45309;
-  --accent-3: #f59e0b;
+/* ===== ELECTRIC GOLD THEME — scoped, no bleed into purple theme ===== */
+.theme-gold {
+  color-scheme: dark;
 }
 
-/* Backgrounds — dark amber, NOT bright yellow */
-.theme-electric .bg-purple-900 { background-color: rgba(69, 39, 0, 0.9) !important; }
-.theme-electric .bg-purple-800 { background-color: rgba(55, 31, 0, 0.8) !important; }
-.theme-electric .bg-purple-700 { background-color: rgba(42, 24, 0, 0.7) !important; }
+/* Background surfaces */
+.theme-gold .card,
+.theme-gold [class*="bg-purple-9"],
+.theme-gold [class*="bg-purple-8"] {
+  background-color: rgba(60, 30, 0, 0.85) !important;
+  border-color: rgba(180, 83, 9, 0.3) !important;
+}
+
+/* Text — ALL text in gold theme defaults to readable cream/white */
+.theme-gold {
+  --tw-text-opacity: 1;
+}
+
+/* Only override the purple text colors to amber equivalents */
+.theme-gold .text-purple-200 { color: #fef3c7 !important; }
+.theme-gold .text-purple-300 { color: #fcd34d !important; }
+.theme-gold .text-purple-400 { color: #f59e0b !important; }
+.theme-gold .text-purple-500 { color: #d97706 !important; }
+.theme-gold .text-purple-600 { color: #b45309 !important; }
 
 /* Borders */
-.theme-electric .border-purple-700 { border-color: rgba(180, 83, 9, 0.35) !important; }
-.theme-electric .border-purple-500 { border-color: rgba(217, 119, 6, 0.5) !important; }
+.theme-gold .border-purple-700 { border-color: rgba(180, 83, 9, 0.35) !important; }
+.theme-gold .border-purple-500 { border-color: rgba(217, 119, 6, 0.5) !important; }
 
-/* Text — warm cream, NOT bright yellow */
-.theme-electric .text-purple-300 { color: #fcd34d !important; }
-.theme-electric .text-purple-400 { color: #d97706 !important; }
-.theme-electric .text-purple-200 { color: #fef3c7 !important; }
-.theme-electric .text-purple-500 { color: #b45309 !important; }
-.theme-electric .text-purple-600 { color: #92400e !important; }
-
-/* Gradients */
-.theme-electric .from-purple-900 { --tw-gradient-from: #451a03 !important; }
-.theme-electric .via-indigo-900 { --tw-gradient-via: #422006 !important; }
-.theme-electric .to-purple-800 { --tw-gradient-to: #3b1501 !important; }
-.theme-electric .from-purple-600 { --tw-gradient-from: #b45309 !important; }
-.theme-electric .to-pink-600 { --tw-gradient-to: #d97706 !important; }
-
-/* Placeholders + active tab indicator — amber for readability in gold theme */
-.theme-electric ::placeholder { color: #d97706 !important; }
-.theme-electric .bg-purple-400 { background-color: rgba(217, 119, 6, 1) !important; }
+/* Gradient from/via/to overrides */
+.theme-gold .from-purple-900 { --tw-gradient-from: #431407 !important; }
+.theme-gold .via-indigo-900  { --tw-gradient-via: #3b1501 !important; }
+.theme-gold .to-purple-800   { --tw-gradient-to: #431407 !important; }
+.theme-gold .from-purple-600 { --tw-gradient-from: #c2410c !important; }
+.theme-gold .to-pink-600     { --tw-gradient-to: #d97706 !important; }
 
 /* Scrollbar */
-.theme-electric ::-webkit-scrollbar-thumb { background: rgba(180, 83, 9, 0.5); }
-.theme-electric ::-webkit-scrollbar-thumb:hover { background: rgba(180, 83, 9, 0.7); }
+.theme-gold ::-webkit-scrollbar-thumb { background: rgba(180, 83, 9, 0.5) !important; }
 
 /* ===== CLASSIC / PURPLE THEME ===== */
 .theme-classic {

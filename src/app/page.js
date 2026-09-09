@@ -525,13 +525,11 @@ const handleThemeToggle = async () => {
   };
   
   const handleUrlSubmit = async () => {
-  setGlobalLoading(true);
-  try {
   if (!window.YT || !window.YT.Player) {
-    showNotification('⏳ YouTube player loading... Try again in 2 seconds', 'info');
+    showNotification('⏳ YouTube player loading — try again in 2 seconds', 'info');
     return;
   }
-  
+
   const id = extractVideoId(youtubeUrl);
   if (!id) {
     showNotification('❌ Invalid YouTube URL', 'error');
@@ -542,37 +540,37 @@ const handleThemeToggle = async () => {
   const url = youtubeUrl.toLowerCase();
   const nonMusicKeywords = ['podcast', 'interview', 'tutorial', 'vlog', 'gaming', 'gameplay', 'lecture', 'documentary'];
   const isSuspicious = nonMusicKeywords.some(keyword => url.includes(keyword));
-  
+
   if (isSuspicious) {
     const confirm = window.confirm('⚠️ This doesn\'t look like a music video. ChorusClip works best with music! Continue anyway?');
     if (!confirm) return;
   }
-  
-  // Destroy old player
+
+  // Destroy old player cleanly
   if (playerRef.current?.destroy) {
-    try {
-      playerRef.current.destroy();
-      playerRef.current = null;
-    } catch (e) {
-      console.log('Player destroy error (ignored)');
-    }
+    try { playerRef.current.destroy(); playerRef.current = null; } catch (e) {}
   }
-  
+
+  // Reset all state
   setVideoId(id);
   setCurrentLoopIndex(0);
   setCurrentLoopIteration(0);
-  setIsReadOnlyMode(false); // New URL loaded — allow editing
-  setLoops([{ start: 0, end: 30, loopCount: 1, youtubeVideoId: id }]); // Reset loops for new song
-  setExpandedSections([0]);
-  setVideoDuration(600); // Reset; will be updated once player reports actual duration
+  setIsReadOnlyMode(false);
+  setLoops([{ start: 0, end: 30, loopCount: 1 }]);
+  setVideoDuration(600);
+  setIsPlaying(false);
+  if (typeof setExpandedSections === 'function') setExpandedSections([0]);
+
+  // Clear any stuck loading states
+  setGlobalLoading(false);
+  setPendingAction(null);
+
+  showNotification('⏳ Loading song...', 'info');
 
   setTimeout(() => {
     loadYouTubePlayer(id);
     fetchMostReplayed();
   }, 300);
-  } finally {
-    setGlobalLoading(false);
-  }
 };
   
 const applySuggestedLoop = () => {
@@ -967,6 +965,7 @@ const handlePlayQueue = (startIdx = 0) => {
   setIsPlayingQueue(true);
   setPlaylistQueueIndex(startIdx);
   playlistQueueIndexRef.current = startIdx;
+  setGlobalLoading(true);
 
   const targetPlaylist = queue[startIdx];
   showNotification(`Queue ${startIdx + 1}/${queue.length}: "${targetPlaylist.name}"`, 'info');
@@ -978,6 +977,7 @@ const handlePlayQueue = (startIdx = 0) => {
 
   const player = new PlaylistPlayer(targetPlaylist, playerRef, {
     onClipChange: (clip, index, total) => {
+      setGlobalLoading(false);
       setCurrentPlaylistInfo({ name: targetPlaylist.name, currentIndex: index, total, currentClip: clip, queuePos: startIdx, queueTotal: queue.length });
       setLoops(clip.loops);
       setVideoTitle(clip.title);
@@ -1130,29 +1130,23 @@ const completeCurrentClipPlayback = () => {
 
   const handleMigrateClipsToPrivate = async () => {
     if (!user?.uid) return;
-    setGlobalLoading(true);
     try {
       const { migrateAllClipsToPrivate } = await import('../lib/firebase');
       const count = await migrateAllClipsToPrivate();
       showNotification(`✅ ${count} clips set to private`, 'success');
     } catch (e) {
       showNotification('Migration failed: ' + e.message, 'error');
-    } finally {
-      setGlobalLoading(false);
     }
   };
 
   const handleMigratePlaylistsToPrivate = async () => {
     if (!user?.uid) return;
-    setGlobalLoading(true);
     try {
       const { migrateAllPlaylistsToPrivate } = await import('../lib/firebase');
       const count = await migrateAllPlaylistsToPrivate();
       showNotification(`✅ ${count} playlists set to private`, 'success');
     } catch (e) {
       showNotification('Migration failed: ' + e.message, 'error');
-    } finally {
-      setGlobalLoading(false);
     }
   };
 
@@ -1184,109 +1178,88 @@ const completeCurrentClipPlayback = () => {
   };
   
 const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
-  setGlobalLoading(true);
-  try {
-    // Stop any active loop tracking
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-    }
+  // Stop current tracking
+  if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
 
-    // Normalize loops: ensure each has its own loopCount (backward compat with old clips)
-    const rawLoops = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
-    const loopsToLoad = rawLoops.map(loop => ({
-      ...loop,
-      youtubeVideoId: getLoopVideoId(loop, videoIdToPlay),
-      title: getLoopTitle(loop, clipData.title),
-      artist: getLoopArtist(loop, clipData.artist),
-      loopCount: loop.loopCount ?? (clipData.loopCount ?? 1)
-    }));
-    startPlayCredit({ ...clipData, id: clipId, loops: loopsToLoad });
+  // Clear stuck states
+  setGlobalLoading(false);
+  setPendingAction(null);
 
-    const firstVideoId = getLoopVideoId(loopsToLoad[0], videoIdToPlay);
+  // Increment play count (fire and forget)
+  if (user?.uid) {
+    import('../lib/firebase').then(async ({ db }) => {
+      const { doc, updateDoc, increment } = await import('firebase/firestore');
+      updateDoc(doc(db, 'clips', clipId), { plays: increment(1) }).catch(() => {});
+    });
+  }
 
-    // Update state AND refs immediately so startTimeTracking interval uses fresh values right away
-    setYoutubeUrl(`https://youtube.com/watch?v=${firstVideoId}`);
-    setVideoId(firstVideoId);
-    setVideoTitle(getLoopTitle(loopsToLoad[0], clipData.title));
-    setArtist(getLoopArtist(loopsToLoad[0], clipData.artist));
-    setLoops(loopsToLoad);
-    setCurrentLoopIndex(0);
-    setCurrentLoopIteration(0);
-    setExpandedSections([0]);
-    setIsPlaying(false);
-    setIsReadOnlyMode(true); // Playing from feed — lock the edit sliders
+  const rawLoops = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
+  const loopsToLoad = rawLoops.map(loop => ({
+    ...loop,
+    loopCount: loop.loopCount ?? (clipData.loopCount ?? 1)
+  }));
 
-    loopsRef.current = loopsToLoad;
-    currentLoopIndexRef.current = 0;
-    currentLoopIterationRef.current = 0;
+  setYoutubeUrl(`https://youtube.com/watch?v=${videoIdToPlay}`);
+  setVideoId(videoIdToPlay);
+  setLoops(loopsToLoad);
+  setCurrentLoopIndex(0);
+  setCurrentLoopIteration(0);
+  setIsPlaying(false);
+  setIsReadOnlyMode(true);
 
-    showNotification('⏳ Loading...', 'info');
+  loopsRef.current = loopsToLoad;
+  currentLoopIndexRef.current = 0;
+  currentLoopIterationRef.current = 0;
 
-    if (playerRef.current?.loadVideoById) {
-      // Reuse existing player — avoids the "loads forever on first attempt" bug
-      // that occurred when destroying/recreating the player DOM element.
-      playerRef.current.loadVideoById({
-        videoId: firstVideoId,
-        startSeconds: loopsToLoad[0].start
-      });
+  showNotification('⏳ Loading clip...', 'info');
 
-      // Poll for the new video title + duration (loadVideoById does not re-fire onReady)
-      let titlePolls = 0;
-      const titleInterval = setInterval(() => {
-        titlePolls++;
-        if (playerRef.current?.getVideoData) {
-          const data = playerRef.current.getVideoData();
-          if (data?.title) {
-            setVideoTitle(data.title);
-            setArtist(extractArtist(data.title));
-            // Also grab the actual duration so sliders don't overshoot
-            const dur = playerRef.current.getDuration?.();
-            if (dur > 0) setVideoDuration(Math.ceil(dur));
-            clearInterval(titleInterval);
-          }
+  if (playerRef.current?.loadVideoById) {
+    playerRef.current.loadVideoById({
+      videoId: videoIdToPlay,
+      startSeconds: loopsToLoad[0].start
+    });
+
+    // Poll for title
+    let polls = 0;
+    const titlePoll = setInterval(() => {
+      polls++;
+      if (playerRef.current?.getVideoData) {
+        const data = playerRef.current.getVideoData();
+        if (data?.title) {
+          setVideoTitle(data.title);
+          setArtist(extractArtist(data.title));
+          const dur = playerRef.current.getDuration?.();
+          if (dur > 0) setVideoDuration(Math.ceil(dur));
+          clearInterval(titlePoll);
         }
-        if (titlePolls > 20) clearInterval(titleInterval);
-      }, 400);
-
-      setTimeout(() => {
-        try {
-          playerRef.current?.playVideo();
-          showNotification('▶️ Playing!', 'success');
-        } catch (e) {}
-      }, 700);
-
-    } else {
-      // No player exists yet — create a fresh one (feed clip tapped before URL submit)
-      await new Promise(resolve => setTimeout(resolve, 400));
-
-      if (window.YT?.Player) {
-        playerRef.current = new window.YT.Player('youtube-player', {
-          videoId: firstVideoId,
-          playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
-          events: {
-            onReady: (event) => {
-              const title = event.target.getVideoData().title;
-              setVideoTitle(title);
-              setArtist(extractArtist(title));
-              setTimeout(() => {
-                try {
-                  event.target.seekTo(loopsToLoad[0].start, true);
-                  event.target.playVideo();
-                  showNotification('▶️ Playing!', 'success');
-                } catch (e) {}
-              }, 400);
-            },
-            onStateChange: onPlayerStateChange
-          }
-        });
       }
-    }
-  } catch (error) {
-    console.error('Play clip error:', error);
-    showNotification('❌ Failed to play', 'error');
-  } finally {
-    setTimeout(() => setGlobalLoading(false), 800);
+      if (polls > 20) clearInterval(titlePoll);
+    }, 400);
+
+    setTimeout(() => {
+      try { playerRef.current?.playVideo(); showNotification('▶️ Playing!', 'success'); } catch(e) {}
+    }, 700);
+  } else if (window.YT?.Player) {
+    await new Promise(r => setTimeout(r, 400));
+    playerRef.current = new window.YT.Player('youtube-player', {
+      videoId: videoIdToPlay,
+      playerVars: { autoplay: 0, controls: 1, enablejsapi: 1, origin: window.location.origin },
+      events: {
+        onReady: (event) => {
+          const title = event.target.getVideoData().title;
+          setVideoTitle(title);
+          setArtist(extractArtist(title));
+          setTimeout(() => {
+            try {
+              event.target.seekTo(loopsToLoad[0].start, true);
+              event.target.playVideo();
+              showNotification('▶️ Playing!', 'success');
+            } catch(e) {}
+          }, 400);
+        },
+        onStateChange: onPlayerStateChange
+      }
+    });
   }
 };
 
@@ -1508,33 +1481,20 @@ const startTimeTracking = () => {
   // Update handlePostToFeed function (around line 740):
   
   const handlePostToFeed = async () => {
-  setGlobalLoading(true);
-  try {
-  if (!videoId) {
-    showNotification('Load a song first!', 'error');
-    return;
-  }
-  if (!user?.uid) {
-    showNotification('Sign in to post!', 'error');
-    setShowAuthModal(true);
-    return;
-  }
+  if (!videoId) { showNotification('Load a song first!', 'error'); return; }
+  if (!user?.uid) { showNotification('Sign in to post!', 'error'); setShowAuthModal(true); return; }
+  if (!loops || loops.length === 0) { showNotification('No loops to post!', 'error'); return; }
 
-  // Validate loops
-  if (!loops || loops.length === 0) {
-    showNotification('No loops to post!', 'error');
-    return;
-  }
+  setPendingAction('post');
 
   const clipData = {
     title: videoTitle,
     artist,
     youtubeVideoId: videoId,
-    // Save ALL loops with their individual loopCount
     loops: loops.map(loop => {
-      const { _showMixPanel, ...data } = loop;
+      const { _showMixPanel, ...rest } = loop;
       return {
-        ...data,
+        ...rest,
         start: Number(loop.start),
         end: Number(loop.end),
         loopCount: loop.loopCount ?? 1
@@ -1545,37 +1505,19 @@ const startTimeTracking = () => {
     likes: 0,
     plays: 0,
     shares: 0,
-    isPublic: false,  // PRIVATE BY DEFAULT
+    isPublic: false,
     createdAt: new Date()
   };
 
-  console.log('Posting clip with data:', clipData);
-
-  let attempts = 0;
-  let lastError;
-  while (attempts < 2) {
-    try {
-      const { createClip } = await import('../lib/firebase');
-      await createClip(clipData);
-      showNotification(`✅ Clip posted! Toggle it 🌍 Public to share in the feed.`, 'success');
-      setPendingAction(null);
-      // Force myClips to refresh (subscribeToUserClips should catch it, but trigger manually as backup)
-      if (user?.uid) {
-        import('../lib/firebase').then(({ subscribeToUserClips }) => {
-          subscribeToUserClips(user.uid, (clips) => setMyClips(clips));
-        });
-      }
-      return;
-    } catch (error) {
-      lastError = error;
-      attempts++;
-      if (attempts < 2) await new Promise(r => setTimeout(r, 1500));
-    }
-  }
-  console.error('Post error after retry:', lastError);
-  showNotification('Failed to post — check your connection or disable ad blocker', 'error');
+  try {
+    const { createClip } = await import('../lib/firebase');
+    await createClip(clipData);
+    showNotification(`✅ Clip posted! Find it in Library → Your Clips.`, 'success');
+  } catch (error) {
+    console.error('Post error:', error);
+    showNotification('❌ Failed to post — check connection', 'error');
   } finally {
-    setGlobalLoading(false);
+    setPendingAction(null);
   }
 };
 
@@ -1862,7 +1804,7 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
     : (feedExpanded ? filteredClips.slice(0, feedPage * FEED_PAGE_SIZE) : filteredClips.slice(0, 5));
   
   return (
-    <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-electric' : 'theme-classic'}`}>
+    <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-gold' : 'theme-classic'}`}>
     <BackgroundAmbience theme={themeMode === 'electric' ? 'gold' : 'purple'} />
 
     {/* Global loading overlay */}
@@ -2302,7 +2244,7 @@ className="btn-primary w-full py-5 text-xl">
             <button
               onClick={handleThemeToggle}
               className="p-2 rounded-xl bg-purple-800 bg-opacity-50 hover:bg-opacity-80 transition text-sm shrink-0"
-              title={themeMode === 'electric' ? 'Switch to Classic' : 'Switch to Electric'}
+              title={themeMode === 'electric' ? 'Switch to Classic' : 'Switch to Gold'}
               aria-label="Toggle theme"
             >
               {themeMode === 'electric' ? '⚡' : '💜'}
@@ -2379,7 +2321,7 @@ className="btn-primary w-full py-5 text-xl">
             <div 
 className="card">          
 <div className="flex justify-between items-center mb-6">
-                <h2 className="text-3xl font-black tracking-tight">Create Clip</h2>
+                <h2 className="text-3xl font-black tracking-tight text-white">Create Clip</h2>
                 <button onClick={() => setShowTutorial(true)} className="text-purple-400 hover:text-purple-300 transition flex items-center gap-2 text-base">
                   <Video size={22} /> Help
                 </button>
@@ -2398,12 +2340,9 @@ className="input"/>
                 </div>
                 <button
                   onClick={handleUrlSubmit}
-                  disabled={globalLoading}
-                  className="btn-primary w-full py-5 text-xl disabled:opacity-60 flex items-center justify-center gap-2"
+                  className="btn-primary w-full py-5 text-xl flex items-center justify-center gap-2"
                 >
-                  {globalLoading ? (
-                    <><span className="w-5 h-5 border-2 border-gray-800 border-t-transparent rounded-full animate-spin" /> Loading…</>
-                  ) : 'Load Song'}
+                  Load Song
                 </button>
               </div>
 
@@ -2873,7 +2812,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                       </button>
                     )}
                     <button
-                      onClick={async () => { setPendingAction('post'); await handlePostToFeed(); setPendingAction(null); }}
+                      onClick={handlePostToFeed}
                       disabled={pendingAction === 'post'}
                       className="flex-1 min-w-[200px] py-5 text-lg bg-gradient-to-r from-pink-600 to-purple-600 rounded-xl font-bold hover:shadow-xl transition disabled:opacity-60 flex items-center justify-center gap-2"
                     >
@@ -2890,12 +2829,12 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
             <div className={`${mobileTab !== 'more' ? 'hidden md:block' : ''}`}>
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
-              <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+              <h3 className="font-black text-xl mb-4 flex items-center gap-2 text-white">
                 <Sparkles size={24} className="text-yellow-400" />
                 Why ChorusClip?
               </h3>
               <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
-  <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+  <h3 className="font-black text-xl mb-4 flex items-center gap-2 text-white">
     <Users size={24} className="text-purple-400" />
     Who Is This For?
   </h3>
@@ -2943,7 +2882,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
 
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-red-700 border-opacity-50">
-              <h3 className="font-black text-xl mb-4 flex items-center gap-2">
+              <h3 className="font-black text-xl mb-4 flex items-center gap-2 text-white">
                 <AlertCircle size={24} className="text-red-400" />
                 Need Help?
               </h3>
@@ -3027,7 +2966,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 className="w-full flex justify-between items-center mb-4"
                 onClick={() => !feedIsMostPlayed && setFeedExpanded(v => !v)}
               >
-                <h2 className="text-3xl font-black tracking-tight">Trending Clips</h2>
+                <h2 className="text-3xl font-black tracking-tight text-white">Trending Clips</h2>
                 <span className="flex items-center gap-2 text-purple-400 text-sm font-semibold">
                   {feedIsMostPlayed ? 'Top 5 played' : feedExpanded ? `${clips.length} loaded` : `${Math.min(clips.length, 5)} shown`}
                   {!feedIsMostPlayed && (feedExpanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>)}
@@ -3310,7 +3249,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
     <div className="flex items-start justify-between gap-3 mb-4">
       <div>
-        <h3 className="font-black text-xl flex items-center gap-2">
+        <h3 className="font-black text-xl flex items-center gap-2 text-white">
           <Music size={22} className="text-purple-300" />
           Public Playlist Picks
         </h3>
@@ -3377,7 +3316,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 className="w-full flex justify-between items-center mb-1"
                 onClick={() => setLeaderboardExpanded(v => !v)}
               >
-                <h3 className="font-black text-xl flex items-center gap-2">Strathmore Leaderboard</h3>
+                <h3 className="font-black text-xl flex items-center gap-2 text-white">Strathmore Leaderboard</h3>
                 <span className="flex items-center gap-1 text-purple-400 text-sm">
                   Top creators {leaderboardExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
                 </span>
@@ -3466,7 +3405,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     className="w-full flex justify-between items-center mb-4"
     onClick={() => setArtistsExpanded(v => !v)}
   >
-    <h3 className="font-black text-xl flex items-center gap-2">
+    <h3 className="font-black text-xl flex items-center gap-2 text-white">
       <Music size={22} className="text-pink-400" />
       Top Artists
     </h3>
@@ -3566,13 +3505,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
 {user?.uid && (
   (() => {
-    const myPrivateClips = myClips.filter(c => !c.isPublic);
+    const myPrivateClips = myClips; // show ALL user clips, public + private
     const visiblePrivate = myPrivateClips.slice(0, privateClipsLimit);
     return (
       <div className="mt-4 border-t border-purple-700 border-opacity-40 pt-4">
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs font-bold text-purple-400 uppercase tracking-wide">
-            Your Private Clips ({myPrivateClips.length})
+            Your Clips ({myPrivateClips.length})
           </p>
           {myPrivateClips.length > 0 && (
             <p className="text-xs text-purple-600">{visiblePrivate.length}/{myPrivateClips.length} shown</p>
@@ -3682,7 +3621,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
   <div className="bg-purple-900 bg-opacity-30 border border-purple-700 border-opacity-40 rounded-2xl mt-6">
-    <h3 className="font-black text-xl mb-2 flex items-center gap-2">
+    <h3 className="font-black text-xl mb-2 flex items-center gap-2 text-white">
       <Music size={24} className="text-purple-400" />
       My Playlists
     </h3>

@@ -217,3 +217,18 @@ select option {
     padding-bottom: 140px; /* tab bar 60px + mini-player ~68px + gap */
   }
 }
+
+/* Search result highlight — conspicuous fading blue glow on the matched clip card */
+@keyframes clip-search-fade {
+  0% {
+    box-shadow: 0 0 0 3px #3b82f6, 0 0 24px 6px rgba(59, 130, 246, 0.8);
+    background-color: rgba(59, 130, 246, 0.35);
+  }
+  100% {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0), 0 0 0 rgba(59, 130, 246, 0);
+    background-color: transparent;
+  }
+}
+.animate-search-highlight {
+  animation: clip-search-fade 2s ease-out 1 forwards;
+}

@@ -40,6 +40,7 @@ const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
 const [themeMode, setThemeMode] = useState('electric');
 const [pendingAction, setPendingAction] = useState(null);
 const [clipSearchQuery, setClipSearchQuery] = useState('');
+const [searchHighlight, setSearchHighlight] = useState(null); // { id } of the matched clip card
 const [playlistSearchQuery, setPlaylistSearchQuery] = useState('');
 const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
@@ -223,7 +224,7 @@ const loadTrendingData = async () => {
   try {
     const { getTrendingClipsByPlays, getTopArtists } = await import('../lib/firebase');
     const trending = await getTrendingClipsByPlays(5);
-    const artists = await getTopArtists(5);
+    const artists = await getTopArtists(20);
     setTrendingByPlays(trending);
     setTopArtists(artists);
   } finally {
@@ -1935,6 +1936,23 @@ const handleUnlikeClip = async (clipId) => {
 
 const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   const feedIsMostPlayed = feedSort === 'most-played';
+
+  const triggerClipSearchHighlight = (query) => {
+    if (!query || !query.trim()) { setSearchHighlight(null); return; }
+    const q = query.trim().toLowerCase();
+    const match = clips.find(c =>
+      (c.title || '').toLowerCase().includes(q) ||
+      (c.artist || '').toLowerCase().includes(q)
+    ) || clips.find(c => fuzzyMatch(q, c));
+    if (match) setSearchHighlight({ id: match.id, tick: Date.now() });
+    else setSearchHighlight(null);
+  };
+
+  useEffect(() => {
+    if (!searchHighlight) return;
+    const timeout = setTimeout(() => setSearchHighlight(null), 2000);
+    return () => clearTimeout(timeout);
+  }, [searchHighlight]);
   const filteredClips = clipSearchQuery
     ? clips.filter(c => fuzzyMatch(clipSearchQuery, c))
     : clips;
@@ -3066,6 +3084,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                   value={clipSearchQuery}
                   onChange={e => {
                     setClipSearchQuery(e.target.value);
+                    triggerClipSearchHighlight(e.target.value);
                     if (e.target.value) {
                       setFeedExpanded(true);
                       setFeedPage(1);
@@ -3156,7 +3175,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     return (
                       <div
                         key={clip.id}
-                        className="relative rounded-2xl overflow-hidden border border-purple-700 border-opacity-40 hover:border-purple-500 transition group cursor-pointer"
+                        className={`relative rounded-2xl overflow-hidden border border-purple-700 border-opacity-40 hover:border-purple-500 transition group cursor-pointer ${searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
                         onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
                       >
                         {/* YouTube thumbnail */}
@@ -3204,7 +3223,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     return (
                       <div
                         key={clip.id}
-                        className="bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30"
+                        className={`bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30 ${searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
                         role="article"
                         aria-label={`${clip.title} by ${clip.artist}`}
                       >
@@ -4025,6 +4044,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         <div className="space-y-2 mb-3">
           {combinedQueueItems.map((item, qi) => (
             <div key={item.key} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
+              <button
+                onClick={() => handlePlayQueue(qi)}
+                className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-yellow-600 hover:bg-yellow-500 text-black transition"
+                aria-label={`Play ${item.name}`}
+              >
+                <Play size={14} fill="currentColor" />
+              </button>
               <span className="text-yellow-400 font-bold w-5 text-sm">{qi + 1}</span>
               <span className="flex-1 min-w-0">
                 <span className="block text-sm font-semibold truncate">{item.name}</span>
@@ -4226,6 +4252,17 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               }`}
             >
               {queueEditMode && <span className="text-yellow-500 text-lg cursor-grab">⠿</span>}
+              <button
+                onClick={() => { handlePlayQueue(qi); setQueueDrawerOpen(false); }}
+                className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition ${
+                  isPlayingQueue && playlistQueueIndex === qi
+                    ? 'bg-yellow-400 text-black'
+                    : 'bg-yellow-900 hover:bg-yellow-700 text-yellow-300'
+                }`}
+                aria-label={`Play ${item.name}`}
+              >
+                <Play size={14} fill="currentColor" />
+              </button>
               <span className={`font-black text-sm w-5 shrink-0 ${isPlayingQueue && playlistQueueIndex === qi ? 'text-yellow-300' : 'text-yellow-600'}`}>
                 {isPlayingQueue && playlistQueueIndex === qi ? '▶' : qi + 1}
               </span>
@@ -4365,13 +4402,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           )}
         </div>
 
-        {/* Expand/collapse toggle — ChevronUp to go to Create, ChevronDown to collapse */}
+        {/* Collapse toggle — hides the expanded mini-player back to the pill */}
         <button
-          onClick={() => setMobileTab(mobileTab === 'create' ? 'feed' : 'create')}
+          onClick={() => setMiniPlayerCollapsed(true)}
           className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white hover:bg-opacity-10 transition text-white shrink-0"
-          title={mobileTab === 'create' ? 'Collapse' : 'Open in Create'}
+          title="Collapse player"
         >
-          {mobileTab === 'create' ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+          <ChevronDown size={16} />
         </button>
       </div>
     )}

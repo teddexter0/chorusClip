@@ -214,11 +214,12 @@ export const getClipsPage = async (limitCount = 15, lastVisibleDoc = null) => {
       hasMore: snapshot.docs.length === limitCount
     };
   } catch (error) {
-    console.error('Clip pagination error:', error);
+    console.error('Clip pagination error:', error.code, error.message);
     return {
       clips: [],
       lastVisibleDoc: null,
-      hasMore: false
+      hasMore: false,
+      error: error.code || 'unknown'
     };
   }
 };
@@ -474,6 +475,31 @@ export const loadQueueFromFirestore = async (userId) => {
     return [];
   } catch (e) {
     console.error('Failed to load queue:', e);
+    return [];
+  }
+};
+
+// CLIP QUEUE PERSISTENCE — individual clips queued across devices
+export const saveClipQueueToFirestore = async (userId, clipIds) => {
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      savedClipQueueIds: clipIds,
+      queueUpdatedAt: new Date()
+    });
+  } catch (e) {
+    console.error('Failed to save clip queue:', e);
+  }
+};
+
+export const loadClipQueueFromFirestore = async (userId) => {
+  try {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    if (userDoc.exists()) {
+      return userDoc.data().savedClipQueueIds || [];
+    }
+    return [];
+  } catch (e) {
+    console.error('Failed to load clip queue:', e);
     return [];
   }
 };

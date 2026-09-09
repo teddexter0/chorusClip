@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Sparkles, LogOut, Users, Music, ChevronDown, ChevronUp, UserPlus, Bell, Search, Loader2, Edit3 } from 'lucide-react';
+import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Sparkles, LogOut, Users, Music, ChevronDown, ChevronUp, UserPlus, Bell, Search, Loader2, Edit3, ListMusic } from 'lucide-react';
 
 // Use relative imports instead of @/
 import Notification from '../components/ui/Notifications';
@@ -99,10 +99,13 @@ const [showFriendsPanel, setShowFriendsPanel] = useState(false);
 const [playlistQueue, setPlaylistQueue] = useState([]);
 const [playlistQueueIndex, setPlaylistQueueIndex] = useState(0);
 const [isPlayingQueue, setIsPlayingQueue] = useState(false);
+// Clip queue — individual clips queued to play consecutively (cross-device)
+const [clipQueue, setClipQueue] = useState([]);
 const [standaloneLoop, setStandaloneLoop] = useState(false);
 const [mobileTab, setMobileTab] = useState('create'); // 'create' | 'feed' | 'library' | 'more'
 const [expandedSections, setExpandedSections] = useState([0]); // section 0 always open
 const playlistQueueRef = useRef([]);
+const clipQueueRef = useRef([]);
 const playlistQueueIndexRef = useRef(0);
 
 const formatSeconds = (seconds) => {
@@ -442,6 +445,10 @@ const handleThemeToggle = async () => {
       setFeedCursor(firstPage.lastVisibleDoc);
       setFeedHasMore(firstPage.hasMore);
       setFeedPage(1);
+      if (firstPage.error === 'failed-precondition') {
+        console.warn('Feed index still building — returning no clips', firstPage.error);
+        showNotification('Feed index still building — public clips may take a minute to appear.', 'error');
+      }
     } catch (error) {
       console.log('Using demo clips');
       setClips([]);
@@ -660,22 +667,41 @@ const loadUserPlaylists = async () => {
 const loadSavedQueue = async () => {
   if (!user?.uid) return;
   try {
-    const { loadQueueFromFirestore } = await import('../lib/firebase');
+    const { loadQueueFromFirestore, loadClipQueueFromFirestore } = await import('../lib/firebase');
     const savedIds = await loadQueueFromFirestore(user.uid);
-    if (!savedIds || savedIds.length === 0) return;
+    if (savedIds && savedIds.length > 0) {
+      const { getUserPlaylists } = await import('../utils/playlistUtils');
+      const userPlaylists = await getUserPlaylists(user.uid);
 
-    const { getUserPlaylists } = await import('../utils/playlistUtils');
-    const userPlaylists = await getUserPlaylists(user.uid);
+      const hydrated = savedIds
+        .map(id => userPlaylists.find(p => p.id === id))
+        .filter(Boolean)
+        .slice(0, 10);
 
-    const hydrated = savedIds
-      .map(id => userPlaylists.find(p => p.id === id))
-      .filter(Boolean)
-      .slice(0, 10);
+      if (hydrated.length > 0) {
+        setPlaylistQueue(hydrated);
+        playlistQueueRef.current = hydrated;
+        showNotification(`🎵 Queue restored (${hydrated.length} playlist${hydrated.length > 1 ? 's' : ''})`, 'info');
+      }
+    }
 
-    if (hydrated.length > 0) {
-      setPlaylistQueue(hydrated);
-      playlistQueueRef.current = hydrated;
-      showNotification(`🎵 Queue restored (${hydrated.length} playlist${hydrated.length > 1 ? 's' : ''})`, 'info');
+    // Restore individual clips queued across devices
+    const savedClipIds = await loadClipQueueFromFirestore(user.uid);
+    if (savedClipIds && savedClipIds.length > 0) {
+      const { db } = await import('../lib/firebase');
+      const { collection, query, where, getDocs, limit } = await import('firebase/firestore');
+      const q = query(collection(db, 'clips'), where('__name__', 'in', savedClipIds.slice(0, 10)), limit(10));
+      const snap = await getDocs(q);
+      const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Preserve the order the user queued them in
+      const ordered = savedClipIds
+        .map(id => fetched.find(c => c.id === id))
+        .filter(Boolean)
+        .slice(0, 10);
+      if (ordered.length > 0) {
+        setClipQueue(ordered);
+        clipQueueRef.current = ordered;
+      }
     }
   } catch (e) {
     console.error('Queue restore failed:', e);
@@ -935,6 +961,73 @@ const handleRemoveFromQueue = (playlistId) => {
   }
 };
 
+// Clip queue — individual clips can be queued without making a playlist
+const handleAddClipToQueue = (clip) => {
+  if (clipQueue.some(c => c.id === clip.id)) {
+    showNotification('Already in queue!', 'info');
+    return;
+  }
+  if (clipQueue.length >= 10) {
+    showNotification('Queue holds max 10 clips', 'error');
+    return;
+  }
+  const newQueue = [...clipQueue, clip];
+  setClipQueue(newQueue);
+  clipQueueRef.current = newQueue;
+  showNotification(`Added "${clip.title}" to queue (${newQueue.length}/10)`, 'success');
+  if (user?.uid) {
+    import('../lib/firebase').then(({ saveClipQueueToFirestore }) => {
+      saveClipQueueToFirestore(user.uid, newQueue.map(c => c.id));
+    });
+  }
+};
+
+const handleRemoveClipFromQueue = (clipId) => {
+  const newQueue = clipQueue.filter(c => c.id !== clipId);
+  setClipQueue(newQueue);
+  clipQueueRef.current = newQueue;
+  if (user?.uid) {
+    import('../lib/firebase').then(({ saveClipQueueToFirestore }) => {
+      saveClipQueueToFirestore(user.uid, newQueue.map(c => c.id));
+    });
+  }
+};
+
+const handleRemoveQueueItem = (kind, id) => {
+  if (kind === 'clip') handleRemoveClipFromQueue(id);
+  else handleRemoveFromQueue(id);
+};
+
+// Unified queue — playlists first, then individual clips. Playback order matches
+// what the drawer displays.
+const buildCombinedQueue = () => {
+  const playlists = playlistQueueRef.current || [];
+  const clips = clipQueueRef.current || [];
+  return [
+    ...playlists.map(p => ({ kind: 'playlist', data: p, name: p.name })),
+    ...clips.map(c => ({ kind: 'clip', data: c, name: c.title }))
+  ];
+};
+
+const reorderCombinedQueue = (fromIdx, toIdx) => {
+  const items = buildCombinedQueue();
+  if (fromIdx < 0 || toIdx < 0 || fromIdx >= items.length || toIdx >= items.length || fromIdx === toIdx) return;
+  const [moved] = items.splice(fromIdx, 1);
+  items.splice(toIdx, 0, moved);
+  const newPlaylists = items.filter(i => i.kind === 'playlist').map(i => i.data);
+  const newClips = items.filter(i => i.kind === 'clip').map(i => i.data);
+  setPlaylistQueue(newPlaylists);
+  playlistQueueRef.current = newPlaylists;
+  setClipQueue(newClips);
+  clipQueueRef.current = newClips;
+  if (user?.uid) {
+    import('../lib/firebase').then(({ saveQueueToFirestore, saveClipQueueToFirestore }) => {
+      saveQueueToFirestore(user.uid, newPlaylists.map(p => p.id));
+      saveClipQueueToFirestore(user.uid, newClips.map(c => c.id));
+    });
+  }
+};
+
 const handleMoveStagedClip = (index, dir) => {
   const newClips = [...selectedClipsForPlaylist];
   const target = dir === 'up' ? index - 1 : index + 1;
@@ -958,9 +1051,9 @@ const handleMoveQueueItem = (index, dir) => {
 };
 
 const handlePlayQueue = (startIdx = 0) => {
-  const queue = playlistQueueRef.current;
+  const queue = buildCombinedQueue();
   if (!queue || queue.length === 0) {
-    showNotification('Add playlists to the queue first!', 'error');
+    showNotification('Add clips or playlists to the queue first!', 'error');
     return;
   }
   if (startIdx >= queue.length) {
@@ -975,7 +1068,12 @@ const handlePlayQueue = (startIdx = 0) => {
   playlistQueueIndexRef.current = startIdx;
   setGlobalLoading(true);
 
-  const targetPlaylist = queue[startIdx];
+  const targetItem = queue[startIdx];
+  // Individual clips are wrapped as a single-clip playlist so PlaylistPlayer
+  // plays them identically to a playlist — no changes to the playback engine.
+  const targetPlaylist = targetItem.kind === 'clip'
+    ? { id: `clip-${targetItem.data.id}`, name: targetItem.data.title, clips: [targetItem.data], _isSingleClip: true }
+    : targetItem.data;
   showNotification(`Queue ${startIdx + 1}/${queue.length}: "${targetPlaylist.name}"`, 'info');
 
   // Override the playlist's onPlaylistComplete to advance the queue
@@ -998,9 +1096,10 @@ const handlePlayQueue = (startIdx = 0) => {
       startPlayCredit(clip);
     },
     onPlaylistComplete: () => {
-      // Advance to next playlist in queue
+      // Advance to next item in the unified queue
       const nextIdx = playlistQueueIndexRef.current + 1;
-      if (nextIdx < playlistQueueRef.current.length) {
+      const total = buildCombinedQueue().length;
+      if (nextIdx < total) {
         setTimeout(() => handlePlayQueue(nextIdx), 600);
       } else {
         currentPlaylistPlayerRef.current = null;
@@ -1009,7 +1108,7 @@ const handlePlayQueue = (startIdx = 0) => {
         setCurrentPlaylistInfo(null);
         setCurrentPlaylistPlayer(null);
         setPlaylistQueueIndex(0);
-        showNotification('All queued playlists finished!', 'success');
+        showNotification('All queued clips & playlists finished!', 'success');
       }
     },
     showNotification
@@ -1525,8 +1624,31 @@ const startTimeTracking = () => {
 
   try {
     const { createClip } = await import('../lib/firebase');
-    await createClip(clipData);
-    showNotification(`✅ Clip posted! Find it in Library → Your Clips.`, 'success');
+    const clipId = await createClip(clipData);
+    // Optimistically show the new clip in "Your Clips" immediately,
+    // without waiting for the Firestore snapshot to round-trip.
+    const newClip = {
+      ...clipData,
+      id: clipId,
+      likes: 0,
+      plays: 0,
+      shares: 0,
+      trendingScore: 0,
+      createdAt: new Date()
+    };
+    setMyClips(prev => {
+      const withoutDup = prev.filter(c => c.id !== clipId);
+      return [newClip, ...withoutDup];
+    });
+    // Reset the create form so the editor is ready for the next clip
+    setVideoId('');
+    setVideoTitle('');
+    setArtist('');
+    setLoops([{ start: 0, end: 30, loopCount: 1 }]);
+    setCurrentLoopIndex(0);
+    setStandaloneLoop(false);
+    setMobileTab('library');
+    showNotification(`✅ Clip posted! Now in Library → Your Clips.`, 'success');
   } catch (error) {
     console.error('Post error:', error);
     showNotification('❌ Failed to post — check connection', 'error');
@@ -1816,6 +1938,12 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   const visibleFeedClips = feedIsMostPlayed
     ? trendingByPlays.slice(0, 5)
     : (feedExpanded ? filteredClips.slice(0, feedPage * FEED_PAGE_SIZE) : filteredClips.slice(0, 5));
+
+  // Unified queue for display — playlists first, then individual clips
+  const combinedQueueItems = [
+    ...playlistQueue.map(p => ({ kind: 'playlist', key: `pl:${p.id}`, id: p.id, name: p.name, artist: '', subtitle: `${p.clips?.length || 0} clips`, data: p })),
+    ...clipQueue.map(c => ({ kind: 'clip', key: `clip:${c.id}`, id: c.id, name: c.title, artist: c.artist, subtitle: c.artist, data: c }))
+  ];
   
   return (
     <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-gold' : 'theme-classic'}`}>
@@ -3177,6 +3305,15 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                                   <span className="text-sm text-white">Share</span>
                                 </button>
 
+                                {/* Add to queue */}
+                                <button
+                                  onClick={() => { handleAddClipToQueue(clip); setOpenClipMenuId(null); }}
+                                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                                >
+                                  <ListMusic size={16} className="text-yellow-400 shrink-0" />
+                                  <span className="text-sm text-white">Add to Queue</span>
+                                </button>
+
                                 {/* Owner-only actions */}
                                 {clip.userId === user?.uid && (
                                   <>
@@ -3190,6 +3327,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                                           const { db } = await import('../lib/firebase');
                                           const { doc, updateDoc } = await import('firebase/firestore');
                                           await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
+                                          setMyClips(prev => prev.map(c => c.id === clip.id ? { ...c, isPublic: newVal } : c));
                                           showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
                                           loadTrendingClips();
                                         } catch(e) { showNotification('Failed', 'error'); }
@@ -3595,14 +3733,23 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                         className="absolute right-0 top-10 z-50 bg-gray-900 border border-purple-700 border-opacity-50 rounded-2xl shadow-2xl overflow-hidden min-w-[180px]"
                         onClick={e => e.stopPropagation()}
                       >
-                        {/* Public/private toggle */}
-                        <button
-                          onClick={async () => {
+<button
+                              onClick={() => { handleAddClipToQueue(clip); setOpenClipMenuId(null); }}
+                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                            >
+                              <ListMusic size={16} className="text-yellow-400 shrink-0" />
+                              <span className="text-sm text-white">Add to Queue</span>
+                            </button>
+
+                            {/* Public/private toggle */}
+                            <button
+                              onClick={async () => {
                             const newVal = !(clip.isPublic);
                             try {
                               const { db } = await import('../lib/firebase');
                               const { doc, updateDoc } = await import('firebase/firestore');
                               await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
+                              setMyClips(prev => prev.map(c => c.id === clip.id ? { ...c, isPublic: newVal } : c));
                               showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
                               loadTrendingClips();
                             } catch(e) { showNotification('Failed', 'error'); }
@@ -3808,28 +3955,34 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       })}
     </div>
 
-    {/* Playlist Queue Panel */}
-    {playlistQueue.length > 0 && (
+    {/* Unified Queue Panel — playlists + individual clips */}
+    {combinedQueueItems.length > 0 && (
       <div className="mt-5 bg-yellow-900 bg-opacity-30 border border-yellow-600 border-opacity-50 rounded-2xl p-4">
         <div className="flex justify-between items-center mb-3">
           <p className="font-bold text-yellow-300 flex items-center gap-2">
-            Playlist Queue ({playlistQueue.length}/10)
+            Play Queue ({combinedQueueItems.length})
           </p>
           {isPlayingQueue && (
             <span className="text-xs text-yellow-400 animate-pulse font-semibold">▶ Playing queue…</span>
           )}
         </div>
         <div className="space-y-2 mb-3">
-          {playlistQueue.map((pl, qi) => (
-            <div key={pl.id} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
+          {combinedQueueItems.map((item, qi) => (
+            <div key={item.key} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
               <span className="text-yellow-400 font-bold w-5 text-sm">{qi + 1}</span>
-              <span className="flex-1 text-sm font-semibold truncate">{pl.name}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-semibold truncate">{item.name}</span>
+                {item.kind === 'clip' && (
+                  <span className="block text-xs text-yellow-600 truncate">{item.subtitle}</span>
+                )}
+              </span>
+              <span className="text-xs text-yellow-700 shrink-0 uppercase tracking-wide">{item.kind === 'clip' ? 'clip' : 'list'}</span>
               <div className="flex gap-1">
-                <button onClick={() => handleMoveQueueItem(qi, 'up')} disabled={qi === 0}
+                <button onClick={() => reorderCombinedQueue(qi, qi - 1)} disabled={qi === 0}
                   className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▲</button>
-                <button onClick={() => handleMoveQueueItem(qi, 'down')} disabled={qi === playlistQueue.length - 1}
+                <button onClick={() => reorderCombinedQueue(qi, qi + 1)} disabled={qi === combinedQueueItems.length - 1}
                   className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▼</button>
-                <button onClick={() => handleRemoveFromQueue(pl.id)}
+                <button onClick={() => handleRemoveQueueItem(item.kind, item.id)}
                   className="text-red-400 hover:text-red-300 ml-1"><X size={14}/></button>
               </div>
             </div>
@@ -3840,7 +3993,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           className="w-full py-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl font-bold hover:shadow-lg transition flex items-center justify-center gap-2"
         >
           <Play size={18} fill="currentColor" />
-          Play Queue ({playlistQueue.length} playlist{playlistQueue.length > 1 ? 's' : ''})
+          Play Queue ({combinedQueueItems.length})
         </button>
       </div>
     )}
@@ -3959,18 +4112,18 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 )}
 
 {/* Floating queue indicator — always visible when queue has items */}
-{playlistQueue.length > 0 && (
+{combinedQueueItems.length > 0 && (
   <button
     onClick={() => setQueueDrawerOpen(v => !v)}
     className="fixed right-0 top-1/2 -translate-y-1/2 z-50 bg-yellow-600 hover:bg-yellow-500 text-black font-black py-6 px-2 rounded-l-2xl shadow-xl transition-all"
     style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
     aria-label="Toggle queue"
   >
-    <span className="text-xs font-black">QUEUE {playlistQueue.length}</span>
+    <span className="text-xs font-black">QUEUE {combinedQueueItems.length}</span>
   </button>
 )}
 
-{/* Side drawer — playlist queue */}
+{/* Side drawer — unified queue (playlists + individual clips) */}
 {queueDrawerOpen && (
   <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setQueueDrawerOpen(false)}>
     <div
@@ -3978,7 +4131,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       onClick={e => e.stopPropagation()}
     >
       <div className="flex items-center justify-between px-5 py-4 border-b border-yellow-700">
-        <h3 className="font-black text-lg text-yellow-300">Play Queue ({playlistQueue.length}/10)</h3>
+        <h3 className="font-black text-lg text-yellow-300">Play Queue ({combinedQueueItems.length})</h3>
         <button onClick={() => setQueueDrawerOpen(false)} className="text-yellow-400 hover:text-white text-xl">✕</button>
       </div>
 
@@ -3994,28 +4147,19 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
       {/* Queue items — drag sortable when editing */}
       <div className="flex-1 px-4 py-3 space-y-2">
-        {playlistQueue.length === 0 ? (
+        {combinedQueueItems.length === 0 ? (
           <p className="text-center text-yellow-600 text-sm py-6">Queue is empty</p>
         ) : (
-          playlistQueue.map((pl, qi) => (
+          combinedQueueItems.map((item, qi) => (
             <div
-              key={pl.id}
+              key={item.key}
               draggable={queueEditMode}
               onDragStart={() => queueEditMode && setDraggedQueueIdx(qi)}
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => {
                 if (!queueEditMode || draggedQueueIdx === null || draggedQueueIdx === qi) return;
-                const newQueue = [...playlistQueue];
-                const [moved] = newQueue.splice(draggedQueueIdx, 1);
-                newQueue.splice(qi, 0, moved);
-                setPlaylistQueue(newQueue);
-                playlistQueueRef.current = newQueue;
+                reorderCombinedQueue(draggedQueueIdx, qi);
                 setDraggedQueueIdx(null);
-                if (user?.uid) {
-                  import('../lib/firebase').then(({ saveQueueToFirestore }) => {
-                    saveQueueToFirestore(user.uid, newQueue.map(p => p.id));
-                  });
-                }
               }}
               onDragEnd={() => setDraggedQueueIdx(null)}
               className={`flex items-center gap-3 p-3 rounded-xl border transition ${
@@ -4030,12 +4174,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 {isPlayingQueue && playlistQueueIndex === qi ? '▶' : qi + 1}
               </span>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold truncate text-white">{pl.name}</p>
-                <p className="text-xs text-yellow-500">{pl.clips?.length || 0} clips</p>
+                <p className="text-sm font-semibold truncate text-white">{item.name}</p>
+                <p className={`text-xs ${item.kind === 'clip' ? 'text-purple-300' : 'text-yellow-500'}`}>
+                  {item.kind === 'clip' ? `🎵 ${item.subtitle}` : `${item.data.clips?.length || 0} clips`}
+                </p>
               </div>
               {queueEditMode && (
                 <button
-                  onClick={() => handleRemoveFromQueue(pl.id)}
+                  onClick={() => handleRemoveQueueItem(item.kind, item.id)}
                   className="w-7 h-7 flex items-center justify-center rounded-full bg-red-900 bg-opacity-50 hover:bg-red-700 text-red-400 text-xs transition"
                 >✕</button>
               )}
@@ -4058,9 +4204,12 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           onClick={() => {
             setPlaylistQueue([]);
             playlistQueueRef.current = [];
+            setClipQueue([]);
+            clipQueueRef.current = [];
             if (user?.uid) {
-              import('../lib/firebase').then(({ saveQueueToFirestore }) => {
+              import('../lib/firebase').then(({ saveQueueToFirestore, saveClipQueueToFirestore }) => {
                 saveQueueToFirestore(user.uid, []);
+                saveClipQueueToFirestore(user.uid, []);
               });
             }
             setQueueDrawerOpen(false);

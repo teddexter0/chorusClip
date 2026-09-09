@@ -1,13 +1,19 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 
-// Verified free MP4s — Pixabay (no attribution required)
+// Verified live free MP4s — Pixabay (no attribution required)
+// Themed for ChorusClip: party, disco, DJ lights, crowd, dancing.
+// All URLs below have been verified reachable (HTTP 200). The component
+// skips any that fail to load via onError handlers.
 // Mixed 16:9 and 9:16 to cover landscape + portrait devices
 const BG_VIDEOS = [
-  'https://cdn.pixabay.com/video/2016/01/12/1892-151989763_large.mp4',
-  'https://cdn.pixabay.com/video/2019/09/05/26763-358609115_large.mp4',
-  'https://cdn.pixabay.com/video/2022/04/12/113880-699487224_large.mp4',
-  'https://cdn.pixabay.com/video/2021/03/15/68247-523835756_large.mp4',
+  "https://cdn.pixabay.com/video/2022/05/20/117578-712237103_large.mp4", // Club / Disco / Show colors
+  "https://cdn.pixabay.com/video/2016/05/01/2947-164969505_medium.mp4", // Disco DJ waves of light
+  "https://cdn.pixabay.com/video/2015/12/12/1670-148708866_large.mp4", // Party / music / dancing
+  "https://cdn.pixabay.com/video/2015/12/13/1678-148781678_large.mp4", // Party / celebration lights
+  "https://cdn.pixabay.com/video/2016/05/12/3129-166335878_large.mp4", // Concert / stage lights
+  "https://cdn.pixabay.com/video/2016/09/13/5154-183300180_large.mp4", // Party crowd / lights
+  "https://cdn.pixabay.com/video/2016/11/15/6436-191745480_large.mp4"  // Disco / party atmosphere
 ];
 
 const BackgroundAmbience = ({ theme = 'purple' }) => {

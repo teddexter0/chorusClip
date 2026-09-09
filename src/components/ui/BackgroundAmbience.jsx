@@ -5,9 +5,9 @@ import React, { useEffect, useRef, useState } from 'react';
 // Mixed 16:9 and 9:16 to cover landscape + portrait devices
 const BG_VIDEOS = [
   'https://cdn.pixabay.com/video/2016/01/12/1892-151989763_large.mp4',
+  'https://cdn.pixabay.com/video/2019/09/05/26763-358609115_large.mp4',
   'https://cdn.pixabay.com/video/2022/04/12/113880-699487224_large.mp4',
-  'https://cdn.pixabay.com/video/2020/07/30/46156-447087551_large.mp4',
-  'https://cdn.pixabay.com/video/2019/04/09/23020-329537754_large.mp4',
+  'https://cdn.pixabay.com/video/2021/03/15/68247-523835756_large.mp4',
 ];
 
 const BackgroundAmbience = ({ theme = 'purple' }) => {
@@ -19,8 +19,8 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
   const timerRef = useRef(null);
 
   const gradientClass = theme === 'gold'
-    ? 'bg-gradient-to-br from-yellow-900/88 via-amber-900/82 to-orange-900/88'
-    : 'bg-gradient-to-br from-purple-900/88 via-indigo-900/82 to-purple-800/88';
+    ? 'bg-gradient-to-br from-yellow-950/96 via-amber-950/94 to-orange-950/96'
+    : 'bg-gradient-to-br from-purple-950/96 via-indigo-950/94 to-purple-900/96';
 
   const cycleVideo = () => {
     const next = (currentIdx + 1) % BG_VIDEOS.length;
@@ -57,7 +57,7 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
         preload="auto"
         onError={() => setCurrentIdx((currentIdx + 1) % BG_VIDEOS.length)}
         className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${transitioning ? 'opacity-0' : 'opacity-100'}`}
-        style={{ filter: 'brightness(0.3) saturate(1.3)' }}
+        style={{ filter: 'brightness(0.2) saturate(1.4)', transform: 'scale(1.05)' }}
       >
         <source src={BG_VIDEOS[currentIdx]} type="video/mp4" />
       </video>
@@ -71,7 +71,7 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
         preload="auto"
         onError={() => setNextIdx((nextIdx + 1) % BG_VIDEOS.length)}
         className="absolute inset-0 w-full h-full object-cover opacity-0 pointer-events-none"
-        style={{ filter: 'brightness(0.3) saturate(1.3)' }}
+        style={{ filter: 'brightness(0.2) saturate(1.4)', transform: 'scale(1.05)' }}
       >
         <source src={BG_VIDEOS[nextIdx]} type="video/mp4" />
       </video>

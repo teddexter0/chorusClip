@@ -167,12 +167,32 @@ select option {
   }
 }
 
-/* ===== ELECTRIC GOLD THEME — scoped, no bleed into purple theme ===== */
-.theme-gold {
-  color-scheme: dark;
+/* ===== THEME: CLASSIC (Purple) ===== */
+.theme-classic {
+  background-color: #0d0a1a;
 }
 
-/* Background surfaces */
+/* ===== THEME: GOLD (Electric) ===== */
+.theme-gold {
+  background-color: #1a0d00;
+}
+
+/* Scoped text overrides — ONLY purple utility classes remapped in gold theme */
+.theme-gold .text-purple-200 { color: #fef3c7 !important; }
+.theme-gold .text-purple-300 { color: #fcd34d !important; }
+.theme-gold .text-purple-400 { color: #f59e0b !important; }
+.theme-gold .text-purple-500 { color: #d97706 !important; }
+.theme-gold .text-purple-600 { color: #b45309 !important; }
+.theme-gold .border-purple-700 { border-color: rgba(180,83,9,0.35) !important; }
+.theme-gold .border-purple-500 { border-color: rgba(217,119,6,0.5) !important; }
+.theme-gold .from-purple-900 { --tw-gradient-from: #431407 !important; }
+.theme-gold .via-indigo-900  { --tw-gradient-via: #3b1501 !important; }
+.theme-gold .to-purple-800   { --tw-gradient-to: #431407 !important; }
+.theme-gold .from-purple-600 { --tw-gradient-from: #c2410c !important; }
+.theme-gold .to-pink-600     { --tw-gradient-to: #d97706 !important; }
+.theme-gold ::-webkit-scrollbar-thumb { background: rgba(180,83,9,0.5) !important; }
+
+/* Background surfaces (gold only) */
 .theme-gold .card,
 .theme-gold [class*="bg-purple-9"],
 .theme-gold [class*="bg-purple-8"] {
@@ -180,64 +200,7 @@ select option {
   border-color: rgba(180, 83, 9, 0.3) !important;
 }
 
-/* Borders */
-.theme-gold .border-purple-700 { border-color: rgba(180, 83, 9, 0.35) !important; }
-.theme-gold .border-purple-500 { border-color: rgba(217, 119, 6, 0.5) !important; }
-
-/* Gradient from/via/to overrides */
-.theme-gold .from-purple-900 { --tw-gradient-from: #431407 !important; }
-.theme-gold .via-indigo-900  { --tw-gradient-via: #3b1501 !important; }
-.theme-gold .to-purple-800   { --tw-gradient-to: #431407 !important; }
-.theme-gold .from-purple-600 { --tw-gradient-from: #c2410c !important; }
-.theme-gold .to-pink-600     { --tw-gradient-to: #d97706 !important; }
-
-/* Scrollbar */
-.theme-gold ::-webkit-scrollbar-thumb { background: rgba(180, 83, 9, 0.5) !important; }
-
-/* ===== UNIFIED READABLE-TEXT RULE — applied to BOTH themes =====
-   Rule: body text is always light. Section titles = white. Subtitles /
-   descriptions = rgba(255,255,255,0.75). Meta text (counts, timestamps,
-   creators, captions) = rgba(255,255,255,0.55). Colored text is reserved
-   for badges, buttons, icons, and decorative accents ONLY. Surfaces stay
-   dark and themed. Text stays light always. No exceptions. */
-.theme-gold,
-.theme-classic {
-  color-scheme: dark;
-}
-
-/* Default text – body & flat content */
-.theme-gold, .theme-classic {
-  color: #ffffff;
-}
-
-/* Section titles / headings */
-.theme-gold h1, .theme-gold h2, .theme-gold h3,
-.theme-classic h1, .theme-classic h2, .theme-classic h3 {
-  color: #ffffff;
-}
-
-/* Subtitles & descriptions → 75% */
-.theme-gold .text-purple-300,
-.theme-classic .text-purple-300 { color: rgba(255, 255, 255, 0.75) !important; }
-.theme-gold .text-purple-200,
-.theme-classic .text-purple-200 { color: rgba(255, 255, 255, 0.75) !important; }
-
-/* Meta text → 55% (clip counts, timestamps, creators, captions) */
-.theme-gold .text-purple-400,
-.theme-classic .text-purple-400 { color: rgba(255, 255, 255, 0.55) !important; }
-.theme-gold .text-purple-500,
-.theme-classic .text-purple-500 { color: rgba(255, 255, 255, 0.55) !important; }
-.theme-gold .text-purple-600,
-.theme-classic .text-purple-600 { color: rgba(255, 255, 255, 0.55) !important; }
-.theme-gold .text-purple-700,
-.theme-classic .text-purple-700 { color: rgba(255, 255, 255, 0.55) !important; }
-
-/* ===== CLASSIC / PURPLE THEME ===== */
-.theme-classic {
-  --accent-1: #a855f7;
-  --accent-2: #9333ea;
-  --accent-3: #c084fc;
-}
+/* NO OTHER BROAD COLOR RULES */
 
 /* Hide scrollbar on horizontal scroll lanes (still scrollable) */
 .overflow-x-auto {

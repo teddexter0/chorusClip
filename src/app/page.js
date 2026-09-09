@@ -45,7 +45,8 @@ const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
 const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
 const [myClips, setMyClips] = useState([]);
-const [privateClipsLimit, setPrivateClipsLimit] = useState(10);
+const [privateClipsLimit, setPrivateClipsLimit] = useState(8);
+const [openClipMenuId, setOpenClipMenuId] = useState(null);
 const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
 const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
 const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list'
@@ -86,7 +87,7 @@ const [topArtists, setTopArtists] = useState([]);
 // Accordion open states for discovery sections
 const [feedExpanded, setFeedExpanded] = useState(false);
 const [feedPage, setFeedPage] = useState(1);
-const FEED_PAGE_SIZE = 15;
+const FEED_PAGE_SIZE = 8;
 const [feedSort, setFeedSort] = useState('latest');
 const [leaderboardExpanded, setLeaderboardExpanded] = useState(false);
 const [artistsExpanded, setArtistsExpanded] = useState(false);
@@ -371,6 +372,13 @@ const loadTrendingData = async () => {
   }, [topArtists, artistImages]);
 
 useEffect(() => { standaloneLoopRef.current = standaloneLoop; }, [standaloneLoop]);
+
+useEffect(() => {
+  if (!openClipMenuId) return;
+  const close = () => setOpenClipMenuId(null);
+  document.addEventListener('click', close);
+  return () => document.removeEventListener('click', close);
+}, [openClipMenuId]);
 
 useEffect(() => {
   if (user?.appTheme === 'classic' || user?.appTheme === 'electric') {
@@ -1178,6 +1186,12 @@ const completeCurrentClipPlayback = () => {
   };
   
 const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
+  if (!user?.uid) {
+    showNotification('Sign in to play clips!', 'info');
+    setShowAuthModal(true);
+    return;
+  }
+
   // Stop current tracking
   if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
 
@@ -2911,22 +2925,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
 
           <div className={`space-y-6 ${mobileTab === 'create' || mobileTab === 'more' ? 'hidden md:block' : ''}`}>
-            {!user?.uid ? (
-              <div className="card flex flex-col items-center justify-center py-16 text-center space-y-4">
-                <span className="text-5xl">🎵</span>
-                <h3 className="text-2xl font-black">Discover ChorusClip</h3>
-                <p className="text-purple-300 text-sm max-w-xs">
-                  Sign in to see trending clips, top artists, and the Strathmore leaderboard.
-                </p>
-                <button
-                  onClick={() => setShowAuthModal(true)}
-                  className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-bold text-sm hover:shadow-lg transition"
-                >
-                  Sign In to Explore
-                </button>
-              </div>
-            ) : (
-            <>
             <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
             <div className="card">
               {/* Clip search */}
@@ -3086,40 +3084,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                               @{clip.createdBy} · {formatCreatedDate(clip.createdAt)} · {clipSections.length} section{clipSections.length > 1 ? 's' : ''}
                             </p>
                           </div>
-                          {clip.userId === user?.uid && (
-                            <div className="flex flex-col items-end gap-2 shrink-0">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleDeleteClip(clip.id); }}
-                                className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg text-red-400 hover:text-red-300 hover:bg-red-900 hover:bg-opacity-30 transition shrink-0"
-                                title="Delete clip"
-                                aria-label="Delete clip"
-                              >
-                                <X size={14} />
-                              </button>
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  const newVal = !(clip.isPublic);
-                                  try {
-                                    const { db } = await import('../lib/firebase');
-                                    const { doc, updateDoc } = await import('firebase/firestore');
-                                    await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
-                                    showNotification(newVal ? '🌍 Clip is now public' : '🔒 Clip set to private', 'success');
-                                  } catch(e) {
-                                    showNotification('Failed to update', 'error');
-                                  }
-                                }}
-                                className={`text-xs px-2 py-1 rounded-full font-semibold transition border ${
-                                  clip.isPublic
-                                    ? 'border-emerald-500 text-emerald-400 hover:bg-emerald-900 hover:bg-opacity-30'
-                                    : 'border-purple-600 text-purple-400 hover:bg-purple-900 hover:bg-opacity-30'
-                                }`}
-                                title={clip.isPublic ? 'Clip is public — tap to make private' : 'Clip is private — tap to make public'}
-                              >
-                                {clip.isPublic ? '🌍 Public' : '🔒 Private'}
-                              </button>
-                            </div>
-                          )}
                         </div>
 
                         {/* Section timestamps — compact chips */}
@@ -3134,71 +3098,148 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                           ))}
                         </div>
 
-                        {/* Clip card footer — two-row on mobile, single row on sm+ */}
-                        <div className="flex flex-wrap items-center justify-between gap-y-2 gap-x-3 mt-1">
-                          {/* Duration badge */}
-                          <span className="text-xs text-purple-500 font-medium">
-                            {Math.max(0, firstSection.end - firstSection.start)}s
-                          </span>
+                        {/* Clip card footer */}
+                        <div className="flex items-center justify-between mt-2">
+                          {/* Left: duration + section count */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-purple-400">{Math.max(0, firstSection.end - firstSection.start)}s</span>
+                            <span className="text-xs text-purple-600">·</span>
+                            <span className="text-xs text-purple-400">{clipSections.length} section{clipSections.length > 1 ? 's' : ''}</span>
+                          </div>
 
-                          {/* Action buttons — always on same line, tightly spaced */}
-                          <div className="flex items-center gap-2 ml-auto">
-                            {/* Like */}
-                            <button
-                              onClick={async () => {
-                                setPendingAction(`like-${clip.id}`);
-                                await (user.likedClips?.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id));
-                                setPendingAction(null);
-                              }}
-                              disabled={pendingAction === `like-${clip.id}`}
-                              className={`min-w-[36px] min-h-[36px] flex items-center justify-center gap-1 rounded-xl transition disabled:opacity-60 ${
-                                user.likedClips?.includes(clip.id)
-                                  ? 'text-pink-500 bg-pink-900 bg-opacity-30'
-                                  : 'text-pink-400 hover:text-pink-300 hover:bg-pink-900 hover:bg-opacity-20'
-                              }`}
-                              aria-label={user.likedClips?.includes(clip.id) ? `Unlike ${clip.title}` : `Like ${clip.title}`}
-                            >
-                              {pendingAction === `like-${clip.id}`
-                                ? <span className="w-3 h-3 border border-pink-400 border-t-transparent rounded-full animate-spin" />
-                                : <Heart size={15} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
-                              }
-                              <span className="text-xs font-semibold">{clip.likes || 0}</span>
-                            </button>
-
-                            {/* Play */}
+                          {/* Right: play count + 3-dot menu */}
+                          <div className="flex items-center gap-2 relative">
+                            {/* Play with count — always visible */}
                             <button
                               onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-                              className="min-w-[36px] min-h-[36px] flex items-center justify-center gap-1 rounded-xl text-purple-300 hover:text-purple-100 hover:bg-purple-900 hover:bg-opacity-30 transition"
+                              className={`min-w-[44px] min-h-[36px] flex items-center justify-center gap-1 rounded-xl bg-purple-700 hover:bg-purple-600 transition px-2 ${topPlayCounts.includes(clip.id) ? 'ring-1 ring-red-400 ring-opacity-60' : ''}`}
                               aria-label={`Play ${clip.title}`}
                             >
-                              <Play size={15} fill="currentColor" />
-                              <span className={`text-xs font-semibold ${topPlayCounts.includes(clip.id) ? 'text-red-400 font-bold' : ''}`}>{getClipPlayCount(clip)}</span>
+                              <Play size={14} fill="currentColor" className="text-white" />
+                              <span className={`text-xs font-semibold text-white ${topPlayCounts.includes(clip.id) ? 'text-red-300' : ''}`}>{getClipPlayCount(clip)}</span>
                             </button>
 
-                            {/* Share */}
-                            <button
-                              onClick={() => handleShareClip(clip)}
-                              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-purple-400 hover:text-purple-300 hover:bg-purple-900 hover:bg-opacity-30 transition"
-                              aria-label={`Share ${clip.title}`}
-                            >
-                              <Share2 size={15} />
-                            </button>
-
-                            {/* Add to playlist staging */}
+                            {/* 3-dot menu toggle */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (!user?.uid) { showNotification('Sign in to create playlists!', 'error'); setShowAuthModal(true); return; }
-                                if (selectedClipsForPlaylist.length >= 10) { showNotification('Playlist cap is 10 clips!', 'error'); return; }
-                                if (isClipDuplicate(clip, selectedClipsForPlaylist)) { showNotification('Already staged!', 'info'); return; }
-                                setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
-                                showNotification(`Added! (${selectedClipsForPlaylist.length + 1}/10)`, 'success');
+                                setOpenClipMenuId(openClipMenuId === clip.id ? null : clip.id);
                               }}
-                              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl text-emerald-400 hover:text-emerald-300 hover:bg-emerald-900 hover:bg-opacity-30 transition"
-                              aria-label="Add to playlist"
+                              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-xl hover:bg-purple-800 hover:bg-opacity-60 transition text-purple-300"
+                              aria-label="More actions"
                             >
-                              <Plus size={15} />
+                              <span className="text-lg font-bold leading-none">⋮</span>
                             </button>
+
+                            {/* Dropdown menu */}
+                            {openClipMenuId === clip.id && (
+                              <div
+                                className="absolute right-0 bottom-10 z-50 bg-gray-900 border border-purple-700 border-opacity-50 rounded-2xl shadow-2xl overflow-hidden min-w-[180px]"
+                                onClick={e => e.stopPropagation()}
+                              >
+                                {/* Like */}
+                                <button
+                                  onClick={async () => {
+                                    setPendingAction(`like-${clip.id}`);
+                                    await (user.likedClips?.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id));
+                                    setPendingAction(null);
+                                    setOpenClipMenuId(null);
+                                  }}
+                                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                                >
+                                  <Heart size={16} fill={user.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} className="text-pink-400 shrink-0" />
+                                  <span className="text-sm text-white">{user.likedClips?.includes(clip.id) ? 'Unlike' : 'Like'} ({clip.likes || 0})</span>
+                                </button>
+
+                                {/* Add to playlist staging */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!user?.uid) { showNotification('Sign in first!', 'error'); return; }
+                                    if (selectedClipsForPlaylist.length >= 10) { showNotification('Playlist cap is 10 clips!', 'error'); return; }
+                                    if (isClipDuplicate(clip, selectedClipsForPlaylist)) { showNotification('Already staged!', 'info'); return; }
+                                    setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
+                                    showNotification(`Added to staging (${selectedClipsForPlaylist.length + 1})`, 'success');
+                                    setOpenClipMenuId(null);
+                                  }}
+                                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                                >
+                                  <Plus size={16} className="text-emerald-400 shrink-0" />
+                                  <span className="text-sm text-white">Add to Playlist</span>
+                                </button>
+
+                                {/* Share */}
+                                <button
+                                  onClick={() => { handleShareClip(clip); setOpenClipMenuId(null); }}
+                                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                                >
+                                  <Share2 size={16} className="text-purple-400 shrink-0" />
+                                  <span className="text-sm text-white">Share</span>
+                                </button>
+
+                                {/* Owner-only actions */}
+                                {clip.userId === user?.uid && (
+                                  <>
+                                    <div className="h-px bg-purple-800 bg-opacity-50 mx-3" />
+
+                                    {/* Privacy toggle */}
+                                    <button
+                                      onClick={async () => {
+                                        const newVal = !clip.isPublic;
+                                        try {
+                                          const { db } = await import('../lib/firebase');
+                                          const { doc, updateDoc } = await import('firebase/firestore');
+                                          await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
+                                          showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
+                                          loadTrendingClips();
+                                        } catch(e) { showNotification('Failed', 'error'); }
+                                        setOpenClipMenuId(null);
+                                      }}
+                                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                                    >
+                                      <span className="text-base shrink-0">{clip.isPublic ? '🔒' : '🌍'}</span>
+                                      <span className="text-sm text-white">{clip.isPublic ? 'Make Private' : 'Make Public'}</span>
+                                    </button>
+
+                                    {/* Edit */}
+                                    <button
+                                      onClick={() => {
+                                        setYoutubeUrl(`https://youtube.com/watch?v=${clip.youtubeVideoId}`);
+                                        setVideoId(clip.youtubeVideoId);
+                                        setVideoTitle(clip.title);
+                                        setArtist(clip.artist);
+                                        setLoops(clip.loops || [{ start: 0, end: 30, loopCount: 1 }]);
+                                        setCurrentLoopIndex(0);
+                                        setIsReadOnlyMode(false);
+                                        if (typeof setExpandedSections === 'function') setExpandedSections([0]);
+                                        setMobileTab('create');
+                                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                                        showNotification('✏️ Loaded for editing', 'info');
+                                        setOpenClipMenuId(null);
+                                        setTimeout(() => {
+                                          if (playerRef.current?.loadVideoById) {
+                                            playerRef.current.loadVideoById({ videoId: clip.youtubeVideoId, startSeconds: clip.loops?.[0]?.start || 0 });
+                                          } else { loadYouTubePlayer(clip.youtubeVideoId); }
+                                        }, 400);
+                                      }}
+                                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                                    >
+                                      <span className="text-base shrink-0">✏️</span>
+                                      <span className="text-sm text-white">Edit Clip</span>
+                                    </button>
+
+                                    {/* Delete */}
+                                    <button
+                                      onClick={() => { handleDeleteClip(clip.id); setOpenClipMenuId(null); }}
+                                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-900 hover:bg-opacity-40 transition text-left"
+                                    >
+                                      <X size={16} className="text-red-400 shrink-0" />
+                                      <span className="text-sm text-red-300">Delete</span>
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -3457,8 +3498,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   )}
 </div>
             </div>
-            </>
-            )}
 
             {/* Library empty state — signed-in user with no clips and no playlists */}
             {user?.uid && playlists.length === 0 && myClips.length === 0 && (
@@ -3528,82 +3567,108 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     <p className="text-sm font-semibold truncate text-white">{clip.title}</p>
                     <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {/* Public/private toggle */}
-                    <button
-                      onClick={async () => {
-                        const newVal = !(clip.isPublic);
-                        try {
-                          const { db } = await import('../lib/firebase');
-                          const { doc, updateDoc } = await import('firebase/firestore');
-                          await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
-                          showNotification(newVal ? '🌍 Now public' : '🔒 Now private', 'success');
-                        } catch(e) { showNotification('Failed', 'error'); }
-                      }}
-                      className="text-xs px-2 py-1 rounded-full border border-purple-600 text-purple-400 hover:border-purple-400 transition"
-                    >
-                      {clip.isPublic ? '🌍' : '🔒'}
-                    </button>
-                    {/* Edit button — loads clip into Create editor */}
-                    <button
-                      onClick={() => {
-                        setYoutubeUrl(`https://youtube.com/watch?v=${clip.youtubeVideoId}`);
-                        setVideoId(clip.youtubeVideoId);
-                        setVideoTitle(clip.title);
-                        setArtist(clip.artist);
-                        setLoops(clip.loops || [{ start: 0, end: 30, loopCount: 1 }]);
-                        setCurrentLoopIndex(0);
-                        setCurrentLoopIteration(0);
-                        setIsReadOnlyMode(false);
-                        setExpandedSections([0]);
-                        setMobileTab('create');
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                        showNotification('✏️ Clip loaded for editing — adjust and re-post', 'info');
-                        setTimeout(() => {
-                          if (window.YT?.Player && !playerRef.current?.loadVideoById) {
-                            loadYouTubePlayer(clip.youtubeVideoId);
-                          } else if (playerRef.current?.loadVideoById) {
-                            playerRef.current.loadVideoById({ videoId: clip.youtubeVideoId, startSeconds: clip.loops?.[0]?.start || 0 });
-                          }
-                        }, 400);
-                      }}
-                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-purple-800 hover:bg-purple-700 text-purple-300 text-xs transition"
-                      title="Edit clip"
-                      aria-label="Edit clip"
-                    >
-                      ✏️
-                    </button>
-                    {/* Delete button */}
-                    <button
-                      onClick={() => handleDeleteClip(clip.id)}
-                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-red-900 bg-opacity-50 hover:bg-opacity-80 text-red-400 transition"
-                      title="Delete clip"
-                    >
-                      <X size={12} />
-                    </button>
+                  <div className="flex items-center gap-2 shrink-0 relative">
                     {/* Play */}
                     <button
                       onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
-                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-emerald-700 hover:bg-emerald-600 transition"
+                      className="min-w-[36px] min-h-[32px] flex items-center justify-center rounded-lg bg-emerald-700 hover:bg-emerald-600 transition"
                       aria-label={`Play ${clip.title}`}
                     >
                       <Play size={14} fill="currentColor" />
                     </button>
+
+                    {/* 3-dot menu toggle */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenClipMenuId(openClipMenuId === clip.id ? null : clip.id);
+                      }}
+                      className="min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg hover:bg-purple-800 hover:bg-opacity-60 transition text-purple-300"
+                      aria-label="More actions"
+                    >
+                      <span className="text-lg font-bold leading-none">⋮</span>
+                    </button>
+
+                    {/* Dropdown menu */}
+                    {openClipMenuId === clip.id && (
+                      <div
+                        className="absolute right-0 top-10 z-50 bg-gray-900 border border-purple-700 border-opacity-50 rounded-2xl shadow-2xl overflow-hidden min-w-[180px]"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        {/* Public/private toggle */}
+                        <button
+                          onClick={async () => {
+                            const newVal = !(clip.isPublic);
+                            try {
+                              const { db } = await import('../lib/firebase');
+                              const { doc, updateDoc } = await import('firebase/firestore');
+                              await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
+                              showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
+                              loadTrendingClips();
+                            } catch(e) { showNotification('Failed', 'error'); }
+                            setOpenClipMenuId(null);
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                        >
+                          <span className="text-base shrink-0">{clip.isPublic ? '🔒' : '🌍'}</span>
+                          <span className="text-sm text-white">{clip.isPublic ? 'Make Private' : 'Make Public'}</span>
+                        </button>
+
+                        {/* Edit button — loads clip into Create editor */}
+                        <button
+                          onClick={() => {
+                            setYoutubeUrl(`https://youtube.com/watch?v=${clip.youtubeVideoId}`);
+                            setVideoId(clip.youtubeVideoId);
+                            setVideoTitle(clip.title);
+                            setArtist(clip.artist);
+                            setLoops(clip.loops || [{ start: 0, end: 30, loopCount: 1 }]);
+                            setCurrentLoopIndex(0);
+                            setCurrentLoopIteration(0);
+                            setIsReadOnlyMode(false);
+                            setExpandedSections([0]);
+                            setMobileTab('create');
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                            showNotification('✏️ Clip loaded for editing — adjust and re-post', 'info');
+                            setOpenClipMenuId(null);
+                            setTimeout(() => {
+                              if (window.YT?.Player && !playerRef.current?.loadVideoById) {
+                                loadYouTubePlayer(clip.youtubeVideoId);
+                              } else if (playerRef.current?.loadVideoById) {
+                                playerRef.current.loadVideoById({ videoId: clip.youtubeVideoId, startSeconds: clip.loops?.[0]?.start || 0 });
+                              }
+                            }, 400);
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                        >
+                          <span className="text-base shrink-0">✏️</span>
+                          <span className="text-sm text-white">Edit Clip</span>
+                        </button>
+
+                        {/* Delete */}
+                        <button
+                          onClick={() => { handleDeleteClip(clip.id); setOpenClipMenuId(null); }}
+                          className="w-full flex items-center gap-3 px-4 py-3 hover:bg-red-900 hover:bg-opacity-40 transition text-left"
+                        >
+                          <X size={16} className="text-red-400 shrink-0" />
+                          <span className="text-sm text-red-300">Delete</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
             {myPrivateClips.length > privateClipsLimit && (
               <button
-                onClick={() => setPrivateClipsLimit(p => p + 10)}
-                className="w-full mt-3 py-2.5 bg-purple-900 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold text-purple-300 transition flex items-center justify-center gap-2"
+                onClick={() => setPrivateClipsLimit(p => p + 8)}
+                className="w-full py-3 mt-2 bg-purple-900 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold text-purple-300 transition flex items-center justify-center gap-2"
               >
-                <ChevronDown size={16} /> Load {Math.min(10, myPrivateClips.length - privateClipsLimit)} more clips
+                <ChevronDown size={16} /> Show {Math.min(8, myPrivateClips.length - privateClipsLimit)} more · {privateClipsLimit}/{myPrivateClips.length}
               </button>
             )}
-            {myPrivateClips.length > 0 && myPrivateClips.length <= privateClipsLimit && privateClipsLimit > 10 && (
+            {myPrivateClips.length > 0 && myPrivateClips.length <= privateClipsLimit && privateClipsLimit > 8 && (
               <button
-                onClick={() => setPrivateClipsLimit(10)}
+                onClick={() => setPrivateClipsLimit(8)}
                 className="w-full mt-2 py-2 text-xs text-purple-600 hover:text-purple-400 transition"
               >
                 Show less
@@ -4025,13 +4090,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       </button>
     ) : (
       <div className="pointer-events-auto w-full max-w-md bg-black bg-opacity-90 backdrop-blur-md border border-purple-700 border-opacity-60 rounded-2xl px-3 py-2.5 shadow-2xl flex items-center gap-3">
-        <button
-          onClick={() => setMiniPlayerCollapsed(true)}
-          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-purple-400 hover:text-white transition"
-          aria-label="Minimize player"
-        >
-          <ChevronUp size={20} />
-        </button>
         <div className="shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
           <Music size={18} />
         </div>
@@ -4039,45 +4097,77 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           <p className="text-sm font-bold truncate text-white">{videoTitle}</p>
           <p className="text-xs text-purple-400 truncate">{artist || 'ChorusClip'}</p>
         </div>
+        {/* Mini-player controls — Spotify layout */}
         <div className="flex items-center gap-1 shrink-0">
+          {/* Restart / Previous */}
           <button
-            onClick={() => currentPlaylistPlayer ? currentPlaylistPlayer.previous?.() : handleLoopRestart()}
-            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-purple-800 transition"
-            aria-label="Previous track"
+            onClick={() => {
+              if (currentPlaylistPlayerRef.current) {
+                currentPlaylistPlayerRef.current.previous?.();
+              } else {
+                handleLoopRestart();
+              }
+            }}
+            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white hover:bg-opacity-10 transition text-white"
+            aria-label="Previous / Restart"
           >
             <SkipBack size={18} />
           </button>
+
+          {/* Play/Pause — primary action, larger */}
           <button
             onClick={togglePlayPause}
-            className="w-11 h-11 flex items-center justify-center rounded-full bg-gradient-to-r from-purple-600 to-pink-600 hover:shadow-lg hover:shadow-purple-500/40 transition"
+            className="w-11 h-11 flex items-center justify-center rounded-full bg-white transition hover:scale-105"
             aria-label={isPlaying ? 'Pause' : 'Play'}
           >
-            {isPlaying ? <Pause size={20}/> : <Play size={20} className="translate-x-[1px]"/>}
+            {isPlaying
+              ? <Pause size={20} fill="black" className="text-black" />
+              : <Play size={20} fill="black" className="text-black ml-0.5" />
+            }
           </button>
+
+          {/* Skip forward — only active in playlist mode */}
           <button
-            onClick={() => {
-              if (currentPlaylistPlayer) {
-                currentPlaylistPlayer.skip?.();
-              } else if (loops.length > 1) {
-                const nextIdx = (currentLoopIndex + 1) % loops.length;
-                setCurrentLoopIndex(nextIdx);
-                currentLoopIndexRef.current = nextIdx;
-                setCurrentLoopIteration(0);
-                currentLoopIterationRef.current = 0;
-                if (playerRef.current?.seekTo) {
-                  playerRef.current.seekTo(loops[nextIdx].start, true);
-                }
-                if (!isPlaying) {
-                  playerRef.current?.playVideo?.();
-                }
-              }
-            }}
-            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-purple-800 transition"
-            aria-label="Next track"
+            onClick={() => { if (currentPlaylistPlayerRef.current?.skip) { currentPlaylistPlayerRef.current.skip(); } else if (loops.length > 1) { const nextIdx = (currentLoopIndex + 1) % loops.length; setCurrentLoopIndex(nextIdx); currentLoopIndexRef.current = nextIdx; setCurrentLoopIteration(0); currentLoopIterationRef.current = 0; if (playerRef.current?.seekTo) playerRef.current.seekTo(loops[nextIdx].start, true); if (!isPlaying) playerRef.current?.playVideo?.(); } }}
+            disabled={!currentPlaylistPlayerRef.current && loops.length <= 1}
+            className="w-9 h-9 flex items-center justify-center rounded-full hover:bg-white hover:bg-opacity-10 transition text-white disabled:opacity-30"
+            aria-label="Skip"
           >
             <SkipForward size={18} />
           </button>
+
+          {/* Loop toggle — shows for standalone, shows repeat for playlist */}
+          {!isPlayingPlaylist ? (
+            <button
+              onClick={() => setStandaloneLoop(v => !v)}
+              className={`w-9 h-9 flex items-center justify-center rounded-full transition relative ${standaloneLoop ? 'text-emerald-400' : 'text-white text-opacity-50 hover:text-opacity-100'}`}
+              aria-label={standaloneLoop ? 'Loop on' : 'Loop off'}
+            >
+              <Repeat size={16} />
+              {standaloneLoop && <span className="absolute -bottom-0.5 w-1 h-1 bg-emerald-400 rounded-full" />}
+            </button>
+          ) : (
+            <button
+              onClick={() => currentPlaylistPlayerRef.current?.toggleRepeat?.()}
+              className={`w-9 h-9 flex items-center justify-center rounded-full transition relative ${currentPlaylistPlayer?.repeatPlaylist ? 'text-emerald-400' : 'text-white text-opacity-50 hover:text-opacity-100'}`}
+              aria-label="Repeat playlist"
+            >
+              <Repeat size={16} />
+              {currentPlaylistPlayer?.repeatPlaylist && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-emerald-500 text-black rounded-full text-xs font-black flex items-center justify-center leading-none">1</span>
+              )}
+            </button>
+          )}
         </div>
+
+        {/* Expand/collapse toggle — ChevronUp to go to Create, ChevronDown to collapse */}
+        <button
+          onClick={() => setMobileTab(mobileTab === 'create' ? 'feed' : 'create')}
+          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white hover:bg-opacity-10 transition text-white shrink-0"
+          title={mobileTab === 'create' ? 'Collapse' : 'Open in Create'}
+        >
+          {mobileTab === 'create' ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
+        </button>
       </div>
     )}
   </div>

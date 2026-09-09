@@ -46,6 +46,8 @@ const [globalLoading, setGlobalLoading] = useState(false);
 const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
 const [myClips, setMyClips] = useState([]);
 const [privateClipsLimit, setPrivateClipsLimit] = useState(8);
+const [libraryClipFilter, setLibraryClipFilter] = useState('all'); // 'all' | 'public' | 'private'
+const [libraryClipSort, setLibraryClipSort] = useState('newest'); // 'newest' | 'plays' | 'likes'
 const [openClipMenuId, setOpenClipMenuId] = useState(null);
 const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
 const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
@@ -3330,6 +3332,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                                           setMyClips(prev => prev.map(c => c.id === clip.id ? { ...c, isPublic: newVal } : c));
                                           showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
                                           loadTrendingClips();
+                                          loadTrendingData();
                                         } catch(e) { showNotification('Failed', 'error'); }
                                         setOpenClipMenuId(null);
                                       }}
@@ -3682,8 +3685,21 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
 {user?.uid && (
   (() => {
-    const myPrivateClips = myClips; // show ALL user clips, public + private
-    const visiblePrivate = myPrivateClips.slice(0, privateClipsLimit);
+    const myPrivateClips = myClips; // all user clips, public + private
+    const publicClipCount = myClips.filter(c => !!c.isPublic).length;
+    const privateClipCount = myClips.length - publicClipCount;
+    const filteredMyClips = myPrivateClips
+      .filter(c => {
+        if (libraryClipFilter === 'public') return !!c.isPublic;
+        if (libraryClipFilter === 'private') return !c.isPublic;
+        return true;
+      })
+      .sort((a, b) => {
+        if (libraryClipSort === 'plays') return (b.plays || 0) - (a.plays || 0);
+        if (libraryClipSort === 'likes') return (b.likes || 0) - (a.likes || 0);
+        return (getCreatedAtValue(b.createdAt) || 0) - (getCreatedAtValue(a.createdAt) || 0);
+      });
+    const visiblePrivate = filteredMyClips.slice(0, privateClipsLimit);
     return (
       <div className="mt-4 border-t border-purple-700 border-opacity-40 pt-4">
         <div className="flex items-center justify-between mb-3">
@@ -3691,11 +3707,48 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             Your Clips ({myPrivateClips.length})
           </p>
           {myPrivateClips.length > 0 && (
-            <p className="text-xs text-purple-600">{visiblePrivate.length}/{myPrivateClips.length} shown</p>
+            <p className="text-xs text-purple-600">{visiblePrivate.length}/{filteredMyClips.length} shown</p>
           )}
         </div>
-        {myPrivateClips.length === 0 ? (
-          <p className="text-xs text-purple-500 text-center py-2">No private clips yet</p>
+        {myPrivateClips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            {[
+              { key: 'all', label: `All (${myClips.length})` },
+              { key: 'public', label: `🌍 Public (${publicClipCount})` },
+              { key: 'private', label: `🔒 Private (${privateClipCount})` },
+            ].map(opt => (
+              <button
+                key={opt.key}
+                onClick={() => { setLibraryClipFilter(opt.key); setOpenClipMenuId(null); }}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold transition border ${
+                  libraryClipFilter === opt.key
+                    ? 'bg-purple-600 border-purple-400 text-white'
+                    : 'bg-purple-900 bg-opacity-40 border-purple-700 text-purple-300 hover:border-purple-500'
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+            <select
+              value={libraryClipSort}
+              onChange={(e) => { setLibraryClipSort(e.target.value); setOpenClipMenuId(null); }}
+              className="ml-auto text-xs font-bold rounded-lg bg-purple-900 bg-opacity-40 border border-purple-700 text-purple-300 px-2 py-1.5 outline-none focus:border-purple-500"
+              aria-label="Sort your clips"
+            >
+              <option value="newest">Newest</option>
+              <option value="plays">Most played</option>
+              <option value="likes">Most likes</option>
+            </select>
+          </div>
+        )}
+        {filteredMyClips.length === 0 ? (
+          <p className="text-xs text-purple-500 text-center py-2">
+            {libraryClipFilter === 'public'
+              ? 'No public clips yet — open a clip\u2019s \u22ee menu and choose \u2018Make Public\u2019 to share it'
+              : libraryClipFilter === 'private'
+                ? 'No private clips yet — your clips are private by default'
+                : 'No clips yet — create one in the editor above'}
+          </p>
         ) : (
           <>
             <div className="space-y-2">
@@ -3752,6 +3805,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                               setMyClips(prev => prev.map(c => c.id === clip.id ? { ...c, isPublic: newVal } : c));
                               showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
                               loadTrendingClips();
+                              loadTrendingData();
                             } catch(e) { showNotification('Failed', 'error'); }
                             setOpenClipMenuId(null);
                           }}
@@ -3805,15 +3859,15 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               ))}
             </div>
-            {myPrivateClips.length > privateClipsLimit && (
+            {filteredMyClips.length > privateClipsLimit && (
               <button
                 onClick={() => setPrivateClipsLimit(p => p + 8)}
                 className="w-full py-3 mt-2 bg-purple-900 bg-opacity-40 hover:bg-opacity-60 rounded-xl text-sm font-semibold text-purple-300 transition flex items-center justify-center gap-2"
               >
-                <ChevronDown size={16} /> Show {Math.min(8, myPrivateClips.length - privateClipsLimit)} more · {privateClipsLimit}/{myPrivateClips.length}
+                <ChevronDown size={16} /> Show {Math.min(8, filteredMyClips.length - privateClipsLimit)} more · {privateClipsLimit}/{filteredMyClips.length}
               </button>
             )}
-            {myPrivateClips.length > 0 && myPrivateClips.length <= privateClipsLimit && privateClipsLimit > 8 && (
+            {filteredMyClips.length > 0 && filteredMyClips.length <= privateClipsLimit && privateClipsLimit > 8 && (
               <button
                 onClick={() => setPrivateClipsLimit(8)}
                 className="w-full mt-2 py-2 text-xs text-purple-600 hover:text-purple-400 transition"

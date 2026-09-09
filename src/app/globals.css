@@ -180,18 +180,6 @@ select option {
   border-color: rgba(180, 83, 9, 0.3) !important;
 }
 
-/* Text — ALL text in gold theme defaults to readable cream/white */
-.theme-gold {
-  --tw-text-opacity: 1;
-}
-
-/* Only override the purple text colors to amber equivalents */
-.theme-gold .text-purple-200 { color: #fef3c7 !important; }
-.theme-gold .text-purple-300 { color: #fcd34d !important; }
-.theme-gold .text-purple-400 { color: #f59e0b !important; }
-.theme-gold .text-purple-500 { color: #d97706 !important; }
-.theme-gold .text-purple-600 { color: #b45309 !important; }
-
 /* Borders */
 .theme-gold .border-purple-700 { border-color: rgba(180, 83, 9, 0.35) !important; }
 .theme-gold .border-purple-500 { border-color: rgba(217, 119, 6, 0.5) !important; }
@@ -205,6 +193,44 @@ select option {
 
 /* Scrollbar */
 .theme-gold ::-webkit-scrollbar-thumb { background: rgba(180, 83, 9, 0.5) !important; }
+
+/* ===== UNIFIED READABLE-TEXT RULE — applied to BOTH themes =====
+   Rule: body text is always light. Section titles = white. Subtitles /
+   descriptions = rgba(255,255,255,0.75). Meta text (counts, timestamps,
+   creators, captions) = rgba(255,255,255,0.55). Colored text is reserved
+   for badges, buttons, icons, and decorative accents ONLY. Surfaces stay
+   dark and themed. Text stays light always. No exceptions. */
+.theme-gold,
+.theme-classic {
+  color-scheme: dark;
+}
+
+/* Default text – body & flat content */
+.theme-gold, .theme-classic {
+  color: #ffffff;
+}
+
+/* Section titles / headings */
+.theme-gold h1, .theme-gold h2, .theme-gold h3,
+.theme-classic h1, .theme-classic h2, .theme-classic h3 {
+  color: #ffffff;
+}
+
+/* Subtitles & descriptions → 75% */
+.theme-gold .text-purple-300,
+.theme-classic .text-purple-300 { color: rgba(255, 255, 255, 0.75) !important; }
+.theme-gold .text-purple-200,
+.theme-classic .text-purple-200 { color: rgba(255, 255, 255, 0.75) !important; }
+
+/* Meta text → 55% (clip counts, timestamps, creators, captions) */
+.theme-gold .text-purple-400,
+.theme-classic .text-purple-400 { color: rgba(255, 255, 255, 0.55) !important; }
+.theme-gold .text-purple-500,
+.theme-classic .text-purple-500 { color: rgba(255, 255, 255, 0.55) !important; }
+.theme-gold .text-purple-600,
+.theme-classic .text-purple-600 { color: rgba(255, 255, 255, 0.55) !important; }
+.theme-gold .text-purple-700,
+.theme-classic .text-purple-700 { color: rgba(255, 255, 255, 0.55) !important; }
 
 /* ===== CLASSIC / PURPLE THEME ===== */
 .theme-classic {

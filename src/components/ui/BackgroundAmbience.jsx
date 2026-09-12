@@ -1,86 +1,50 @@
 'use client';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
-// Verified live free MP4s — Pixabay (no attribution required)
-// Themed for ChorusClip: party, disco, DJ lights, crowd, dancing.
-// All URLs below have been verified reachable (HTTP 200). The component
-// skips any that fail to load via onError handlers.
-// Mixed 16:9 and 9:16 to cover landscape + portrait devices
+// Iconic official NFL performances, used muted as low-contrast ambience.
 const BG_VIDEOS = [
-  "https://cdn.pixabay.com/video/2022/05/20/117578-712237103_large.mp4", // Club / Disco / Show colors
-  "https://cdn.pixabay.com/video/2016/05/01/2947-164969505_medium.mp4", // Disco DJ waves of light
-  "https://cdn.pixabay.com/video/2015/12/12/1670-148708866_large.mp4", // Party / music / dancing
-  "https://cdn.pixabay.com/video/2015/12/13/1678-148781678_large.mp4", // Party / celebration lights
-  "https://cdn.pixabay.com/video/2016/05/12/3129-166335878_large.mp4", // Concert / stage lights
-  "https://cdn.pixabay.com/video/2016/09/13/5154-183300180_large.mp4", // Party crowd / lights
-  "https://cdn.pixabay.com/video/2016/11/15/6436-191745480_large.mp4"  // Disco / party atmosphere
+  { id: 'c9cUytejf1k', start: 35, title: 'Coldplay, Beyoncé and Bruno Mars — Super Bowl 50' },
+  { id: 'gdsUKphmB3Y', start: 25, title: 'Dr. Dre, Snoop Dogg, Eminem, Mary J. Blige, Kendrick Lamar and 50 Cent — Super Bowl LVI' }
 ];
+
+const getEmbedUrl = ({ id, start }) => (
+  `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&loop=1&playlist=${id}&playsinline=1&rel=0&start=${start}`
+);
 
 const BackgroundAmbience = ({ theme = 'purple' }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
-  const [nextIdx, setNextIdx] = useState(1);
-  const [transitioning, setTransitioning] = useState(false);
-  const currentRef = useRef(null);
-  const nextRef = useRef(null);
-  const timerRef = useRef(null);
 
   const gradientClass = theme === 'gold'
-    ? 'bg-gradient-to-br from-yellow-950/96 via-amber-950/94 to-orange-950/96'
-    : 'bg-gradient-to-br from-purple-950/96 via-indigo-950/94 to-purple-900/96';
-
-  const cycleVideo = () => {
-    const next = (currentIdx + 1) % BG_VIDEOS.length;
-    setNextIdx(next);
-    setTransitioning(true);
-    setTimeout(() => {
-      setCurrentIdx(next);
-      setTransitioning(false);
-    }, 1000); // 1s crossfade
-  };
+    ? 'bg-gradient-to-br from-yellow-950/94 via-amber-950/93 to-orange-950/95'
+    : 'bg-gradient-to-br from-purple-950/94 via-indigo-950/93 to-purple-900/95';
 
   useEffect(() => {
-    timerRef.current = setInterval(cycleVideo, 6000); // 6s per video
-    return () => clearInterval(timerRef.current);
-  }, [currentIdx]);
-
-  useEffect(() => {
-    if (currentRef.current) {
-      currentRef.current.load();
-      currentRef.current.play().catch(() => {});
-    }
-  }, [currentIdx]);
+    const timer = setInterval(() => {
+      setCurrentIdx(index => (index + 1) % BG_VIDEOS.length);
+    }, 24000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
-    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
-      {/* Current video */}
-      <video
-        ref={currentRef}
-        key={`current-${currentIdx}`}
-        autoPlay
-        loop
-        muted
-        playsInline
-        preload="auto"
-        onError={() => setCurrentIdx((currentIdx + 1) % BG_VIDEOS.length)}
-        className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-1000 ${transitioning ? 'opacity-0' : 'opacity-100'}`}
-        style={{ filter: 'brightness(0.2) saturate(1.4)', transform: 'scale(1.05)' }}
-      >
-        <source src={BG_VIDEOS[currentIdx]} type="video/mp4" />
-      </video>
-
-      {/* Next video preloading (hidden) */}
-      <video
-        ref={nextRef}
-        key={`next-${nextIdx}`}
-        muted
-        playsInline
-        preload="auto"
-        onError={() => setNextIdx((nextIdx + 1) % BG_VIDEOS.length)}
-        className="absolute inset-0 w-full h-full object-cover opacity-0 pointer-events-none"
-        style={{ filter: 'brightness(0.2) saturate(1.4)', transform: 'scale(1.05)' }}
-      >
-        <source src={BG_VIDEOS[nextIdx]} type="video/mp4" />
-      </video>
+    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-black">
+      {BG_VIDEOS.map((video, index) => (
+        <div
+          key={`poster-${video.id}`}
+          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ${index === currentIdx ? 'opacity-100' : 'opacity-0'}`}
+          style={{ backgroundImage: `url(https://i.ytimg.com/vi/${video.id}/maxresdefault.jpg)` }}
+          aria-hidden="true"
+        />
+      ))}
+      <iframe
+        key={BG_VIDEOS[currentIdx].id}
+        src={getEmbedUrl(BG_VIDEOS[currentIdx])}
+        title={BG_VIDEOS[currentIdx].title}
+        allow="autoplay; encrypted-media; picture-in-picture"
+        tabIndex="-1"
+        aria-hidden="true"
+        className="absolute left-1/2 top-1/2 h-[56.25vw] min-h-full w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 border-0"
+        style={{ filter: 'brightness(0.42) saturate(1.25)', transform: 'translate(-50%, -50%) scale(1.03)' }}
+      />
 
       {/* Gradient overlay — theme-aware */}
       <div className={`absolute inset-0 ${gradientClass}`} />

@@ -53,6 +53,7 @@ const [openClipMenuId, setOpenClipMenuId] = useState(null);
 const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
 const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
 const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list'
+const [desktopView, setDesktopView] = useState('overview'); // focused desktop workspace
 
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
@@ -104,11 +105,13 @@ const [playlistQueueIndex, setPlaylistQueueIndex] = useState(0);
 const [isPlayingQueue, setIsPlayingQueue] = useState(false);
 // Clip queue — individual clips queued to play consecutively (cross-device)
 const [clipQueue, setClipQueue] = useState([]);
+const [, setQueueOrder] = useState([]);
 const [standaloneLoop, setStandaloneLoop] = useState(false);
 const [mobileTab, setMobileTab] = useState('create'); // 'create' | 'feed' | 'library' | 'more'
 const [expandedSections, setExpandedSections] = useState([0]); // section 0 always open
 const playlistQueueRef = useRef([]);
 const clipQueueRef = useRef([]);
+const queueOrderRef = useRef([]);
 const playlistQueueIndexRef = useRef(0);
 
 const formatSeconds = (seconds) => {
@@ -387,6 +390,21 @@ useEffect(() => {
   return () => document.removeEventListener('click', close);
 }, [openClipMenuId]);
 
+// Treat the queue like a native modal: lock the page behind it and support Escape.
+useEffect(() => {
+  if (!queueDrawerOpen) return;
+  const previousOverflow = document.body.style.overflow;
+  const closeOnEscape = (event) => {
+    if (event.key === 'Escape') setQueueDrawerOpen(false);
+  };
+  document.body.style.overflow = 'hidden';
+  document.addEventListener('keydown', closeOnEscape);
+  return () => {
+    document.body.style.overflow = previousOverflow;
+    document.removeEventListener('keydown', closeOnEscape);
+  };
+}, [queueDrawerOpen]);
+
 useEffect(() => {
   if (user?.appTheme === 'classic' || user?.appTheme === 'electric') {
     setThemeMode(user.appTheme);
@@ -427,6 +445,10 @@ const handleThemeToggle = async () => {
     setSelectedClipsForPlaylist([]);
     setPlaylistQueue([]);
     playlistQueueRef.current = [];
+    setClipQueue([]);
+    clipQueueRef.current = [];
+    setQueueOrder([]);
+    queueOrderRef.current = [];
     setPlaylistQueueIndex(0);
     playlistQueueIndexRef.current = 0;
     setIsPlayingQueue(false);
@@ -672,13 +694,15 @@ const loadUserPlaylists = async () => {
 const loadSavedQueue = async () => {
   if (!user?.uid) return;
   try {
-    const { loadQueueFromFirestore, loadClipQueueFromFirestore } = await import('../lib/firebase');
+    const { loadQueueFromFirestore, loadClipQueueFromFirestore, loadQueueOrderFromFirestore } = await import('../lib/firebase');
+    let hydrated = [];
+    let ordered = [];
     const savedIds = await loadQueueFromFirestore(user.uid);
     if (savedIds && savedIds.length > 0) {
       const { getUserPlaylists } = await import('../utils/playlistUtils');
       const userPlaylists = await getUserPlaylists(user.uid);
 
-      const hydrated = savedIds
+      hydrated = savedIds
         .map(id => userPlaylists.find(p => p.id === id))
         .filter(Boolean)
         .slice(0, 10);
@@ -699,7 +723,7 @@ const loadSavedQueue = async () => {
       const snap = await getDocs(q);
       const fetched = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       // Preserve the order the user queued them in
-      const ordered = savedClipIds
+      ordered = savedClipIds
         .map(id => fetched.find(c => c.id === id))
         .filter(Boolean)
         .slice(0, 10);
@@ -708,6 +732,18 @@ const loadSavedQueue = async () => {
         clipQueueRef.current = ordered;
       }
     }
+
+    const availableKeys = [
+      ...hydrated.map(playlist => `pl:${playlist.id}`),
+      ...ordered.map(clip => `clip:${clip.id}`)
+    ];
+    const savedOrder = await loadQueueOrderFromFirestore(user.uid);
+    const restoredOrder = [
+      ...savedOrder.filter(key => availableKeys.includes(key)),
+      ...availableKeys.filter(key => !savedOrder.includes(key))
+    ];
+    setQueueOrder(restoredOrder);
+    queueOrderRef.current = restoredOrder;
   } catch (e) {
     console.error('Queue restore failed:', e);
   }
@@ -935,19 +971,31 @@ const initAndPlay = (targetPlaylist, player, onReady) => {
 };
 
 // Playlist Queue helpers
+const updateQueueOrder = (nextOrder) => {
+  setQueueOrder(nextOrder);
+  queueOrderRef.current = nextOrder;
+  if (user?.uid) {
+    import('../lib/firebase').then(({ saveQueueOrderToFirestore }) => {
+      saveQueueOrderToFirestore(user.uid, nextOrder);
+    });
+  }
+};
+
 const handleAddToQueue = (playlist) => {
-  if (playlistQueue.some(p => p.id === playlist.id)) {
+  const currentQueue = playlistQueueRef.current;
+  if (currentQueue.some(p => p.id === playlist.id)) {
     showNotification('Already in queue!', 'info');
     return;
   }
-  if (playlistQueue.length >= 10) {
-    showNotification('Queue holds max 10 playlists', 'error');
+  if (currentQueue.length + clipQueueRef.current.length >= 10) {
+    showNotification('Queue holds up to 10 items', 'error');
     return;
   }
-  const newQueue = [...playlistQueue, playlist];
+  const newQueue = [...currentQueue, playlist];
   setPlaylistQueue(newQueue);
   playlistQueueRef.current = newQueue;
-  showNotification(`Added "${playlist.name}" to queue (${newQueue.length}/10)`, 'success');
+  updateQueueOrder([...queueOrderRef.current, `pl:${playlist.id}`]);
+  showNotification(`Added "${playlist.name}" to queue (${newQueue.length + clipQueueRef.current.length}/10)`, 'success');
   if (user?.uid) {
     import('../lib/firebase').then(({ saveQueueToFirestore }) => {
       saveQueueToFirestore(user.uid, newQueue.map(p => p.id));
@@ -956,9 +1004,10 @@ const handleAddToQueue = (playlist) => {
 };
 
 const handleRemoveFromQueue = (playlistId) => {
-  const newQueue = playlistQueue.filter(p => p.id !== playlistId);
+  const newQueue = playlistQueueRef.current.filter(p => p.id !== playlistId);
   setPlaylistQueue(newQueue);
   playlistQueueRef.current = newQueue;
+  updateQueueOrder(queueOrderRef.current.filter(key => key !== `pl:${playlistId}`));
   if (user?.uid) {
     import('../lib/firebase').then(({ saveQueueToFirestore }) => {
       saveQueueToFirestore(user.uid, newQueue.map(p => p.id));
@@ -968,18 +1017,20 @@ const handleRemoveFromQueue = (playlistId) => {
 
 // Clip queue — individual clips can be queued without making a playlist
 const handleAddClipToQueue = (clip) => {
-  if (clipQueue.some(c => c.id === clip.id)) {
+  const currentQueue = clipQueueRef.current;
+  if (currentQueue.some(c => c.id === clip.id)) {
     showNotification('Already in queue!', 'info');
     return;
   }
-  if (clipQueue.length >= 10) {
-    showNotification('Queue holds max 10 clips', 'error');
+  if (playlistQueueRef.current.length + currentQueue.length >= 10) {
+    showNotification('Queue holds up to 10 items', 'error');
     return;
   }
-  const newQueue = [...clipQueue, clip];
+  const newQueue = [...currentQueue, clip];
   setClipQueue(newQueue);
   clipQueueRef.current = newQueue;
-  showNotification(`Added "${clip.title}" to queue (${newQueue.length}/10)`, 'success');
+  updateQueueOrder([...queueOrderRef.current, `clip:${clip.id}`]);
+  showNotification(`Added "${clip.title}" to queue (${playlistQueueRef.current.length + newQueue.length}/10)`, 'success');
   if (user?.uid) {
     import('../lib/firebase').then(({ saveClipQueueToFirestore }) => {
       saveClipQueueToFirestore(user.uid, newQueue.map(c => c.id));
@@ -988,9 +1039,10 @@ const handleAddClipToQueue = (clip) => {
 };
 
 const handleRemoveClipFromQueue = (clipId) => {
-  const newQueue = clipQueue.filter(c => c.id !== clipId);
+  const newQueue = clipQueueRef.current.filter(c => c.id !== clipId);
   setClipQueue(newQueue);
   clipQueueRef.current = newQueue;
+  updateQueueOrder(queueOrderRef.current.filter(key => key !== `clip:${clipId}`));
   if (user?.uid) {
     import('../lib/firebase').then(({ saveClipQueueToFirestore }) => {
       saveClipQueueToFirestore(user.uid, newQueue.map(c => c.id));
@@ -1003,14 +1055,49 @@ const handleRemoveQueueItem = (kind, id) => {
   else handleRemoveFromQueue(id);
 };
 
-// Unified queue — playlists first, then individual clips. Playback order matches
-// what the drawer displays.
+// Convert everything currently queued into the existing playlist staging flow.
+// Queued playlists are expanded in playback order and duplicate clips are removed.
+const handleSaveQueueToPlaylist = () => {
+  if (!user?.uid) {
+    showNotification('Sign in to save the queue as a playlist', 'error');
+    setShowAuthModal(true);
+    return;
+  }
+
+  const queuedClips = buildCombinedQueue().flatMap(item => (
+    item.kind === 'playlist' ? (item.data.clips || []) : [item.data]
+  ));
+  const uniqueClips = queuedClips.reduce((result, clip) => {
+    if (!isClipDuplicate(clip, result)) result.push(clip);
+    return result;
+  }, []);
+
+  if (uniqueClips.length === 0) {
+    showNotification('There are no clips in this queue to save', 'info');
+    return;
+  }
+
+  const staged = uniqueClips.slice(0, 10);
+  setSelectedClipsForPlaylist(staged);
+  setShowPlaylistModal(true);
+  setQueueDrawerOpen(false);
+  if (uniqueClips.length > 10) {
+    showNotification('The first 10 unique clips are ready to save', 'info');
+  }
+};
+
+// Unified queue order is shared by display, playback and cross-device persistence.
 const buildCombinedQueue = () => {
   const playlists = playlistQueueRef.current || [];
   const clips = clipQueueRef.current || [];
+  const items = [
+    ...playlists.map(p => ({ kind: 'playlist', key: `pl:${p.id}`, id: p.id, data: p, name: p.name, artist: '', subtitle: `${p.clips?.length || 0} clips` })),
+    ...clips.map(c => ({ kind: 'clip', key: `clip:${c.id}`, id: c.id, data: c, name: c.title, artist: c.artist, subtitle: c.artist }))
+  ];
+  const itemsByKey = new Map(items.map(item => [item.key, item]));
   return [
-    ...playlists.map(p => ({ kind: 'playlist', data: p, name: p.name })),
-    ...clips.map(c => ({ kind: 'clip', data: c, name: c.title }))
+    ...queueOrderRef.current.map(key => itemsByKey.get(key)).filter(Boolean),
+    ...items.filter(item => !queueOrderRef.current.includes(item.key))
   ];
 };
 
@@ -1019,6 +1106,7 @@ const reorderCombinedQueue = (fromIdx, toIdx) => {
   if (fromIdx < 0 || toIdx < 0 || fromIdx >= items.length || toIdx >= items.length || fromIdx === toIdx) return;
   const [moved] = items.splice(fromIdx, 1);
   items.splice(toIdx, 0, moved);
+  updateQueueOrder(items.map(item => item.key));
   const newPlaylists = items.filter(i => i.kind === 'playlist').map(i => i.data);
   const newClips = items.filter(i => i.kind === 'clip').map(i => i.data);
   setPlaylistQueue(newPlaylists);
@@ -1799,6 +1887,10 @@ const handleUnlikeClip = async (clipId) => {
       setSelectedClipsForPlaylist([]);
       setPlaylistQueue([]);
       playlistQueueRef.current = [];
+      setClipQueue([]);
+      clipQueueRef.current = [];
+      setQueueOrder([]);
+      queueOrderRef.current = [];
       setPlaylistQueueIndex(0);
       playlistQueueIndexRef.current = 0;
       setIsPlayingQueue(false);
@@ -1961,11 +2053,7 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
     ? trendingByPlays.slice(0, 5)
     : (feedExpanded ? filteredClips.slice(0, feedPage * FEED_PAGE_SIZE) : filteredClips.slice(0, 5));
 
-  // Unified queue for display — playlists first, then individual clips
-  const combinedQueueItems = [
-    ...playlistQueue.map(p => ({ kind: 'playlist', key: `pl:${p.id}`, id: p.id, name: p.name, artist: '', subtitle: `${p.clips?.length || 0} clips`, data: p })),
-    ...clipQueue.map(c => ({ kind: 'clip', key: `clip:${c.id}`, id: c.id, name: c.title, artist: c.artist, subtitle: c.artist, data: c }))
-  ];
+  const combinedQueueItems = buildCombinedQueue();
   
   return (
     <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-gold' : 'theme-classic'}`}>
@@ -2473,7 +2561,67 @@ className="btn-primary w-full py-5 text-xl">
 
       {/* Main content */}
       <div className="main-content-area max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 relative z-10 pb-28">
-  <div className="flex flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-6 xl:gap-10 xl:items-start">
+  {/* Desktop dashboard — one focused workspace at a time. Mobile keeps its tab flow. */}
+  <section className="hidden md:block mb-8">
+    {desktopView === 'overview' ? (
+      <div className="rounded-[2rem] border border-purple-700/40 bg-black/55 backdrop-blur-2xl p-7 lg:p-10 shadow-2xl">
+        <div className="max-w-2xl mb-8">
+          <p className="text-xs font-black uppercase tracking-[0.3em] text-purple-400 mb-3">Your music workspace</p>
+          <h2 className="text-4xl lg:text-5xl font-black tracking-tight text-white">What are we doing?</h2>
+          <p className="mt-3 text-purple-200 text-lg">Choose a space. ChorusClip will keep everything else out of your way.</p>
+        </div>
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
+          {[
+            { key: 'create', icon: '✂️', title: 'Clip Studio', copy: 'Load a song and shape the exact moment.' },
+            { key: 'clips', icon: '🔥', title: 'Discover Clips', copy: `${clips.length || 'Fresh'} community moments to explore.` },
+            { key: 'playlists', icon: '🎧', title: 'Playlist Picks', copy: `${publicPlaylists.length || 'Curated'} public collections ready to play.` },
+            { key: 'community', icon: '🏆', title: 'Community', copy: 'Creators, rankings and the artists moving campus.' },
+            { key: 'library', icon: '📚', title: 'Your Library', copy: user?.uid ? `${myClips.length} clips · ${playlists.length} playlists` : 'Sign in to see your saved collection.' },
+            { key: 'about', icon: '✨', title: 'About & Help', copy: 'How it works, mobile tips and support.' }
+          ].map(item => (
+            <button
+              key={item.key}
+              onClick={() => setDesktopView(item.key)}
+              className="group min-h-44 text-left rounded-3xl border border-purple-700/40 bg-purple-950/45 hover:bg-purple-900/65 hover:border-purple-400/70 p-6 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-purple-950/70 focus:outline-none focus:ring-2 focus:ring-purple-400"
+            >
+              <span className="text-3xl block mb-5" aria-hidden="true">{item.icon}</span>
+              <span className="flex items-center justify-between gap-3">
+                <span className="text-xl font-black text-white">{item.title}</span>
+                <span className="text-purple-500 group-hover:text-purple-200 group-hover:translate-x-1 transition-all">→</span>
+              </span>
+              <span className="block mt-2 text-sm leading-relaxed text-purple-300">{item.copy}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    ) : (
+      <div className="sticky top-[76px] z-30 rounded-2xl border border-purple-700/40 bg-black/85 backdrop-blur-2xl px-4 py-3 shadow-xl flex items-center gap-3">
+        <button
+          onClick={() => setDesktopView('overview')}
+          className="shrink-0 min-h-11 px-4 rounded-xl bg-purple-800/70 hover:bg-purple-700 font-bold text-sm transition flex items-center gap-2"
+        >
+          ← Dashboard
+        </button>
+        <div className="h-7 w-px bg-purple-700/50" />
+        <div className="flex gap-2 overflow-x-auto py-1">
+          {[
+            ['create', 'Studio'], ['clips', 'Clips'], ['playlists', 'Picks'],
+            ['community', 'Community'], ['library', 'Library'], ['about', 'About']
+          ].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setDesktopView(key)}
+              className={`shrink-0 px-4 py-2 rounded-xl text-sm font-bold transition ${desktopView === key ? 'bg-purple-500 text-white shadow-lg' : 'text-purple-300 hover:bg-purple-900/70'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+    )}
+  </section>
+
+  <div className="flex flex-col gap-6 max-w-5xl mx-auto">
     {/* YouTube player container — always in DOM so handlePlayPlaylist can create
         a YT.Player immediately without waiting for a React re-render.
         Kept outside all tab-hidden containers so audio keeps playing on every
@@ -2481,7 +2629,7 @@ className="btn-primary w-full py-5 text-xl">
     <div id="youtube-player" style={{position:'fixed',top:'-9999px',width:'2px',height:'2px',overflow:'hidden'}} aria-hidden="true"></div>
     {/* LEFT COLUMN - Create Loop */}
     <div className={`space-y-6 ${mobileTab !== 'create' && mobileTab !== 'more' ? 'hidden md:block' : ''}`}>
-            <div className={mobileTab === 'more' ? 'hidden md:block' : ''}>
+            <div className={`${mobileTab === 'more' ? 'hidden' : ''} ${desktopView === 'create' ? 'md:block' : 'md:hidden'}`}>
             <div 
 className="card">          
 <div className="flex justify-between items-center mb-6">
@@ -2991,7 +3139,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
             </div>
 
-            <div className={`${mobileTab !== 'more' ? 'hidden md:block' : ''}`}>
+            <div className={`${mobileTab !== 'more' ? 'hidden' : ''} ${desktopView === 'about' ? 'md:block' : 'md:hidden'}`}>
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
               <h3 className="font-black text-xl mb-4 flex items-center gap-2 text-white">
                 <Sparkles size={24} className="text-yellow-400" />
@@ -3036,7 +3184,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">📋</span>
-                  <span>Queue up to 10 playlists and play them back-to-back</span>
+                  <span>Queue up to 10 clips or playlists, reorder them, and save the queue as a playlist</span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-purple-400 text-lg">👥</span>
@@ -3075,7 +3223,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
 
           <div className={`space-y-6 ${mobileTab === 'create' || mobileTab === 'more' ? 'hidden md:block' : ''}`}>
-            <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
+            <div className={`${mobileTab === 'library' ? 'hidden' : ''} ${desktopView === 'clips' ? 'md:block' : 'md:hidden'}`}>
             <div className="card">
               {/* Clip search */}
               <div className="relative mb-4">
@@ -3447,7 +3595,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
             </div>
 
-            <div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
+            <div className={`${mobileTab === 'library' ? 'hidden' : ''} ${desktopView === 'playlists' ? 'md:block' : 'md:hidden'}`}>
 {publicPlaylistShowcase.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
     <div className="flex items-start justify-between gap-3 mb-4">
@@ -3505,13 +3653,20 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </div>
   </div>
 )}
+{publicPlaylistShowcase.length === 0 && desktopView === 'playlists' && (
+  <div className="hidden md:block card text-center py-16">
+    <Music size={42} className="mx-auto text-purple-500 mb-4" />
+    <h3 className="text-2xl font-black text-white">Playlist picks are warming up</h3>
+    <p className="text-purple-300 mt-2">Public community playlists will appear here as soon as they are shared.</p>
+  </div>
+)}
             </div>
 
 {/* Section divider */}
-<div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2" />
+<div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2 md:hidden" />
 
 {/* FEED WRAPPER — Leaderboard + Top Artists (discovery content) */}
-<div className={mobileTab === 'library' ? 'hidden md:block' : ''}>
+<div className={`${mobileTab === 'library' ? 'hidden' : ''} ${desktopView === 'community' ? 'md:block' : 'md:hidden'}`}>
 
             {/* STRATHMORE LEADERBOARD SECTION */}
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
@@ -3601,7 +3756,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
 
             {/* Section divider */}
-            <div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2" />
+            <div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2 md:hidden" />
 
 <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50">
   <button
@@ -3703,7 +3858,16 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               </div>
             )}
 
-            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
+            {!user?.uid && desktopView === 'library' && (
+              <div className="hidden md:block card text-center py-16">
+                <ListMusic size={44} className="mx-auto text-purple-400 mb-4" />
+                <h3 className="text-2xl font-black text-white">Your library lives here</h3>
+                <p className="text-purple-300 mt-2 mb-6">Sign in to open your clips, playlists and saved queue.</p>
+                <button onClick={() => setShowAuthModal(true)} className="btn-primary px-7 py-3">Sign In</button>
+              </div>
+            )}
+
+            <div className={`${mobileTab === 'feed' ? 'hidden' : ''} ${desktopView === 'library' ? 'md:block' : 'md:hidden'}`}>
 {user?.uid && (
   (() => {
     const myPrivateClips = myClips; // all user clips, public + private
@@ -3904,7 +4068,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 )}
             </div>
 
-            <div className={mobileTab === 'feed' ? 'hidden md:block' : ''}>
+            <div className={`${mobileTab === 'feed' ? 'hidden' : ''} ${desktopView === 'library' ? 'md:block' : 'md:hidden'}`}>
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
   <div className="bg-purple-900 bg-opacity-30 border border-purple-700 border-opacity-40 rounded-2xl mt-6">
@@ -4193,37 +4357,58 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   </div>
 )}
 
-{/* Floating queue indicator — always visible when queue has items */}
+{/* Queue launcher — compact floating action on mobile, edge rail on desktop */}
 {combinedQueueItems.length > 0 && (
   <button
-    onClick={() => setQueueDrawerOpen(v => !v)}
-    className="fixed right-0 top-1/2 -translate-y-1/2 z-50 bg-yellow-600 hover:bg-yellow-500 text-black font-black py-6 px-2 rounded-l-2xl shadow-xl transition-all"
-    style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
-    aria-label="Toggle queue"
+    onClick={() => setQueueDrawerOpen(true)}
+    className={`fixed right-3 z-40 min-h-12 px-4 rounded-full bg-yellow-500 hover:bg-yellow-400 active:scale-95 text-black font-black shadow-2xl transition-all flex items-center gap-2 md:right-0 md:top-1/2 md:bottom-auto md:-translate-y-1/2 md:min-h-0 md:py-6 md:px-2 md:rounded-l-2xl md:rounded-r-none ${videoTitle ? 'bottom-36' : 'bottom-20'} md:[writing-mode:vertical-rl]`}
+    aria-label={`Open play queue with ${combinedQueueItems.length} items`}
+    aria-expanded={queueDrawerOpen}
   >
-    <span className="text-xs font-black">QUEUE {combinedQueueItems.length}</span>
+    <ListMusic size={18} className="md:hidden" />
+    <span className="text-xs font-black">QUEUE</span>
+    <span className="min-w-5 h-5 px-1 rounded-full bg-black text-yellow-300 text-xs flex items-center justify-center md:bg-transparent md:text-black md:p-0">
+      {combinedQueueItems.length}
+    </span>
   </button>
 )}
 
 {/* Side drawer — unified queue (playlists + individual clips) */}
 {queueDrawerOpen && (
-  <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setQueueDrawerOpen(false)}>
+  <div className="fixed inset-0 z-50 flex items-end md:items-stretch md:justify-end bg-black/70 backdrop-blur-sm" onClick={() => setQueueDrawerOpen(false)}>
     <div
-      className="w-80 max-w-[85vw] h-full bg-gradient-to-b from-yellow-900 to-amber-950 border-l border-yellow-700 shadow-2xl overflow-y-auto flex flex-col"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="queue-title"
+      className="w-full max-h-[85dvh] rounded-t-3xl bg-gradient-to-b from-yellow-900 to-amber-950 border-t border-yellow-700 shadow-2xl overflow-hidden flex flex-col md:w-96 md:max-w-[90vw] md:max-h-none md:h-full md:rounded-none md:border-t-0 md:border-l"
       onClick={e => e.stopPropagation()}
     >
+      <div className="md:hidden flex justify-center pt-2 pb-1" aria-hidden="true">
+        <span className="w-10 h-1 rounded-full bg-yellow-600" />
+      </div>
       <div className="flex items-center justify-between px-5 py-4 border-b border-yellow-700">
-        <h3 className="font-black text-lg text-yellow-300">Play Queue ({combinedQueueItems.length})</h3>
-        <button onClick={() => setQueueDrawerOpen(false)} className="text-yellow-400 hover:text-white text-xl">✕</button>
+        <div>
+          <h3 id="queue-title" className="font-black text-lg text-yellow-300">Up next</h3>
+          <p className="text-xs text-yellow-500">{combinedQueueItems.length} item{combinedQueueItems.length !== 1 ? 's' : ''} in your queue</p>
+        </div>
+        <button onClick={() => setQueueDrawerOpen(false)} className="w-11 h-11 flex items-center justify-center rounded-full text-yellow-300 hover:bg-white/10" aria-label="Close queue">
+          <X size={22} />
+        </button>
       </div>
 
       {/* Edit Order toggle */}
-      <div className="px-5 py-3 border-b border-yellow-800">
+      <div className="px-5 py-3 border-b border-yellow-800 flex items-center gap-2">
         <button
           onClick={() => setQueueEditMode(v => !v)}
-          className={`text-sm font-bold px-4 py-2 rounded-xl transition ${queueEditMode ? 'bg-yellow-500 text-black' : 'bg-yellow-900 text-yellow-300 hover:bg-yellow-800'}`}
+          className={`min-h-11 text-sm font-bold px-4 py-2 rounded-xl transition ${queueEditMode ? 'bg-yellow-500 text-black' : 'bg-yellow-900 text-yellow-300 hover:bg-yellow-800'}`}
         >
           {queueEditMode ? 'Done Editing' : 'Edit Order'}
+        </button>
+        <button
+          onClick={handleSaveQueueToPlaylist}
+          className="min-h-11 flex-1 text-sm font-bold px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white transition flex items-center justify-center gap-1.5"
+        >
+          <Plus size={16} /> Save as Playlist
         </button>
       </div>
 
@@ -4251,7 +4436,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 : 'border-yellow-800 bg-yellow-900 bg-opacity-30'
               }`}
             >
-              {queueEditMode && <span className="text-yellow-500 text-lg cursor-grab">⠿</span>}
+              {queueEditMode && <span className="hidden md:inline text-yellow-500 text-lg cursor-grab">⠿</span>}
               <button
                 onClick={() => { handlePlayQueue(qi); setQueueDrawerOpen(false); }}
                 className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition ${
@@ -4273,10 +4458,17 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </p>
               </div>
               {queueEditMode && (
-                <button
-                  onClick={() => handleRemoveQueueItem(item.kind, item.id)}
-                  className="w-7 h-7 flex items-center justify-center rounded-full bg-red-900 bg-opacity-50 hover:bg-red-700 text-red-400 text-xs transition"
-                >✕</button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => reorderCombinedQueue(qi, qi - 1)} disabled={qi === 0}
+                    className="md:hidden w-10 h-10 rounded-full text-yellow-300 bg-yellow-950 disabled:opacity-25" aria-label={`Move ${item.name} up`}>↑</button>
+                  <button onClick={() => reorderCombinedQueue(qi, qi + 1)} disabled={qi === combinedQueueItems.length - 1}
+                    className="md:hidden w-10 h-10 rounded-full text-yellow-300 bg-yellow-950 disabled:opacity-25" aria-label={`Move ${item.name} down`}>↓</button>
+                  <button
+                    onClick={() => handleRemoveQueueItem(item.kind, item.id)}
+                    className="w-10 h-10 flex items-center justify-center rounded-full bg-red-900 bg-opacity-50 hover:bg-red-700 text-red-300 transition"
+                    aria-label={`Remove ${item.name} from queue`}
+                  ><X size={16} /></button>
+                </div>
               )}
             </div>
           ))
@@ -4284,7 +4476,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       </div>
 
       {/* Actions */}
-      <div className="px-5 py-4 border-t border-yellow-800 space-y-2">
+      <div className="px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-yellow-800 space-y-2 bg-amber-950">
         {!isPlayingQueue && (
           <button
             onClick={() => { handlePlayQueue(0); setQueueDrawerOpen(false); }}
@@ -4299,6 +4491,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             playlistQueueRef.current = [];
             setClipQueue([]);
             clipQueueRef.current = [];
+            updateQueueOrder([]);
             if (user?.uid) {
               import('../lib/firebase').then(({ saveQueueToFirestore, saveClipQueueToFirestore }) => {
                 saveQueueToFirestore(user.uid, []);

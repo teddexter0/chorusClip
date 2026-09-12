@@ -562,6 +562,28 @@ export const loadClipQueueFromFirestore = async (userId) => {
   }
 };
 
+// Unified display/playback order for the two queue collections above.
+export const saveQueueOrderToFirestore = async (userId, queueKeys) => {
+  try {
+    await updateDoc(doc(db, 'users', userId), {
+      savedQueueOrder: queueKeys,
+      queueUpdatedAt: new Date()
+    });
+  } catch (e) {
+    console.error('Failed to save queue order:', e);
+  }
+};
+
+export const loadQueueOrderFromFirestore = async (userId) => {
+  try {
+    const userDoc = await getDoc(doc(db, 'users', userId));
+    return userDoc.exists() ? (userDoc.data().savedQueueOrder || []) : [];
+  } catch (e) {
+    console.error('Failed to load queue order:', e);
+    return [];
+  }
+};
+
 // ONE-TIME MIGRATION: set all clips to private
 // Call this from an admin button or a useEffect with a flag
 export const migrateAllClipsToPrivate = async () => {

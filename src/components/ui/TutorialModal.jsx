@@ -58,14 +58,14 @@ export default function TutorialModal({ onClose }) {
               <p className="text-purple-400 text-xs mt-2">→ Tap <strong>Edit Order</strong> in the banner to reorder before saving</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-orange-400">
-              <p className="font-semibold mb-1">Queue up to 10 playlists</p>
-              <p className="text-purple-200 text-sm">Add playlists to the queue from &quot;My Playlists&quot;. They play back-to-back automatically.</p>
+              <p className="font-semibold mb-1">Queue up to 10 items</p>
+              <p className="text-purple-200 text-sm">Add individual clips or full playlists. They play back-to-back in the exact order shown.</p>
               <p className="text-purple-400 text-xs mt-2">→ Your queue saves to your account — survives refresh &amp; works across devices</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-purple-400">
-              <p className="font-semibold mb-1">Reorder queue without a playlist</p>
-              <p className="text-purple-200 text-sm">In the sticky bottom banner, tap <strong>Edit Order</strong> next to the queue count to drag/reorder queued playlists on the fly.</p>
-              <p className="text-purple-400 text-xs mt-2">→ ▲▼ buttons reorder · ✕ removes from queue</p>
+              <p className="font-semibold mb-1">Manage or save your queue</p>
+              <p className="text-purple-200 text-sm">Open <strong>Queue</strong>, then play any item, reorder it, remove it, or tap <strong>Save as Playlist</strong>.</p>
+              <p className="text-purple-400 text-xs mt-2">→ On mobile, the queue opens as a bottom sheet with touch-friendly ↑↓ controls</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-green-400">
               <p className="font-semibold mb-1">Making a playlist public</p>

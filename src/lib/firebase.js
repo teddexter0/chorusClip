@@ -346,50 +346,46 @@ export const getTrendingClipsByPlays = async (limitCount = 5) => {
   }
 };
 
-// TOP ARTISTS - Based on clip activity in the last 30 days
+const rankArtistsByPublicPlays = (docs, limitCount) => {
+  const artists = new Map();
+
+  docs.forEach(clipDoc => {
+    const data = typeof clipDoc.data === 'function' ? clipDoc.data() : clipDoc;
+    const artist = (data.artist || 'Unknown Artist').trim();
+    const key = artist.toLocaleLowerCase();
+    const current = artists.get(key) || { artist, clips: 0, plays: 0 };
+    current.clips += 1;
+    current.plays += data.plays ?? data.playCount ?? 0;
+    artists.set(key, current);
+  });
+
+  return [...artists.values()]
+    .sort((a, b) => b.plays - a.plays || b.clips - a.clips || a.artist.localeCompare(b.artist))
+    .slice(0, limitCount);
+};
+
+// TOP ARTISTS - Same public, all-time play-count basis as Most Played clips.
 export const getTopArtists = async (limitCount = 5) => {
   try {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
     const q = query(
       collection(db, 'clips'),
       where('isPublic', '==', true),
-      where('createdAt', '>=', thirtyDaysAgo),
-      orderBy('createdAt', 'desc'),
+      orderBy('plays', 'desc'),
       limit(200)
     );
     const snapshot = await getDocs(q);
-
-    const artistCounts = {};
-    snapshot.docs.forEach(doc => {
-      const artist = doc.data().artist || 'Unknown';
-      artistCounts[artist] = (artistCounts[artist] || 0) + 1;
-    });
-
-    return Object.entries(artistCounts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, limitCount)
-      .map(([artist, count]) => ({ artist, clips: count }));
+    return rankArtistsByPublicPlays(snapshot.docs, limitCount);
   } catch (error) {
     console.error('Top artists error:', error);
     if (error.code === 'failed-precondition') {
-      // Composite index not ready — rank by all public clips instead of 30-day window
+      // Same public-only fallback used by Most Played while the index is building.
       try {
         const snap = await getDocs(query(
           collection(db, 'clips'),
           where('isPublic', '==', true),
           limit(200)
         ));
-        const artistCounts = {};
-        snap.docs.forEach(doc => {
-          const artist = doc.data().artist || 'Unknown';
-          artistCounts[artist] = (artistCounts[artist] || 0) + 1;
-        });
-        return Object.entries(artistCounts)
-          .sort((a, b) => b[1] - a[1])
-          .slice(0, limitCount)
-          .map(([artist, count]) => ({ artist, clips: count }));
+        return rankArtistsByPublicPlays(snap.docs, limitCount);
       } catch (fallbackError) {
         console.error('Top artists fallback failed:', fallbackError);
       }

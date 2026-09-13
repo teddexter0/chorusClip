@@ -52,6 +52,9 @@ const [libraryClipSort, setLibraryClipSort] = useState('newest'); // 'newest' | 
 const [openClipMenuId, setOpenClipMenuId] = useState(null);
 const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
 const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
+const [draggedClipForQueue, setDraggedClipForQueue] = useState(null);
+const [queueDropActive, setQueueDropActive] = useState(false);
+const [showClearQueueConfirm, setShowClearQueueConfirm] = useState(false);
 const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list'
 const [desktopView, setDesktopView] = useState('overview'); // focused desktop workspace
 
@@ -1038,6 +1041,23 @@ const handleAddClipToQueue = (clip) => {
   }
 };
 
+const handleClipQueueDragStart = (event, clip) => {
+  setDraggedClipForQueue(clip);
+  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.setData('text/plain', clip.id || clip.title || 'clip');
+};
+
+const handleClipQueueDragEnd = () => {
+  setDraggedClipForQueue(null);
+  setQueueDropActive(false);
+};
+
+const handleDropClipInQueue = (event) => {
+  event.preventDefault();
+  if (draggedClipForQueue) handleAddClipToQueue(draggedClipForQueue);
+  handleClipQueueDragEnd();
+};
+
 const handleRemoveClipFromQueue = (clipId) => {
   const newQueue = clipQueueRef.current.filter(c => c.id !== clipId);
   setClipQueue(newQueue);
@@ -1053,6 +1073,23 @@ const handleRemoveClipFromQueue = (clipId) => {
 const handleRemoveQueueItem = (kind, id) => {
   if (kind === 'clip') handleRemoveClipFromQueue(id);
   else handleRemoveFromQueue(id);
+};
+
+const handleClearQueueConfirmed = () => {
+  setPlaylistQueue([]);
+  playlistQueueRef.current = [];
+  setClipQueue([]);
+  clipQueueRef.current = [];
+  updateQueueOrder([]);
+  if (user?.uid) {
+    import('../lib/firebase').then(({ saveQueueToFirestore, saveClipQueueToFirestore }) => {
+      saveQueueToFirestore(user.uid, []);
+      saveClipQueueToFirestore(user.uid, []);
+    });
+  }
+  setShowClearQueueConfirm(false);
+  setQueueDrawerOpen(false);
+  showNotification('Queue cleared', 'success');
 };
 
 // Convert everything currently queued into the existing playlist staging flow.
@@ -3323,7 +3360,10 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     return (
                       <div
                         key={clip.id}
-                        className={`relative rounded-2xl overflow-hidden border border-purple-700 border-opacity-40 hover:border-purple-500 transition group cursor-pointer ${searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
+                        draggable
+                        onDragStart={(event) => handleClipQueueDragStart(event, clip)}
+                        onDragEnd={handleClipQueueDragEnd}
+                        className={`relative rounded-2xl overflow-hidden border border-purple-700 border-opacity-40 hover:border-purple-500 transition group cursor-pointer md:cursor-grab md:active:cursor-grabbing ${searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
                         onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
                       >
                         {/* YouTube thumbnail */}
@@ -3371,6 +3411,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     return (
                       <div
                         key={clip.id}
+                        draggable
+                        onDragStart={(event) => handleClipQueueDragStart(event, clip)}
+                        onDragEnd={handleClipQueueDragEnd}
                         className={`bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30 ${searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
                         role="article"
                         aria-label={`${clip.title} by ${clip.artist}`}
@@ -3768,7 +3811,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       Top Artists
     </h3>
     <span className="flex items-center gap-1 text-purple-400 text-sm">
-      {artistsExpanded ? 'Show less' : 'Show more'} {artistsExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+      Public plays · {artistsExpanded ? 'Show less' : 'Show more'} {artistsExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
     </span>
   </button>
   {discoveryLoading ? (
@@ -3798,9 +3841,12 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
           <div className="flex-1">
             <p className="font-bold text-lg">{item.artist}</p>
-            <p className="text-sm text-purple-300">{item.clips} clips</p>
+            <p className="text-sm text-purple-300">{item.clips} public clip{item.clips !== 1 ? 's' : ''}</p>
           </div>
-          <span className="text-pink-400 font-bold">{item.clips}</span>
+          <span className="text-right">
+            <span className="block text-pink-400 font-black text-lg">{item.plays || 0}</span>
+            <span className="block text-[10px] uppercase tracking-wider text-purple-500">plays</span>
+          </span>
         </div>
       ))}
     </div>
@@ -3938,7 +3984,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           <>
             <div className="space-y-2">
               {visiblePrivate.map((clip) => (
-                <div key={clip.id} className="flex items-center justify-between gap-2 bg-purple-900 bg-opacity-20 rounded-xl px-3 py-2.5 border border-purple-800 border-opacity-30">
+                <div
+                  key={clip.id}
+                  draggable
+                  onDragStart={(event) => handleClipQueueDragStart(event, clip)}
+                  onDragEnd={handleClipQueueDragEnd}
+                  className="flex items-center justify-between gap-2 bg-purple-900 bg-opacity-20 rounded-xl px-3 py-2.5 border border-purple-800 border-opacity-30 md:cursor-grab md:active:cursor-grabbing"
+                >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-semibold truncate text-white">{clip.title}</p>
                     <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
@@ -4357,6 +4409,27 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   </div>
 )}
 
+{/* Desktop drag target — appears only while a clip is being dragged. */}
+{draggedClipForQueue && (
+  <div
+    onDragOver={(event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+      setQueueDropActive(true);
+    }}
+    onDragLeave={() => setQueueDropActive(false)}
+    onDrop={handleDropClipInQueue}
+    className={`hidden md:flex fixed right-6 bottom-6 z-[60] w-72 min-h-28 items-center justify-center gap-3 rounded-3xl border-2 border-dashed px-6 text-center shadow-2xl backdrop-blur-xl transition-all ${queueDropActive ? 'scale-105 border-yellow-300 bg-yellow-500 text-black' : 'border-yellow-500 bg-black/85 text-yellow-300'}`}
+    aria-label="Drop clip to add it to the queue"
+  >
+    <ListMusic size={28} />
+    <span>
+      <span className="block font-black">Drop to queue</span>
+      <span className={`block text-xs mt-1 ${queueDropActive ? 'text-black/70' : 'text-yellow-600'}`}>Release “{draggedClipForQueue.title}” here</span>
+    </span>
+  </div>
+)}
+
 {/* Queue launcher — compact floating action on mobile, edge rail on desktop */}
 {combinedQueueItems.length > 0 && (
   <button
@@ -4486,23 +4559,46 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </button>
         )}
         <button
-          onClick={() => {
-            setPlaylistQueue([]);
-            playlistQueueRef.current = [];
-            setClipQueue([]);
-            clipQueueRef.current = [];
-            updateQueueOrder([]);
-            if (user?.uid) {
-              import('../lib/firebase').then(({ saveQueueToFirestore, saveClipQueueToFirestore }) => {
-                saveQueueToFirestore(user.uid, []);
-                saveClipQueueToFirestore(user.uid, []);
-              });
-            }
-            setQueueDrawerOpen(false);
-          }}
+          onClick={() => setShowClearQueueConfirm(true)}
           className="w-full py-2.5 bg-red-900 bg-opacity-50 hover:bg-opacity-80 text-red-300 rounded-xl text-sm font-semibold transition"
         >
-          Clear Queue
+          Clear Whole Queue
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
+{/* Destructive queue action confirmation */}
+{showClearQueueConfirm && (
+  <div className="fixed inset-0 z-[80] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowClearQueueConfirm(false)}>
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="clear-queue-title"
+      aria-describedby="clear-queue-copy"
+      className="w-full max-w-sm rounded-3xl border border-red-700/60 bg-gradient-to-br from-gray-950 to-red-950 p-6 shadow-2xl"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="w-12 h-12 rounded-2xl bg-red-900/70 text-red-300 flex items-center justify-center mb-4">
+        <AlertCircle size={26} />
+      </div>
+      <h3 id="clear-queue-title" className="text-xl font-black text-white">Clear the whole queue?</h3>
+      <p id="clear-queue-copy" className="mt-2 text-sm leading-relaxed text-purple-200">
+        This removes all {combinedQueueItems.length} queued item{combinedQueueItems.length !== 1 ? 's' : ''} from this device and your synced account. This cannot be undone.
+      </p>
+      <div className="mt-6 flex gap-3">
+        <button
+          onClick={() => setShowClearQueueConfirm(false)}
+          className="flex-1 min-h-11 rounded-xl bg-purple-900/70 hover:bg-purple-800 text-white font-bold transition"
+        >
+          Keep Queue
+        </button>
+        <button
+          onClick={handleClearQueueConfirmed}
+          className="flex-1 min-h-11 rounded-xl bg-red-600 hover:bg-red-500 text-white font-black transition"
+        >
+          Yes, Clear All
         </button>
       </div>
     </div>

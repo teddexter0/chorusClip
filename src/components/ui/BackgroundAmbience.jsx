@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 // Iconic official NFL performances, used muted as low-contrast ambience.
 const BG_VIDEOS = [
@@ -8,11 +8,25 @@ const BG_VIDEOS = [
 ];
 
 const getEmbedUrl = ({ id, start }) => (
-  `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&controls=0&disablekb=1&fs=0&loop=1&playlist=${id}&playsinline=1&rel=0&start=${start}`
+  `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&controls=0&disablekb=1&enablejsapi=1&fs=0&loop=1&playlist=${id}&playsinline=1&rel=0&start=${start}`
 );
 
 const BackgroundAmbience = ({ theme = 'purple' }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
+  const iframeRef = useRef(null);
+
+  const sendPlayerCommand = useCallback((func) => {
+    iframeRef.current?.contentWindow?.postMessage(JSON.stringify({
+      event: 'command',
+      func,
+      args: []
+    }), 'https://www.youtube-nocookie.com');
+  }, []);
+
+  const playBackgroundVideo = useCallback(() => {
+    sendPlayerCommand('mute');
+    sendPlayerCommand('playVideo');
+  }, [sendPlayerCommand]);
 
   const gradientClass = theme === 'gold'
     ? 'bg-gradient-to-br from-yellow-950/94 via-amber-950/93 to-orange-950/95'
@@ -25,6 +39,13 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
     return () => clearInterval(timer);
   }, []);
 
+  // Browser autoplay policies often ignore a URL-only autoplay request. Explicit
+  // muted player commands, retried as the embed becomes ready, are more reliable.
+  useEffect(() => {
+    const attempts = [400, 1200, 2600].map(delay => setTimeout(playBackgroundVideo, delay));
+    return () => attempts.forEach(clearTimeout);
+  }, [currentIdx, playBackgroundVideo]);
+
   return (
     <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-black">
       {BG_VIDEOS.map((video, index) => (
@@ -36,12 +57,14 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
         />
       ))}
       <iframe
+        ref={iframeRef}
         key={BG_VIDEOS[currentIdx].id}
         src={getEmbedUrl(BG_VIDEOS[currentIdx])}
         title={BG_VIDEOS[currentIdx].title}
         allow="autoplay; encrypted-media; picture-in-picture"
         tabIndex="-1"
         aria-hidden="true"
+        onLoad={playBackgroundVideo}
         className="absolute left-1/2 top-1/2 h-[56.25vw] min-h-full w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 border-0"
         style={{ filter: 'brightness(0.42) saturate(1.25)', transform: 'translate(-50%, -50%) scale(1.03)' }}
       />

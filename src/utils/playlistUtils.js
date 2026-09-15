@@ -44,7 +44,17 @@ export const getAllPublicPlaylists = async () => {
     limit(50)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  return snapshot.docs
+    .map(doc => {
+      const playlist = { id: doc.id, ...doc.data() };
+      return {
+        ...playlist,
+        // Legacy safety net: private or old unclassified snapshots never render
+        // through a public playlist while their owner is being migrated.
+        clips: (playlist.clips || []).filter(clip => clip.isPublic === true)
+      };
+    })
+    .filter(playlist => playlist.clips.length > 0);
 };
 
 export const shuffleArray = (array) => {

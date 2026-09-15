@@ -105,9 +105,8 @@ export const subscribeToUserClips = (uid, callback) => {
   }
 };
 
-// LEADERBOARD - Top clip CREATORS (users who posted clips) this week
-// Groups by createdBy (the ChorusClip user's display name), not the YouTube artist.
-// Falls back to all-time if Firestore composite index isn't created yet.
+// LEADERBOARD - creators ranked only by engagement on clips they made public.
+// Private library activity never contributes to community rankings.
 export const getLeaderboard = async (limitCount = 10) => {
   try {
     let clipDocs = [];
@@ -117,6 +116,7 @@ export const getLeaderboard = async (limitCount = 10) => {
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       const q = query(
         collection(db, 'clips'),
+        where('isPublic', '==', true),
         where('createdAt', '>=', sevenDaysAgo),
         orderBy('createdAt', 'desc'),
         limit(200)
@@ -124,32 +124,46 @@ export const getLeaderboard = async (limitCount = 10) => {
       const snap = await getDocs(q);
       clipDocs = snap.docs.map(d => d.data());
     } catch {
-      // Composite index not yet created — fall back to most-recent 200 clips (all time)
+      // Fall back to public clips only; privacy must not depend on an index.
       const q = query(
         collection(db, 'clips'),
-        orderBy('createdAt', 'desc'),
+        where('isPublic', '==', true),
         limit(200)
       );
       const snap = await getDocs(q);
       clipDocs = snap.docs.map(d => d.data());
     }
 
-    // Aggregate by the ChorusClip user who posted the clip (createdBy = displayName)
+    // Aggregate public clips, public replays and public likes by creator. Their
+    // top artist is the artist whose public clips earned the most replays.
     const creatorStats = {};
     clipDocs.forEach(data => {
       const creator = data.createdBy;
       if (!creator) return;
       if (!creatorStats[creator]) {
-        creatorStats[creator] = { name: creator, songs: 0, topArtist: data.artist || '', likes: 0 };
+        creatorStats[creator] = { name: creator, songs: 0, plays: 0, likes: 0, artistStats: {} };
       }
       creatorStats[creator].songs++;
+      creatorStats[creator].plays += data.plays ?? data.playCount ?? 0;
       creatorStats[creator].likes += data.likes || 0;
+      const artist = (data.artist || 'Unknown Artist').trim();
+      if (!creatorStats[creator].artistStats[artist]) {
+        creatorStats[creator].artistStats[artist] = { clips: 0, plays: 0 };
+      }
+      creatorStats[creator].artistStats[artist].clips += 1;
+      creatorStats[creator].artistStats[artist].plays += data.plays ?? data.playCount ?? 0;
     });
 
     return Object.values(creatorStats)
-      .sort((a, b) => b.songs - a.songs || b.likes - a.likes)
+      .map(creator => {
+        const topArtist = Object.entries(creator.artistStats)
+          .sort(([, a], [, b]) => b.plays - a.plays || b.clips - a.clips)[0]?.[0] || '';
+        const { artistStats, ...publicStats } = creator;
+        return { ...publicStats, topArtist };
+      })
+      .sort((a, b) => b.plays - a.plays || b.likes - a.likes || b.songs - a.songs)
       .slice(0, limitCount)
-      .map((c, i) => ({ ...c, rank: i + 1, artist: c.topArtist }));
+      .map((creator, index) => ({ ...creator, rank: index + 1, artist: creator.topArtist }));
   } catch (error) {
     console.log('Leaderboard error:', error);
     return [];

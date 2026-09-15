@@ -21,6 +21,7 @@ import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
 export default function ChorusClipModern() { 
   // Use auth hook instead of local state
   const { user, setUser, checkAuthState } = useAuth();
+  const paypalMeUrl = process.env.NEXT_PUBLIC_PAYPAL_ME_URL;
 
   // Playlist states 
   const [currentPlaylist, setCurrentPlaylist] = useState(null);
@@ -49,6 +50,7 @@ const [myClips, setMyClips] = useState([]);
 const [privateClipsLimit, setPrivateClipsLimit] = useState(8);
 const [libraryClipFilter, setLibraryClipFilter] = useState('all'); // 'all' | 'public' | 'private'
 const [libraryClipSort, setLibraryClipSort] = useState('newest'); // 'newest' | 'plays' | 'likes'
+const [libraryClipSearchQuery, setLibraryClipSearchQuery] = useState('');
 const [openClipMenuId, setOpenClipMenuId] = useState(null);
 const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
 const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
@@ -82,7 +84,7 @@ const [desktopView, setDesktopView] = useState('overview'); // focused desktop w
 
   const [notification, setNotification] = useState(null);
 const [leaderboard, setLeaderboard] = useState([]);
-const [leaderboardSort, setLeaderboardSort] = useState('clips');
+const [leaderboardSort, setLeaderboardSort] = useState('plays');
 const [clips, setClips] = useState([]);
 const [feedCursor, setFeedCursor] = useState(null);
 const [feedHasMore, setFeedHasMore] = useState(true);
@@ -279,6 +281,7 @@ const loadTrendingData = async () => {
         : clip
     );
     setClips(prev => prev.map(applyDelta));
+    setMyClips(prev => prev.map(applyDelta));
     setTrendingByPlays(prev => {
       const updated = prev.map(applyDelta);
       return field === 'plays'
@@ -512,7 +515,7 @@ const handleThemeToggle = async () => {
   const loadLeaderboard = async () => {
   try {
     const { getLeaderboard } = await import('../lib/firebase');
-    const leaders = await getLeaderboard(3);
+    const leaders = await getLeaderboard(10);
     if (leaders && leaders.length > 0) {
       setLeaderboard(leaders);
     }
@@ -688,7 +691,21 @@ const loadUserPlaylists = async () => {
   if (!user?.uid) return;
   try {
     const userPlaylists = await getUserPlaylists(user.uid);
-    setPlaylists(userPlaylists);
+    const invalidPublicPlaylists = userPlaylists.filter(playlist =>
+      playlist.isPublic && (playlist.clips || []).some(clip => clip.isPublic === false)
+    );
+    if (invalidPublicPlaylists.length > 0) {
+      const { updatePlaylist: updatePlaylistRecord } = await import('../lib/firebase');
+      await Promise.all(invalidPublicPlaylists.map(playlist =>
+        updatePlaylistRecord(playlist.id, { isPublic: false, isFeatured: false })
+      ));
+    }
+    const invalidIds = new Set(invalidPublicPlaylists.map(playlist => playlist.id));
+    setPlaylists(userPlaylists.map(playlist => invalidIds.has(playlist.id)
+      ? { ...playlist, isPublic: false, isFeatured: false }
+      : playlist
+    ));
+    if (invalidPublicPlaylists.length > 0) loadPublicPlaylists();
   } catch (error) {
     console.error('Failed to load playlists:', error);
   }
@@ -1033,7 +1050,13 @@ const handleAddClipToQueue = (clip) => {
   setClipQueue(newQueue);
   clipQueueRef.current = newQueue;
   updateQueueOrder([...queueOrderRef.current, `clip:${clip.id}`]);
-  showNotification(`Added "${clip.title}" to queue (${playlistQueueRef.current.length + newQueue.length}/10)`, 'success');
+  const isWaitingForCurrentClip = isPlaying && !currentPlaylistPlayerRef.current;
+  showNotification(
+    isWaitingForCurrentClip
+      ? `Up next: "${clip.title}" — it will autoplay after this clip`
+      : `Added "${clip.title}" to queue (${playlistQueueRef.current.length + newQueue.length}/10)`,
+    'success'
+  );
   if (user?.uid) {
     import('../lib/firebase').then(({ saveClipQueueToFirestore }) => {
       saveClipQueueToFirestore(user.uid, newQueue.map(c => c.id));
@@ -1359,6 +1382,11 @@ const completeCurrentClipPlayback = () => {
     skipTrackingUntilRef.current = Date.now() + 800;
     playerRef.current.seekTo(loopsRef.current[0].start, true);
     startTimeTracking();
+  } else if (buildCombinedQueue().length > 0) {
+    // Native queue behaviour: a standalone clip hands off to the first queued
+    // item without requiring the listener to reopen the queue and press Play.
+    try { playerRef.current?.pauseVideo(); } catch(e) {}
+    setTimeout(() => handlePlayQueue(0), 350);
   } else {
     try { playerRef.current?.pauseVideo(); } catch(e) {}
     setIsPlaying(false);
@@ -1428,14 +1456,6 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
   setGlobalLoading(false);
   setPendingAction(null);
 
-  // Increment play count (fire and forget)
-  if (user?.uid) {
-    import('../lib/firebase').then(async ({ db }) => {
-      const { doc, updateDoc, increment } = await import('firebase/firestore');
-      updateDoc(doc(db, 'clips', clipId), { plays: increment(1) }).catch(() => {});
-    });
-  }
-
   const rawLoops = clipData.loops || [{ start: clipData.startTime || 0, end: clipData.endTime || 30 }];
   const loopsToLoad = rawLoops.map(loop => ({
     ...loop,
@@ -1453,6 +1473,7 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
   loopsRef.current = loopsToLoad;
   currentLoopIndexRef.current = 0;
   currentLoopIterationRef.current = 0;
+  startPlayCredit({ ...clipData, id: clipId, loops: loopsToLoad });
 
   showNotification('⏳ Loading clip...', 'info');
 
@@ -1919,6 +1940,97 @@ const handleUnlikeClip = async (clipId) => {
     console.error('Unlike error:', error);
   }
 };
+
+const handleClipVisibilityChange = async (clip) => {
+  if (!user?.uid || clip.userId !== user.uid) return;
+  const makePublic = !clip.isPublic;
+
+  try {
+    const { db, updatePlaylist: updatePlaylistRecord } = await import('../lib/firebase');
+    const { doc, updateDoc } = await import('firebase/firestore');
+
+    if (!makePublic) {
+      // Privacy wins over playlist visibility. A public playlist may never keep
+      // exposing a clip after its owner makes that clip private.
+      const affectedPlaylists = playlists.filter(playlist =>
+        playlist.isPublic && (playlist.clips || []).some(item => item.id === clip.id)
+      );
+      if (affectedPlaylists.length > 0) {
+        await Promise.all(affectedPlaylists.map(playlist =>
+          updatePlaylistRecord(playlist.id, { isPublic: false, isFeatured: false })
+        ));
+        const affectedIds = new Set(affectedPlaylists.map(playlist => playlist.id));
+        setPlaylists(prev => prev.map(playlist =>
+          affectedIds.has(playlist.id) ? { ...playlist, isPublic: false, isFeatured: false } : playlist
+        ));
+        setManagingPlaylist(prev => prev && affectedIds.has(prev.id)
+          ? { ...prev, isPublic: false, isFeatured: false }
+          : prev
+        );
+      }
+    }
+
+    await updateDoc(doc(db, 'clips', clip.id), { isPublic: makePublic });
+    setMyClips(prev => prev.map(item => item.id === clip.id ? { ...item, isPublic: makePublic } : item));
+    setClips(prev => prev.filter(item => item.id !== clip.id || makePublic).map(item =>
+      item.id === clip.id ? { ...item, isPublic: makePublic } : item
+    ));
+    await Promise.all([loadTrendingClips(), loadTrendingData(), loadPublicPlaylists()]);
+
+    const unpublishedCount = !makePublic
+      ? playlists.filter(playlist => playlist.isPublic && (playlist.clips || []).some(item => item.id === clip.id)).length
+      : 0;
+    showNotification(
+      makePublic
+        ? 'Now public — other listeners can discover, play and like it'
+        : unpublishedCount > 0
+          ? `Clip is private. ${unpublishedCount} affected public playlist${unpublishedCount === 1 ? ' was' : 's were'} also made private.`
+          : 'Clip is private — only you can find it in your library',
+      'success'
+    );
+  } catch (error) {
+    console.error('Clip visibility update failed:', error);
+    showNotification('Could not change clip visibility', 'error');
+  } finally {
+    setOpenClipMenuId(null);
+  }
+};
+
+const handlePlaylistVisibilityChange = async (playlist) => {
+  if (!user?.uid || playlist.userId !== user.uid) return;
+  const makePublic = !(playlist.isPublic !== false);
+  const privateClips = (playlist.clips || []).filter(clip => {
+    const liveClip = myClips.find(item => item.id === clip.id);
+    return (liveClip?.isPublic ?? clip.isPublic) !== true;
+  });
+
+  if (makePublic && privateClips.length > 0) {
+    showNotification(
+      `Keep it private for now: make all ${privateClips.length} private clip${privateClips.length === 1 ? '' : 's'} public before publishing this playlist.`,
+      'info'
+    );
+    return;
+  }
+
+  try {
+    const { updatePlaylist: updatePlaylistRecord } = await import('../lib/firebase');
+    const updates = { isPublic: makePublic, isFeatured: makePublic ? playlist.isFeatured : false };
+    await updatePlaylistRecord(playlist.id, updates);
+    const updated = { ...playlist, ...updates };
+    setManagingPlaylist(updated);
+    setPlaylists(prev => prev.map(item => item.id === playlist.id ? updated : item));
+    await loadPublicPlaylists();
+    showNotification(
+      makePublic
+        ? 'Playlist is public — every included clip is public too'
+        : 'Playlist is private — only you can access it',
+      'success'
+    );
+  } catch (error) {
+    console.error('Playlist visibility update failed:', error);
+    showNotification('Could not change playlist visibility', 'error');
+  }
+};
   const handleSignOut = async () => {
     try {
       setSelectedClipsForPlaylist([]);
@@ -2354,20 +2466,7 @@ className="btn-primary w-full py-5 text-xl">
                 </p>
               </div>
               <button
-                onClick={async () => {
-                  const newVal = !(managingPlaylist.isPublic !== false);
-                  try {
-                    const { updatePlaylist } = await import('../lib/firebase');
-                    const updates = { isPublic: newVal, isFeatured: newVal ? managingPlaylist.isFeatured : false };
-                    await updatePlaylist(managingPlaylist.id, updates);
-                    setManagingPlaylist(prev => prev ? { ...prev, ...updates } : null);
-                    loadUserPlaylists();
-                    loadPublicPlaylists();
-                    showNotification(newVal ? '🌍 Now public' : '🔒 Now private', 'success');
-                  } catch (e) {
-                    showNotification('Failed to update', 'error');
-                  }
-                }}
+                onClick={() => handlePlaylistVisibilityChange(managingPlaylist)}
                 className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 ${managingPlaylist.isPublic !== false ? 'bg-emerald-500' : 'bg-purple-700'}`}
                 aria-label="Toggle playlist visibility"
               >
@@ -2385,6 +2484,14 @@ className="btn-primary w-full py-5 text-xl">
               <button
                 onClick={async () => {
                   const nextFeatured = !managingPlaylist.isFeatured;
+                  const privateClipCount = (managingPlaylist.clips || []).filter(clip => {
+                    const liveClip = myClips.find(item => item.id === clip.id);
+                    return (liveClip?.isPublic ?? clip.isPublic) !== true;
+                  }).length;
+                  if (nextFeatured && privateClipCount > 0) {
+                    showNotification(`Make all ${privateClipCount} private clip${privateClipCount === 1 ? '' : 's'} public before featuring this playlist.`, 'info');
+                    return;
+                  }
                   try {
                     const { updatePlaylist } = await import('../lib/firebase');
                     const updates = {
@@ -3230,6 +3337,21 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               </ul>
             </div>
 
+            {paypalMeUrl && (
+              <div className="bg-gradient-to-br from-blue-950/80 to-indigo-950/80 backdrop-blur-xl rounded-3xl p-6 border border-blue-500/40">
+                <h3 className="font-black text-xl mb-2 flex items-center gap-2 text-white">☕ Sponsor ChorusClip</h3>
+                <p className="text-sm text-blue-100/80 mb-4">If ChorusClip made your listening better, you can help cover hosting and keep new features moving.</p>
+                <a
+                  href={paypalMeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full py-3.5 rounded-xl bg-[#0070ba] hover:bg-[#005ea6] text-white text-center font-black transition"
+                >
+                  Buy me a coffee with PayPal
+                </a>
+              </div>
+            )}
+
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-red-700 border-opacity-50">
               <h3 className="font-black text-xl mb-4 flex items-center gap-2 text-white">
                 <AlertCircle size={24} className="text-red-400" />
@@ -3335,7 +3457,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               </div>
               <p className="text-xs text-purple-400 mb-4">
-                {feedIsMostPlayed ? 'Top 5 clips by play count.' : 'Latest uploads first. Expand and keep loading to browse older history.'}
+                {feedIsMostPlayed ? 'Top 5 public clips by qualified replay count.' : 'Latest public uploads first. Likes are visible as totals; who liked a clip stays private.'}
               </p>
               {discoveryLoading && feedIsMostPlayed ? (
                 <div className="text-center py-12 text-purple-300">
@@ -3390,7 +3512,21 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                           <p className="text-xs font-bold text-white truncate leading-tight">{clip.title}</p>
                           <p className="text-xs text-purple-400 truncate">{clip.artist}</p>
                           <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-purple-500">❤️ {clip.likes || 0}</span>
+                            <button
+                              onClick={async (event) => {
+                                event.stopPropagation();
+                                setPendingAction(`like-${clip.id}`);
+                                await (user?.likedClips?.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id));
+                                setPendingAction(null);
+                              }}
+                              disabled={pendingAction === `like-${clip.id}`}
+                              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-bold transition ${user?.likedClips?.includes(clip.id) ? 'bg-pink-500/20 text-pink-300' : 'text-purple-400 hover:bg-pink-500/15 hover:text-pink-300'}`}
+                              aria-label={`${user?.likedClips?.includes(clip.id) ? 'Unlike' : 'Like'} ${clip.title}`}
+                              aria-pressed={user?.likedClips?.includes(clip.id)}
+                            >
+                              <Heart size={12} fill={user?.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                              {clip.likes || 0}
+                            </button>
                             <span className="text-xs text-purple-500">▶ {playCount}</span>
                             {clip.userId === user?.uid && (
                               <span className={`text-xs ml-auto ${clip.isPublic ? 'text-emerald-400' : 'text-purple-500'}`}>
@@ -3451,6 +3587,20 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
                           {/* Right: play count + 3-dot menu */}
                           <div className="flex items-center gap-2 relative">
+                            <button
+                              onClick={async () => {
+                                setPendingAction(`like-${clip.id}`);
+                                await (user?.likedClips?.includes(clip.id) ? handleUnlikeClip(clip.id) : handleLikeClip(clip.id));
+                                setPendingAction(null);
+                              }}
+                              disabled={pendingAction === `like-${clip.id}`}
+                              className={`min-w-[44px] min-h-[36px] flex items-center justify-center gap-1 rounded-xl px-2 transition ${user?.likedClips?.includes(clip.id) ? 'bg-pink-600/30 text-pink-300' : 'bg-purple-900/60 text-purple-300 hover:bg-pink-900/40'}`}
+                              aria-label={`${user?.likedClips?.includes(clip.id) ? 'Unlike' : 'Like'} ${clip.title}`}
+                              aria-pressed={user?.likedClips?.includes(clip.id)}
+                            >
+                              <Heart size={14} fill={user?.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                              <span className="text-xs font-semibold">{clip.likes || 0}</span>
+                            </button>
                             {/* Play with count — always visible */}
                             <button
                               onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
@@ -3535,19 +3685,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
                                     {/* Privacy toggle */}
                                     <button
-                                      onClick={async () => {
-                                        const newVal = !clip.isPublic;
-                                        try {
-                                          const { db } = await import('../lib/firebase');
-                                          const { doc, updateDoc } = await import('firebase/firestore');
-                                          await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
-                                          setMyClips(prev => prev.map(c => c.id === clip.id ? { ...c, isPublic: newVal } : c));
-                                          showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
-                                          loadTrendingClips();
-                                          loadTrendingData();
-                                        } catch(e) { showNotification('Failed', 'error'); }
-                                        setOpenClipMenuId(null);
-                                      }}
+                                      onClick={() => handleClipVisibilityChange(clip)}
                                       className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
                                     >
                                       <span className="text-base shrink-0">{clip.isPublic ? '🔒' : '🌍'}</span>
@@ -3719,13 +3857,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               >
                 <h3 className="font-black text-xl flex items-center gap-2 text-white">Strathmore Leaderboard</h3>
                 <span className="flex items-center gap-1 text-purple-400 text-sm">
-                  Top creators {leaderboardExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+                  Top public creators {leaderboardExpanded ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
                 </span>
               </button>
               <div className="flex flex-wrap gap-1.5 mb-4">
                 {[
+                  { key: 'plays', label: 'Replays' },
                   { key: 'clips', label: '# Clips' },
-                  { key: 'likes', label: ' Likes' },
+                  { key: 'likes', label: 'Likes' },
                   { key: 'alphabetical', label: 'AZ' },
                 ].map(opt => (
                   <button
@@ -3743,7 +3882,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               </div>
               {!discoveryLoading && topArtists.length > 0 && (
                 <div className="mb-4 bg-gradient-to-r from-purple-800 to-pink-900 bg-opacity-60 border border-purple-600 border-opacity-50 rounded-xl px-4 py-3 text-sm">
-                  <span className="text-yellow-300 font-bold">🎓 Strathmore this month: </span>
+                  <span className="text-yellow-300 font-bold">Public listening pulse: </span>
                   <span className="text-purple-200">
                     vibing to{' '}
                     <strong className="text-white">{topArtists[0]?.artist}</strong>
@@ -3760,6 +3899,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     {(leaderboardExpanded ? leaderboard : leaderboard.slice(0, 5))
                       .slice()
                       .sort((a, b) => {
+                        if (leaderboardSort === 'plays') return (b.plays || 0) - (a.plays || 0);
                         if (leaderboardSort === 'likes') return (b.likes || 0) - (a.likes || 0);
                         if (leaderboardSort === 'alphabetical') return (a.name || '').localeCompare(b.name || '');
                         return (b.songs || 0) - (a.songs || 0);
@@ -3776,12 +3916,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                           </span>
                           <div>
                             <p className="font-bold text-lg">@{entry.name}</p>
-                            <p className="text-sm text-purple-300">Top artist: {entry.artist}</p>
+                            <p className="text-sm text-purple-300">Top public artist: {entry.artist || '—'}</p>
+                            <p className="text-xs text-purple-500 mt-0.5">{entry.songs || 0} public clips · {entry.likes || 0} likes</p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="text-purple-300 font-bold text-xl">{leaderboardSort === 'likes' ? (entry.likes || 0) : (entry.songs || 0)}</p>
-                          <p className="text-xs text-purple-500">{leaderboardSort === 'alphabetical' ? 'A-Z' : leaderboardSort}</p>
+                          <p className="text-purple-300 font-bold text-xl">{leaderboardSort === 'plays' ? (entry.plays || 0) : leaderboardSort === 'likes' ? (entry.likes || 0) : (entry.songs || 0)}</p>
+                          <p className="text-xs text-purple-500">{leaderboardSort === 'alphabetical' ? 'A-Z' : leaderboardSort === 'clips' ? 'public clips' : leaderboardSort}</p>
                         </div>
                       </div>
                     ))}
@@ -3921,6 +4062,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     const privateClipCount = myClips.length - publicClipCount;
     const filteredMyClips = myPrivateClips
       .filter(c => {
+        if (!fuzzyMatch(libraryClipSearchQuery, c)) return false;
         if (libraryClipFilter === 'public') return !!c.isPublic;
         if (libraryClipFilter === 'private') return !c.isPublic;
         return true;
@@ -3942,6 +4084,27 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           )}
         </div>
         {myPrivateClips.length > 0 && (
+          <>
+          <div className="relative mb-3">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none" />
+            <input
+              type="search"
+              value={libraryClipSearchQuery}
+              onChange={(event) => { setLibraryClipSearchQuery(event.target.value); setPrivateClipsLimit(8); }}
+              placeholder="Search your public and private clips…"
+              className="w-full rounded-xl border border-purple-700 bg-purple-950/70 py-2.5 pl-10 pr-10 text-sm text-white placeholder:text-purple-500 focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500/30"
+              aria-label="Search your clip library"
+            />
+            {libraryClipSearchQuery && (
+              <button
+                onClick={() => setLibraryClipSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg text-purple-400 hover:bg-white/10 hover:text-white flex items-center justify-center"
+                aria-label="Clear library search"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
           <div className="flex flex-wrap items-center gap-2 mb-2">
             {[
               { key: 'all', label: `All (${myClips.length})` },
@@ -3971,6 +4134,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               <option value="likes">Most likes</option>
             </select>
           </div>
+          </>
         )}
         {filteredMyClips.length === 0 ? (
           <p className="text-xs text-purple-500 text-center py-2">
@@ -3978,7 +4142,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               ? 'No public clips yet — open a clip\u2019s \u22ee menu and choose \u2018Make Public\u2019 to share it'
               : libraryClipFilter === 'private'
                 ? 'No private clips yet — your clips are private by default'
-                : 'No clips yet — create one in the editor above'}
+                : libraryClipSearchQuery
+                  ? `No clips match “${libraryClipSearchQuery}”`
+                  : 'No clips yet — create one in the editor above'}
           </p>
         ) : (
           <>
@@ -4033,19 +4199,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
                             {/* Public/private toggle */}
                             <button
-                              onClick={async () => {
-                            const newVal = !(clip.isPublic);
-                            try {
-                              const { db } = await import('../lib/firebase');
-                              const { doc, updateDoc } = await import('firebase/firestore');
-                              await updateDoc(doc(db, 'clips', clip.id), { isPublic: newVal });
-                              setMyClips(prev => prev.map(c => c.id === clip.id ? { ...c, isPublic: newVal } : c));
-                              showNotification(newVal ? '🌍 Now public — may take a moment to appear in feed' : '🔒 Now private', 'success');
-                              loadTrendingClips();
-                              loadTrendingData();
-                            } catch(e) { showNotification('Failed', 'error'); }
-                            setOpenClipMenuId(null);
-                          }}
+                              onClick={() => handleClipVisibilityChange(clip)}
                           className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
                         >
                           <span className="text-base shrink-0">{clip.isPublic ? '🔒' : '🌍'}</span>
@@ -4605,6 +4759,44 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
   </div>
 )}
 </div>
+
+{/* Desktop now-playing dock — playback stays visible in every workspace. */}
+{videoTitle && (
+  <aside className="hidden md:flex fixed bottom-5 left-1/2 -translate-x-1/2 z-[55] w-[min(760px,calc(100vw-220px))] items-center gap-4 rounded-2xl border border-purple-500/40 bg-black/90 px-4 py-3 shadow-2xl backdrop-blur-xl" aria-label="Now playing">
+    <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center shrink-0">
+      <Music size={20} />
+    </div>
+    <div className="min-w-0 flex-1">
+      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-purple-400">
+        {isPlayingQueue ? `Queue ${playlistQueueIndex + 1} of ${combinedQueueItems.length}` : currentPlaylistInfo ? currentPlaylistInfo.name : 'Now playing'}
+      </p>
+      <p className="truncate text-sm font-black text-white">{videoTitle}</p>
+      <p className="truncate text-xs text-purple-300">{artist || 'ChorusClip'}{combinedQueueItems.length > 0 && !isPlayingQueue ? ` · ${combinedQueueItems.length} up next` : ''}</p>
+    </div>
+    <div className="flex items-center gap-1 shrink-0">
+      <button
+        onClick={() => currentPlaylistPlayerRef.current ? currentPlaylistPlayerRef.current.previous?.() : handleLoopRestart()}
+        className="w-9 h-9 rounded-full text-white hover:bg-white/10 flex items-center justify-center"
+        aria-label="Previous or restart"
+      ><SkipBack size={17} /></button>
+      <button
+        onClick={togglePlayPause}
+        className="w-11 h-11 rounded-full bg-white text-black hover:scale-105 transition flex items-center justify-center"
+        aria-label={isPlaying ? 'Pause' : 'Play'}
+      >{isPlaying ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" className="ml-0.5" />}</button>
+      <button
+        onClick={() => currentPlaylistPlayerRef.current?.skip?.()}
+        disabled={!currentPlaylistPlayerRef.current}
+        className="w-9 h-9 rounded-full text-white hover:bg-white/10 disabled:opacity-30 flex items-center justify-center"
+        aria-label="Skip to next"
+      ><SkipForward size={17} /></button>
+      <button
+        onClick={() => setQueueDrawerOpen(true)}
+        className="ml-2 min-h-9 rounded-xl bg-yellow-500/20 px-3 text-xs font-black text-yellow-300 hover:bg-yellow-500/30"
+      >Queue {combinedQueueItems.length}</button>
+    </div>
+  </aside>
+)}
 
 {/* Mobile mini-player — persistent controls above the tab bar when a track is loaded */}
 {videoTitle && (

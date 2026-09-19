@@ -25,6 +25,7 @@ service cloud.firestore {
           ])
         ) ||
         (
+          resource.data.isPublic == true &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']) &&
           request.resource.data.likes >= 0 &&
           (
@@ -33,10 +34,12 @@ service cloud.firestore {
           )
         ) ||
         (
+          resource.data.isPublic == true &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['plays']) &&
           request.resource.data.plays == resource.data.get('plays', 0) + 1
         ) ||
         (
+          resource.data.isPublic == true &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shares']) &&
           request.resource.data.shares == resource.data.get('shares', 0) + 1
         )

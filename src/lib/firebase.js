@@ -176,7 +176,7 @@ export const deletePlaylist = async (playlistId) => {
 };
 
 export const updatePlaylist = async (playlistId, updates) => {
-  await updateDoc(doc(db, 'playlists', playlistId), updates);
+  await updateDoc(doc(db, 'playlists', playlistId), { ...updates, updatedAt: new Date() });
 };
 
 export const getUserData = async (uid) => {
@@ -419,12 +419,11 @@ export const sendFriendRequest = async (fromUid, fromDisplayName, toUsername) =>
 
   if (fromDisplayName.toLowerCase() === toUsername.toLowerCase()) return 'self';
 
-  // Look up target user by displayName
-  const usersQ = query(collection(db, 'users'), where('displayName', '==', toUsername));
-  const usersSnap = await getDocs(usersQ);
-  if (usersSnap.empty) return 'not_found';
-  const toUid = usersSnap.docs[0].id;
-  const toDisplayName = usersSnap.docs[0].data().displayName;
+  const matches = await searchUsersByUsername(toUsername, fromUid, 20);
+  const target = matches.find(user => user.displayName.toLocaleLowerCase() === toUsername.toLocaleLowerCase());
+  if (!target) return 'not_found';
+  const toUid = target.id;
+  const toDisplayName = target.displayName;
 
   // Check if friendship already exists (either direction)
   const existingQ = query(
@@ -445,6 +444,26 @@ export const sendFriendRequest = async (fromUid, fromDisplayName, toUsername) =>
     createdAt: new Date()
   });
   return 'sent';
+};
+
+export const searchUsersByUsername = async (searchTerm, currentUid, limitCount = 6) => {
+  const { collection, query, getDocs, limit } = await import('firebase/firestore');
+  const normalized = searchTerm.trim().replace(/^@/, '').toLocaleLowerCase();
+  if (normalized.length < 2) return [];
+
+  // Existing accounts predate normalized usernames, so search a bounded user
+  // directory client-side. New accounts also store usernameLower for a future
+  // indexed prefix query migration.
+  const snap = await getDocs(query(collection(db, 'users'), limit(100)));
+  return snap.docs
+    .map(entry => ({ id: entry.id, ...entry.data() }))
+    .filter(user => user.id !== currentUid && (user.displayName || '').toLocaleLowerCase().includes(normalized))
+    .sort((a, b) => {
+      const aName = (a.displayName || '').toLocaleLowerCase();
+      const bName = (b.displayName || '').toLocaleLowerCase();
+      return Number(bName.startsWith(normalized)) - Number(aName.startsWith(normalized)) || aName.localeCompare(bName);
+    })
+    .slice(0, limitCount);
 };
 
 export const respondToFriendRequest = async (friendshipId, accept) => {
@@ -470,6 +489,7 @@ export const getFriendActivity = async (friendUids, limitCount = 10) => {
   const q = query(
     collection(db, 'clips'),
     where('userId', 'in', batch),
+    where('isPublic', '==', true),
     orderBy('createdAt', 'desc'),
     limit(limitCount)
   );
@@ -499,6 +519,7 @@ export const signUpUser = async (email, password, displayName) => {
     await setDoc(doc(db, 'users', user.uid), {
       email: user.email,
       displayName: displayName,
+      usernameLower: displayName.trim().toLocaleLowerCase(),
       isPremium: false,
       appTheme: 'electric',
       accountCreated: new Date(),

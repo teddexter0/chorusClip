@@ -12,8 +12,11 @@ export const createPlaylist = async (userId, name, clips, ownerDisplayName = '')
     name,
     clips: clips.slice(0, PLAYLIST_MAX_CLIPS),
     createdAt: new Date(),
+    updatedAt: new Date(),
     plays: 0,
-    isPublic: false,
+    // A playlist made entirely from public clips is safe to publish immediately.
+    // Any private member keeps the whole playlist private.
+    isPublic: clips.length > 0 && clips.every(clip => clip.isPublic === true),
     createdBy: ownerDisplayName || 'Community'
   };
 

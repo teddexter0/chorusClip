@@ -28,6 +28,8 @@ export default function ChorusClipModern() {
   const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState(0); 
 const [playlists, setPlaylists] = useState([]);
 const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]);
+const [playlistModalCandidates, setPlaylistModalCandidates] = useState([]);
+const [duplicatePlaylistAction, setDuplicatePlaylistAction] = useState(null);
 const [showPlaylistModal, setShowPlaylistModal] = useState(false);
 const [currentPlaylistPlayer, setCurrentPlaylistPlayer] = useState(null);
 const [isPlayingPlaylist, setIsPlayingPlaylist] = useState(false);
@@ -704,7 +706,7 @@ const loadUserPlaylists = async () => {
     setPlaylists(userPlaylists.map(playlist => invalidIds.has(playlist.id)
       ? { ...playlist, isPublic: false, isFeatured: false }
       : playlist
-    ));
+    ).sort((a, b) => getCreatedAtValue(b.updatedAt || b.createdAt) - getCreatedAtValue(a.updatedAt || a.createdAt)));
     if (invalidPublicPlaylists.length > 0) loadPublicPlaylists();
   } catch (error) {
     console.error('Failed to load playlists:', error);
@@ -833,25 +835,48 @@ const isClipDuplicate = (clip, existingClips) =>
 
 const handleAddToExistingPlaylist = async (targetPlaylist) => {
   if (selectedClipsForPlaylist.length === 0) return;
-  // Filter out duplicates
-  const newClips = selectedClipsForPlaylist.filter(c => !isClipDuplicate(c, targetPlaylist.clips));
-  const skipped = selectedClipsForPlaylist.length - newClips.length;
-  if (newClips.length === 0) {
-    showNotification('All selected clips are already in this playlist!', 'info');
+  const duplicates = selectedClipsForPlaylist.filter(c => isClipDuplicate(c, targetPlaylist.clips));
+  if (duplicates.length > 0) {
+    setDuplicatePlaylistAction({ targetPlaylist, duplicates });
     return;
   }
-  const combined = [...targetPlaylist.clips, ...newClips].slice(0, 10);
+  await commitClipsToPlaylist(targetPlaylist, selectedClipsForPlaylist);
+};
+
+const commitClipsToPlaylist = async (targetPlaylist, clipsToAdd) => {
+  const combined = [...targetPlaylist.clips, ...clipsToAdd].slice(0, 10);
   try {
     const { updatePlaylist } = await import('../lib/firebase');
-    await updatePlaylist(targetPlaylist.id, { clips: combined });
-    const skipMsg = skipped > 0 ? ` (${skipped} duplicate${skipped > 1 ? 's' : ''} skipped)` : '';
-    showNotification(`Added to "${targetPlaylist.name}"!${skipMsg}`, 'success');
+    const mustUnpublish = targetPlaylist.isPublic && combined.some(clip => clip.isPublic !== true);
+    await updatePlaylist(targetPlaylist.id, {
+      clips: combined,
+      ...(mustUnpublish ? { isPublic: false, isFeatured: false } : {})
+    });
+    const addedCount = combined.length - targetPlaylist.clips.length;
+    showNotification(
+      mustUnpublish
+        ? `${addedCount} clip${addedCount === 1 ? '' : 's'} added; “${targetPlaylist.name}” is now private because one is private`
+        : `${addedCount} clip${addedCount === 1 ? '' : 's'} added to “${targetPlaylist.name}”`,
+      'success'
+    );
     setSelectedClipsForPlaylist([]);
+    setPlaylistModalCandidates([]);
     setShowPlaylistModal(false);
+    setDuplicatePlaylistAction(null);
     loadUserPlaylists();
   } catch (e) {
     showNotification('Failed to add clips', 'error');
   }
+};
+
+const openAddToPlaylist = (clipsToChoose) => {
+  const unique = clipsToChoose.reduce((result, clip) => {
+    if (!isClipDuplicate(clip, result)) result.push(clip);
+    return result;
+  }, []).slice(0, 10);
+  setPlaylistModalCandidates(unique);
+  setSelectedClipsForPlaylist(unique);
+  setShowPlaylistModal(true);
 };
 
 const handleSortPlaylist = async (playlist, sortBy) => {
@@ -899,9 +924,11 @@ const handleCreatePlaylist = async () => {
   
   try {
     await createPlaylist(user.uid, name, selectedClipsForPlaylist, user.displayName);
-    showNotification('🎉 Playlist created!', 'success');
+    const autoPublic = selectedClipsForPlaylist.every(clip => clip.isPublic === true);
+    showNotification(autoPublic ? 'Playlist created and published — every clip is public' : 'Private playlist created', 'success');
     setShowPlaylistModal(false);
     setSelectedClipsForPlaylist([]);
+    setPlaylistModalCandidates([]);
     if (nameInput) nameInput.value = '';
     loadUserPlaylists();
   } catch (error) {
@@ -1138,8 +1165,7 @@ const handleSaveQueueToPlaylist = () => {
   }
 
   const staged = uniqueClips.slice(0, 10);
-  setSelectedClipsForPlaylist(staged);
-  setShowPlaylistModal(true);
+  openAddToPlaylist(staged);
   setQueueDrawerOpen(false);
   if (uniqueClips.length > 10) {
     showNotification('The first 10 unique clips are ready to save', 'info');
@@ -1375,13 +1401,14 @@ const completeCurrentClipPlayback = () => {
   // ALWAYS stop tracking first — prevents interval from re-firing during async handoff
   stopTimeTracking();
 
-  if (currentPlaylistPlayerRef.current) {
-    try { playerRef.current?.pauseVideo(); } catch(e) {}
-    currentPlaylistPlayerRef.current.advanceToNextClip();
-  } else if (standaloneLoopRef.current && loopsRef.current[0]) {
+  if (standaloneLoopRef.current && loopsRef.current[0]) {
+    // Dedicated current-track repeat wins even inside a playlist or queue.
     skipTrackingUntilRef.current = Date.now() + 800;
     playerRef.current.seekTo(loopsRef.current[0].start, true);
     startTimeTracking();
+  } else if (currentPlaylistPlayerRef.current) {
+    try { playerRef.current?.pauseVideo(); } catch(e) {}
+    currentPlaylistPlayerRef.current.advanceToNextClip();
   } else if (buildCombinedQueue().length > 0) {
     // Native queue behaviour: a standalone clip hands off to the first queued
     // item without requiring the listener to reopen the queue and press Play.
@@ -1970,8 +1997,9 @@ const handleClipVisibilityChange = async (clip) => {
       }
     }
 
-    await updateDoc(doc(db, 'clips', clip.id), { isPublic: makePublic });
-    setMyClips(prev => prev.map(item => item.id === clip.id ? { ...item, isPublic: makePublic } : item));
+    const updatedAt = new Date();
+    await updateDoc(doc(db, 'clips', clip.id), { isPublic: makePublic, updatedAt });
+    setMyClips(prev => prev.map(item => item.id === clip.id ? { ...item, isPublic: makePublic, updatedAt } : item));
     setClips(prev => prev.filter(item => item.id !== clip.id || makePublic).map(item =>
       item.id === clip.id ? { ...item, isPublic: makePublic } : item
     ));
@@ -2106,6 +2134,7 @@ const handlePlaylistVisibilityChange = async (playlist) => {
 
     await updateDoc(doc(db, 'users', user.uid), {
       displayName: trimmed,
+      usernameLower: trimmed.toLocaleLowerCase(),
       usernameChanges: increment(1)
     });
 
@@ -2476,9 +2505,11 @@ className="btn-primary w-full py-5 text-xl">
 
             <div className="flex items-center justify-between bg-purple-900 bg-opacity-20 px-4 py-3 rounded-xl mb-3">
               <div>
-                <p className="font-semibold text-sm">Public showcase slot</p>
+                <p className="font-semibold text-sm">Feature in Discover</p>
                 <p className="text-xs text-purple-400 mt-0.5">
-                  {managingPlaylist.isFeatured ? 'Pinned as a featured public pick' : 'Optional extra slot you can deliberately promote'}
+                  {managingPlaylist.isFeatured
+                    ? 'Eligible for the Featured Pick card in public discovery'
+                    : 'Optional promotion only — this does not change who can access the playlist'}
                 </p>
               </div>
               <button
@@ -2502,13 +2533,13 @@ className="btn-primary w-full py-5 text-xl">
                     setManagingPlaylist(prev => prev ? { ...prev, ...updates } : null);
                     loadUserPlaylists();
                     loadPublicPlaylists();
-                    showNotification(nextFeatured ? '⭐ Featured on public showcase' : 'Featured showcase removed', 'success');
+                    showNotification(nextFeatured ? 'Eligible for the Featured Pick card' : 'Featured Pick promotion removed', 'success');
                   } catch (e) {
-                    showNotification('Failed to update showcase slot', 'error');
+                    showNotification('Failed to update Featured Pick promotion', 'error');
                   }
                 }}
                 className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 ${managingPlaylist.isFeatured ? 'bg-yellow-500' : 'bg-purple-700'}`}
-                aria-label="Toggle featured public showcase slot"
+                aria-label="Toggle Featured Pick promotion"
               >
                 <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${managingPlaylist.isFeatured ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
@@ -2563,36 +2594,44 @@ className="btn-primary w-full py-5 text-xl">
       {/* CREATE / ADD-TO-EXISTING PLAYLIST MODAL */}
       {showPlaylistModal && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
-          <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-2xl w-full border border-purple-500 max-h-[90vh] overflow-y-auto">
+          <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-5 sm:p-8 max-w-2xl w-full border border-purple-500 max-h-[92dvh] overflow-y-auto overscroll-contain pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
             <button onClick={() => setShowPlaylistModal(false)} className="float-right text-white hover:text-purple-300">
               <X size={32} />
             </button>
 
-            <h2 className="text-3xl font-bold mb-4">Add {selectedClipsForPlaylist.length} Clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''}</h2>
+            <h2 className="text-2xl sm:text-3xl font-bold mb-1">Add clips to a playlist</h2>
+            <p className="text-sm text-purple-300 mb-4">Choose clips with checkboxes, then choose a playlist or create a new one.</p>
 
-            <div className="bg-purple-900 bg-opacity-30 p-4 rounded-xl max-h-44 overflow-y-auto mb-5">
-              {selectedClipsForPlaylist.map((clip, idx) => (
-                <div key={idx} className="flex justify-between items-center py-2 border-b border-purple-700 last:border-0">
+            <div className="bg-purple-900 bg-opacity-30 p-3 rounded-xl max-h-52 overflow-y-auto mb-5 space-y-1">
+              {playlistModalCandidates.map((clip, idx) => {
+                const checked = selectedClipsForPlaylist.some(item => isClipDuplicate(item, [clip]));
+                return (
+                <label key={clip.id || idx} className="flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:border-purple-600 hover:bg-purple-800/40 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => setSelectedClipsForPlaylist(current => checked
+                      ? current.filter(item => !isClipDuplicate(item, [clip]))
+                      : [...current, clip]
+                    )}
+                    className="w-5 h-5 accent-purple-500 shrink-0"
+                  />
                   <div className="flex-1 min-w-0 mr-2">
                     <p className="font-semibold truncate">{idx + 1}. {clip.title}</p>
                     <p className="text-sm text-purple-300 truncate">{clip.artist}</p>
                   </div>
-                  <button onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
-                    className="text-red-400 hover:text-red-300">
-                    <X size={18} />
-                  </button>
-                </div>
-              ))}
+                </label>
+              )})}
             </div>
 
             {/* Add to existing playlist */}
             {playlists.length > 0 && (
               <div className="mb-5">
                 <p className="font-bold text-purple-300 mb-2 text-sm uppercase tracking-wide">Add to existing playlist</p>
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                   {playlists.map(pl => (
                     <button key={pl.id} onClick={() => handleAddToExistingPlaylist(pl)}
-                      disabled={(pl.clips?.length || 0) >= 10}
+                      disabled={(pl.clips?.length || 0) >= 10 || selectedClipsForPlaylist.length === 0}
                       className={`w-full flex justify-between items-center px-4 py-3 rounded-xl font-semibold transition text-left ${(pl.clips?.length || 0) >= 10 ? 'opacity-40 cursor-not-allowed bg-purple-900 bg-opacity-20' : 'bg-purple-800 bg-opacity-40 hover:bg-opacity-60'}`}>
                       <span>{pl.name}</span>
                       <span className="text-sm text-purple-400">{pl.clips?.length || 0}/10</span>
@@ -2607,7 +2646,7 @@ className="btn-primary w-full py-5 text-xl">
               <input type="text" id="playlist-name-input"
                 placeholder="Playlist name (e.g. 'Vibes Only')"
                 className="input mb-3" />
-              <button onClick={handleCreatePlaylist} className="btn-primary w-full py-4 text-lg">
+              <button onClick={handleCreatePlaylist} disabled={selectedClipsForPlaylist.length === 0} className="btn-primary w-full py-4 text-lg disabled:opacity-40">
                 Create Playlist
               </button>
             </div>
@@ -3243,16 +3282,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 >
   <RotateCcw size={28} aria-hidden="true" />
 </button>
-{!isPlayingPlaylist && (
 <button
   onClick={() => setStandaloneLoop(v => !v)}
-  className={`px-5 py-5 rounded-xl transition font-bold text-sm ${standaloneLoop ? 'bg-pink-600 hover:bg-pink-500 text-white shadow-lg shadow-pink-500/40' : 'bg-purple-800 bg-opacity-70 hover:bg-opacity-90'}`}
-  aria-label={standaloneLoop ? 'Loop ON  tap to disable' : 'Loop OFF  tap to loop continuously'}
-  title={standaloneLoop ? 'Loop ON' : 'Loop OFF'}
+  className={`px-5 py-5 rounded-xl transition font-bold text-sm flex items-center gap-2 ${standaloneLoop ? 'bg-pink-600 hover:bg-pink-500 text-white shadow-lg shadow-pink-500/40' : 'bg-purple-800 bg-opacity-70 hover:bg-opacity-90'}`}
+  aria-label={standaloneLoop ? 'Current track repeat on' : 'Repeat current track'}
+  title="Repeat the current clip without repeating the whole playlist"
 >
-  <Repeat size={24} />
+  <Repeat size={24} /> <span>Current clip</span>
 </button>
-)}
                    
                   {/* Download removed — not available in serverless deployment */}
                   </div>
@@ -3365,7 +3402,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 <p className="text-purple-400 text-xs leading-relaxed">
                   On iPhone: tap Share → &quot;Add to Home Screen&quot;.<br/>
                   On Android: tap the browser menu → &quot;Add to Home Screen&quot; or &quot;Install app&quot;.<br/>
-                  This lets ChorusClip run fullscreen and keeps audio playing when you switch apps.
+                  This runs ChorusClip fullscreen and enables lock-screen controls where the browser allows them. YouTube or iOS may still pause playback after the app is backgrounded.
                 </p>
               </div>
               <a 
@@ -3527,6 +3564,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                               <Heart size={12} fill={user?.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
                               {clip.likes || 0}
                             </button>
+                            <button
+                              onClick={(event) => { event.stopPropagation(); openAddToPlaylist([clip]); }}
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-bold text-emerald-300 hover:bg-emerald-500/15 transition"
+                              aria-label={`Add ${clip.title} to a playlist`}
+                            >
+                              <Plus size={12} /> List
+                            </button>
                             <span className="text-xs text-purple-500">▶ {playCount}</span>
                             {clip.userId === user?.uid && (
                               <span className={`text-xs ml-auto ${clip.isPublic ? 'text-emerald-400' : 'text-purple-500'}`}>
@@ -3648,10 +3692,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (!user?.uid) { showNotification('Sign in first!', 'error'); return; }
-                                    if (selectedClipsForPlaylist.length >= 10) { showNotification('Playlist cap is 10 clips!', 'error'); return; }
-                                    if (isClipDuplicate(clip, selectedClipsForPlaylist)) { showNotification('Already staged!', 'info'); return; }
-                                    setSelectedClipsForPlaylist([...selectedClipsForPlaylist, clip]);
-                                    showNotification(`Added to staging (${selectedClipsForPlaylist.length + 1})`, 'success');
+                                    openAddToPlaylist([clip]);
                                     setOpenClipMenuId(null);
                                   }}
                                   className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
@@ -4070,7 +4111,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       .sort((a, b) => {
         if (libraryClipSort === 'plays') return (b.plays || 0) - (a.plays || 0);
         if (libraryClipSort === 'likes') return (b.likes || 0) - (a.likes || 0);
-        return (getCreatedAtValue(b.createdAt) || 0) - (getCreatedAtValue(a.createdAt) || 0);
+        return getCreatedAtValue(b.updatedAt || b.createdAt) - getCreatedAtValue(a.updatedAt || a.createdAt);
       });
     const visiblePrivate = filteredMyClips.slice(0, privateClipsLimit);
     return (
@@ -4129,7 +4170,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               className="ml-auto text-xs font-bold rounded-lg bg-purple-900 bg-opacity-40 border border-purple-700 text-purple-300 px-2 py-1.5 outline-none focus:border-purple-500"
               aria-label="Sort your clips"
             >
-              <option value="newest">Newest</option>
+              <option value="newest">Recently edited</option>
               <option value="plays">Most played</option>
               <option value="likes">Most likes</option>
             </select>
@@ -4195,6 +4236,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                             >
                               <ListMusic size={16} className="text-yellow-400 shrink-0" />
                               <span className="text-sm text-white">Add to Queue</span>
+                            </button>
+                            <button
+                              onClick={() => { openAddToPlaylist([clip]); setOpenClipMenuId(null); }}
+                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
+                            >
+                              <Plus size={16} className="text-emerald-400 shrink-0" />
+                              <span className="text-sm text-white">Add to Playlist</span>
                             </button>
 
                             {/* Public/private toggle */}
@@ -4319,11 +4367,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 : 'border-purple-700 border-opacity-30 bg-purple-900 bg-opacity-20 hover:bg-opacity-30'
             }`}
           >
-            {/* Row header — always visible, tap to expand */}
-            <button
-              onClick={() => setExpandedPlaylistId(isExpanded ? null : playlist.id)}
-              className="w-full flex items-center justify-between px-4 py-3.5 text-left"
-            >
+            {/* Row header — expansion is a separate, clearly labelled action. */}
+            <div className="w-full flex items-center justify-between gap-3 px-4 py-3.5 text-left">
               <div className="flex-1 min-w-0 mr-3">
                 <p className="font-bold text-base leading-tight truncate text-white">{playlist.name}</p>
                 <p className="text-xs text-purple-400 mt-0.5">
@@ -4331,21 +4376,24 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                   {inQueue && <span className="ml-2 text-yellow-400 font-bold">· In Queue</span>}
                 </p>
               </div>
-              {/* Glowing expand button — right side */}
-              <span className={`
-                flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-all
+              <button
+                onClick={() => setExpandedPlaylistId(isExpanded ? null : playlist.id)}
+                className={`flex-shrink-0 min-h-10 px-3 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all
                 ${isExpanded
-                  ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/50 ring-2 ring-purple-400'
-                  : 'bg-purple-900 bg-opacity-60 text-purple-400 hover:shadow-md hover:shadow-purple-500/30 ring-1 ring-purple-700'
+                  ? 'bg-purple-500 text-white shadow-md'
+                  : 'bg-purple-950/70 text-purple-300 hover:bg-purple-800 ring-1 ring-purple-700'
                 }
-              `}>
-                {isExpanded ? '▲' : '▼'}
-              </span>
-            </button>
+              `}
+                aria-expanded={isExpanded}
+                aria-controls={`playlist-${playlist.id}-details`}
+              >
+                {isExpanded ? <><ChevronUp size={15} /> Hide</> : <><ChevronDown size={15} /> View clips</>}
+              </button>
+            </div>
 
             {/* Expanded body */}
             {isExpanded && (
-              <div className="px-4 pb-4 space-y-3">
+              <div id={`playlist-${playlist.id}-details`} className="px-4 pb-4 pt-1 space-y-3 border-t border-purple-800/50">
                 {/* Clip preview list */}
                 {(playlist.clips || []).length === 0 ? (
                   <p className="text-xs text-purple-500 text-center py-2">No clips yet</p>
@@ -4543,7 +4591,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           )}
           {selectedClipsForPlaylist.length > 0 && (
             <button
-              onClick={() => setShowPlaylistModal(true)}
+              onClick={() => openAddToPlaylist(selectedClipsForPlaylist)}
               className="px-4 py-2 bg-gradient-to-r from-amber-600 to-yellow-600 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
             >
               <Plus size={14}/> Save to Playlist
@@ -4638,6 +4686,16 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           <Plus size={16} /> Save as Playlist
         </button>
       </div>
+      {queueEditMode && (
+        <div className="px-5 pb-3 border-b border-yellow-800">
+          <button
+            onClick={() => setShowClearQueueConfirm(true)}
+            className="w-full min-h-11 rounded-xl border border-red-600/50 bg-red-950/60 text-red-300 text-sm font-black hover:bg-red-900/70 transition"
+          >
+            Clear entire queue
+          </button>
+        </div>
+      )}
 
       {/* Queue items — drag sortable when editing */}
       <div className="flex-1 px-4 py-3 space-y-2">
@@ -4704,19 +4762,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
       {/* Actions */}
       <div className="px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-yellow-800 space-y-2 bg-amber-950">
-        {!isPlayingQueue && (
-          <button
-            onClick={() => { handlePlayQueue(0); setQueueDrawerOpen(false); }}
-            className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black rounded-xl font-black hover:shadow-lg transition flex items-center justify-center gap-2"
-          >
-            ▶ Play Queue
-          </button>
-        )}
         <button
-          onClick={() => setShowClearQueueConfirm(true)}
-          className="w-full py-2.5 bg-red-900 bg-opacity-50 hover:bg-opacity-80 text-red-300 rounded-xl text-sm font-semibold transition"
+          onClick={() => { handlePlayQueue(0); setQueueDrawerOpen(false); }}
+          className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black rounded-xl font-black hover:shadow-lg transition flex items-center justify-center gap-2"
         >
-          Clear Whole Queue
+          <Play size={17} fill="currentColor" /> {isPlayingQueue ? 'Restart Queue' : 'Play Queue'}
         </button>
       </div>
     </div>
@@ -4758,6 +4808,34 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </div>
   </div>
 )}
+
+{duplicatePlaylistAction && (
+  <div className="fixed inset-0 z-[90] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setDuplicatePlaylistAction(null)}>
+    <div role="alertdialog" aria-modal="true" className="w-full max-w-md rounded-3xl border border-yellow-600/60 bg-gradient-to-br from-gray-950 to-amber-950 p-6 shadow-2xl" onClick={event => event.stopPropagation()}>
+      <div className="w-12 h-12 rounded-2xl bg-yellow-500/20 text-yellow-300 flex items-center justify-center mb-4"><AlertCircle size={25} /></div>
+      <h3 className="text-xl font-black text-white">Already in this playlist</h3>
+      <p className="mt-2 text-sm leading-relaxed text-purple-200">
+        {duplicatePlaylistAction.duplicates.length} selected clip{duplicatePlaylistAction.duplicates.length === 1 ? ' already exists' : 's already exist'} in “{duplicatePlaylistAction.targetPlaylist.name}”. Add duplicate copies anyway?
+      </p>
+      <div className="mt-6 grid gap-2 sm:grid-cols-3">
+        <button onClick={() => setDuplicatePlaylistAction(null)} className="min-h-11 rounded-xl bg-purple-900/70 text-white font-bold">Cancel</button>
+        <button
+          onClick={() => {
+            const onlyNew = selectedClipsForPlaylist.filter(clip => !isClipDuplicate(clip, duplicatePlaylistAction.targetPlaylist.clips));
+            if (onlyNew.length === 0) {
+              setDuplicatePlaylistAction(null);
+              showNotification('Nothing new was added', 'info');
+            } else {
+              commitClipsToPlaylist(duplicatePlaylistAction.targetPlaylist, onlyNew);
+            }
+          }}
+          className="min-h-11 rounded-xl bg-emerald-700 text-white font-bold"
+        >Only new</button>
+        <button onClick={() => commitClipsToPlaylist(duplicatePlaylistAction.targetPlaylist, selectedClipsForPlaylist)} className="min-h-11 rounded-xl bg-yellow-500 text-black font-black">Add again</button>
+      </div>
+    </div>
+  </div>
+)}
 </div>
 
 {/* Desktop now-playing dock — playback stays visible in every workspace. */}
@@ -4790,6 +4868,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         className="w-9 h-9 rounded-full text-white hover:bg-white/10 disabled:opacity-30 flex items-center justify-center"
         aria-label="Skip to next"
       ><SkipForward size={17} /></button>
+      <button
+        onClick={() => setStandaloneLoop(value => !value)}
+        className={`w-9 h-9 rounded-full flex items-center justify-center transition ${standaloneLoop ? 'bg-pink-500/25 text-pink-300' : 'text-white/60 hover:bg-white/10 hover:text-white'}`}
+        aria-label={standaloneLoop ? 'Current clip repeat on' : 'Repeat current clip'}
+        aria-pressed={standaloneLoop}
+        title="Repeat current clip"
+      ><Repeat size={16} /></button>
       <button
         onClick={() => setQueueDrawerOpen(true)}
         className="ml-2 min-h-9 rounded-xl bg-yellow-500/20 px-3 text-xs font-black text-yellow-300 hover:bg-yellow-500/30"
@@ -4859,17 +4944,17 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             <SkipForward size={18} />
           </button>
 
-          {/* Loop toggle — shows for standalone, shows repeat for playlist */}
-          {!isPlayingPlaylist ? (
-            <button
-              onClick={() => setStandaloneLoop(v => !v)}
-              className={`w-9 h-9 flex items-center justify-center rounded-full transition relative ${standaloneLoop ? 'text-emerald-400' : 'text-white text-opacity-50 hover:text-opacity-100'}`}
-              aria-label={standaloneLoop ? 'Loop on' : 'Loop off'}
-            >
-              <Repeat size={16} />
-              {standaloneLoop && <span className="absolute -bottom-0.5 w-1 h-1 bg-emerald-400 rounded-full" />}
-            </button>
-          ) : (
+          {/* Current clip repeat is independent from whole-playlist repeat. */}
+          <button
+            onClick={() => setStandaloneLoop(v => !v)}
+            className={`w-9 h-9 flex items-center justify-center rounded-full transition relative ${standaloneLoop ? 'text-pink-400 bg-pink-500/15' : 'text-white text-opacity-50 hover:text-opacity-100'}`}
+            aria-label={standaloneLoop ? 'Current clip repeat on' : 'Repeat current clip'}
+            aria-pressed={standaloneLoop}
+          >
+            <Repeat size={16} />
+            {standaloneLoop && <span className="absolute -bottom-0.5 w-1 h-1 bg-pink-400 rounded-full" />}
+          </button>
+          {isPlayingPlaylist && (
             <button
               onClick={() => currentPlaylistPlayerRef.current?.toggleRepeat?.()}
               className={`w-9 h-9 flex items-center justify-center rounded-full transition relative ${currentPlaylistPlayer?.repeatPlaylist ? 'text-emerald-400' : 'text-white text-opacity-50 hover:text-opacity-100'}`}

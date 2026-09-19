@@ -13,10 +13,17 @@ service cloud.firestore {
     // and visibility; other signed-in listeners may only move public counters
     // by one step, never rewrite clip metadata or force a negative count.
     match /clips/{clipId} {
-      allow read: if true;
+      allow read: if resource.data.isPublic == true ||
+        (request.auth != null && resource.data.userId == request.auth.uid);
       allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
       allow update: if request.auth != null && (
-        resource.data.userId == request.auth.uid ||
+        (
+          resource.data.userId == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'isPublic', 'updatedAt', 'createdBy', 'title', 'artist', 'loops',
+            'youtubeVideoId', 'startTime', 'endTime', 'loopCount'
+          ])
+        ) ||
         (
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']) &&
           request.resource.data.likes >= 0 &&

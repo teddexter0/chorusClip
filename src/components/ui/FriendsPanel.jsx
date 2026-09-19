@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, UserPlus, Check, XCircle, Play, Music } from 'lucide-react';
+import { X, UserPlus, Check, XCircle, Play, Music, Search, Loader2 } from 'lucide-react';
 
 export default function FriendsPanel({ user, onClose, onPlayClip, showNotification }) {
   const [tab, setTab] = useState('friends'); // 'friends' | 'requests' | 'activity'
@@ -9,6 +9,9 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
   const [searchUsername, setSearchUsername] = useState('');
   const [loading, setLoading] = useState(false);
   const [sendingRequest, setSendingRequest] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [selectedUser, setSelectedUser] = useState(null);
   const [permissionError, setPermissionError] = useState(false);
 
   const loadFriendships = async () => {
@@ -44,8 +47,32 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
 
+  useEffect(() => {
+    const term = searchUsername.trim();
+    setSelectedUser(null);
+    if (term.length < 2) {
+      setSearchResults([]);
+      setSearching(false);
+      return;
+    }
+
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      try {
+        const { searchUsersByUsername } = await import('../../lib/firebase');
+        setSearchResults(await searchUsersByUsername(term, user.uid, 6));
+      } catch (error) {
+        console.error('Username search failed:', error);
+        setSearchResults([]);
+      } finally {
+        setSearching(false);
+      }
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchUsername, user.uid]);
+
   const handleSendRequest = async () => {
-    const target = searchUsername.trim();
+    const target = (selectedUser?.displayName || searchUsername).trim();
     if (!target) return;
     setSendingRequest(true);
     try {
@@ -58,7 +85,12 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
         self: `You can't add yourself!`,
       };
       showNotification(messages[result] || 'Done', result === 'sent' ? 'success' : 'info');
-      if (result === 'sent') { setSearchUsername(''); loadFriendships(); }
+      if (result === 'sent') {
+        await loadFriendships();
+        setSearchUsername('');
+        setSearchResults([]);
+        setSelectedUser(null);
+      }
     } catch (e) {
       showNotification('Failed to send request', 'error');
     } finally {
@@ -98,24 +130,54 @@ export default function FriendsPanel({ user, onClose, onPlayClip, showNotificati
         {/* Send friend request */}
         <div className="mb-5">
           <label className="block text-sm font-bold text-purple-300 mb-2">Add friend by username</label>
-          <div className="flex gap-2">
+          <div className="relative">
+            <Search size={17} className="absolute left-3 top-3.5 text-purple-400" />
             <input
               type="text"
               value={searchUsername}
               onChange={e => setSearchUsername(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSendRequest()}
-              placeholder="exact_username"
-              className="flex-1 px-4 py-3 bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+              onKeyDown={e => e.key === 'Enter' && selectedUser && handleSendRequest()}
+              placeholder="Search usernames"
+              className="w-full pl-10 pr-10 py-3 bg-purple-950 bg-opacity-60 border border-purple-600 rounded-xl text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 text-sm"
+              role="combobox"
+              aria-expanded={searchResults.length > 0}
+              aria-controls="friend-search-results"
             />
-            <button
-              onClick={handleSendRequest}
-              disabled={sendingRequest || !searchUsername.trim()}
-              className="px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold text-sm disabled:opacity-50 transition hover:shadow-lg"
-            >
-              {sendingRequest ? '...' : 'Send'}
-            </button>
+            {searching && <Loader2 size={17} className="absolute right-3 top-3.5 text-purple-400 animate-spin" />}
           </div>
-          <p className="text-xs text-purple-500 mt-1">Username must match exactly (case-sensitive)</p>
+          {searchUsername.trim().length === 1 && <p className="text-xs text-purple-500 mt-2">Type at least 2 characters</p>}
+          {searchUsername.trim().length >= 2 && !searching && searchResults.length === 0 && (
+            <p className="text-xs text-purple-400 mt-2">No matching usernames</p>
+          )}
+          {searchResults.length > 0 && (
+            <div id="friend-search-results" role="listbox" className="mt-2 overflow-hidden rounded-2xl border border-purple-700 bg-gray-950 shadow-2xl">
+              {searchResults.map(result => {
+                const existing = friendships.find(friendship => friendship.participants?.includes(result.id));
+                const status = existing?.status === 'accepted' ? 'Friends' : existing?.status === 'pending' ? 'Pending' : null;
+                return (
+                  <button
+                    key={result.id}
+                    type="button"
+                    onClick={() => setSelectedUser(result)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-purple-900 last:border-0 hover:bg-purple-900/60 transition ${selectedUser?.id === result.id ? 'bg-purple-800/70' : ''}`}
+                    role="option"
+                    aria-selected={selectedUser?.id === result.id}
+                  >
+                    <span className="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center font-black">{result.displayName?.[0]?.toUpperCase()}</span>
+                    <span className="flex-1 min-w-0"><span className="block font-bold truncate">@{result.displayName}</span><span className="block text-xs text-purple-400">ChorusClip listener</span></span>
+                    {status && <span className="text-xs font-bold text-yellow-300">{status}</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <button
+            onClick={handleSendRequest}
+            disabled={sendingRequest || !selectedUser || friendships.some(friendship => friendship.participants?.includes(selectedUser.id))}
+            className="mt-3 w-full min-h-11 px-4 py-3 bg-gradient-to-r from-purple-600 to-pink-600 rounded-xl font-semibold text-sm disabled:opacity-40 transition hover:shadow-lg"
+          >
+            {sendingRequest ? 'Sending…' : selectedUser ? `Send request to @${selectedUser.displayName}` : 'Choose a username above'}
+          </button>
         </div>
 
         {/* Tabs */}

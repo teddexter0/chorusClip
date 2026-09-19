@@ -53,9 +53,9 @@ export default function TutorialModal({ onClose }) {
           </p>
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-blue-400">
-              <p className="font-semibold mb-1">Staging clips → playlist</p>
-              <p className="text-purple-200 text-sm">Tap <strong>+</strong> on any feed clip to stage it. The sticky banner at the bottom shows your staged clips.</p>
-              <p className="text-purple-400 text-xs mt-2">→ Tap <strong>Edit Order</strong> in the banner to reorder before saving</p>
+              <p className="font-semibold mb-1">Add clips to playlists</p>
+              <p className="text-purple-200 text-sm">Tap <strong>+ List</strong> on a clip, choose clips with checkboxes, then pick an existing playlist or create one.</p>
+              <p className="text-purple-400 text-xs mt-2">→ Existing duplicates always ask before being added again</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-orange-400">
               <p className="font-semibold mb-1">Queue up to 10 items</p>
@@ -70,13 +70,10 @@ export default function TutorialModal({ onClose }) {
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-green-400">
               <p className="font-semibold mb-1">Making a playlist public</p>
               <p className="text-purple-200 text-sm">
-                All playlists start <strong>private</strong>. To share with others:<br/>
-                1. Go to <strong>My Playlists</strong><br/>
-                2. Tap <strong>⋯ Manage</strong> on the playlist<br/>
-                3. Toggle <strong>Visibility</strong> to 🌍 Public<br/>
-                Public playlists appear in the community feed. Your clips inside stay private unless you toggle them public too.
+                A new playlist is published automatically when <strong>every selected clip is public</strong>. If any selected clip is private, the playlist stays private.<br/>
+                You can change visibility later from <strong>Library → Manage</strong>. Making a member clip private also makes its public playlist private.
               </p>
-              <p className="text-purple-400 text-xs mt-2">→ Private clips in public playlists: playable via the playlist, not searchable individually</p>
+              <p className="text-purple-400 text-xs mt-2">→ Privacy rule: public playlists never expose private clips</p>
             </div>
           </div>
         </div>
@@ -112,7 +109,7 @@ export default function TutorialModal({ onClose }) {
             <p className="text-purple-200 text-sm">
               <strong>iPhone:</strong> tap Share → &quot;Add to Home Screen&quot;<br/>
               <strong>Android:</strong> tap browser menu → &quot;Install app&quot; or &quot;Add to Home Screen&quot;<br/>
-              This makes ChorusClip run like a native app — audio keeps playing when you switch apps.
+              This makes ChorusClip run fullscreen and exposes lock-screen controls where supported. YouTube or iOS may still pause playback in the background.
             </p>
             <p className="text-purple-400 text-xs mt-2">→ Lock screen controls (play/pause/skip) appear automatically once installed</p>
           </div>

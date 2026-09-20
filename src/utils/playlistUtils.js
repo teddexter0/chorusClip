@@ -39,7 +39,7 @@ export const getUserPlaylists = async (userId) => {
 
 export const getAllPublicPlaylists = async () => {
   const { db } = await import('../lib/firebase');
-  const { collection, query, where, getDocs, limit } = await import('firebase/firestore');
+  const { collection, query, where, getDocs, getDoc, doc, limit } = await import('firebase/firestore');
 
   const q = query(
     collection(db, 'playlists'),
@@ -47,17 +47,21 @@ export const getAllPublicPlaylists = async () => {
     limit(50)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs
-    .map(doc => {
-      const playlist = { id: doc.id, ...doc.data() };
-      return {
-        ...playlist,
-        // Legacy safety net: private or old unclassified snapshots never render
-        // through a public playlist while their owner is being migrated.
-        clips: (playlist.clips || []).filter(clip => clip.isPublic === true)
-      };
-    })
-    .filter(playlist => playlist.clips.length > 0);
+  const playlists = snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() }));
+  const hydrated = await Promise.all(playlists.map(async playlist => {
+    const liveClips = await Promise.all((playlist.clips || []).map(async clip => {
+      if (!clip.id) return clip.isPublic === true ? clip : null;
+      try {
+        const live = await getDoc(doc(db, 'clips', clip.id));
+        if (!live.exists() || live.data().isPublic !== true) return null;
+        return { ...clip, id: live.id, ...live.data() };
+      } catch {
+        return clip.isPublic === true ? clip : null;
+      }
+    }));
+    return { ...playlist, clips: liveClips.filter(Boolean) };
+  }));
+  return hydrated.filter(playlist => playlist.clips.length > 0);
 };
 
 export const shuffleArray = (array) => {

@@ -10,7 +10,7 @@ export function useAuth() {
     songsToday: 0,
     accountCreatedDaysAgo: 0,
     likedClips: [],
-    appTheme: 'electric'
+    appTheme: null
   });
  
   useEffect(() => {
@@ -34,7 +34,7 @@ export function useAuth() {
             songsToday: 0,
             accountCreatedDaysAgo: 0,
             likedClips: [],
-            appTheme: 'electric'
+            appTheme: null
           });
         }
 
@@ -58,7 +58,7 @@ export function useAuth() {
               email: userData.email,
               isPremium: userData.isPremium || false,
               songsToday,
-              appTheme: userData.appTheme || 'electric',
+              appTheme: userData.appTheme || 'classic',
               accountCreatedDaysAgo: Math.floor(
                 (Date.now() - userData.accountCreated.toDate().getTime()) / (1000 * 60 * 60 * 24)
               ),

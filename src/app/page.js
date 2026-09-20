@@ -29,6 +29,7 @@ export default function ChorusClipModern() {
 const [playlists, setPlaylists] = useState([]);
 const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]);
 const [playlistModalCandidates, setPlaylistModalCandidates] = useState([]);
+const [selectedTargetPlaylistIds, setSelectedTargetPlaylistIds] = useState([]);
 const [duplicatePlaylistAction, setDuplicatePlaylistAction] = useState(null);
 const [showPlaylistModal, setShowPlaylistModal] = useState(false);
 const [currentPlaylistPlayer, setCurrentPlaylistPlayer] = useState(null);
@@ -40,9 +41,11 @@ const [artistImages, setArtistImages] = useState({});
 const [publicPlaylists, setPublicPlaylists] = useState([]);
 const [queueBannerCollapsed, setQueueBannerCollapsed] = useState(false);
 const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
-const [themeMode, setThemeMode] = useState('electric');
+const [themeMode, setThemeMode] = useState('classic');
 const [pendingAction, setPendingAction] = useState(null);
 const [clipSearchQuery, setClipSearchQuery] = useState('');
+const [searchablePublicClips, setSearchablePublicClips] = useState([]);
+const [feedSearchLoading, setFeedSearchLoading] = useState(false);
 const [searchHighlight, setSearchHighlight] = useState(null); // { id } of the matched clip card
 const [playlistSearchQuery, setPlaylistSearchQuery] = useState('');
 const [queueEditMode, setQueueEditMode] = useState(false);
@@ -105,6 +108,9 @@ const [artistsExpanded, setArtistsExpanded] = useState(false);
 
 // Friends panel
 const [showFriendsPanel, setShowFriendsPanel] = useState(false);
+const [profileFriendships, setProfileFriendships] = useState([]);
+const [profileActivity, setProfileActivity] = useState([]);
+const [celebration, setCelebration] = useState(null);
 
 // Playlist queue (up to 5 playlists queued to play consecutively)
 const [playlistQueue, setPlaylistQueue] = useState([]);
@@ -114,7 +120,7 @@ const [isPlayingQueue, setIsPlayingQueue] = useState(false);
 const [clipQueue, setClipQueue] = useState([]);
 const [, setQueueOrder] = useState([]);
 const [standaloneLoop, setStandaloneLoop] = useState(false);
-const [mobileTab, setMobileTab] = useState('create'); // 'create' | 'feed' | 'library' | 'more'
+const [mobileTab, setMobileTab] = useState('feed'); // 'profile' | 'create' | 'feed' | 'library' | 'more'
 const [expandedSections, setExpandedSections] = useState([0]); // section 0 always open
 const playlistQueueRef = useRef([]);
 const clipQueueRef = useRef([]);
@@ -276,6 +282,11 @@ const loadTrendingData = async () => {
     setNotification({ message, type });
   };
 
+  const celebrate = (message) => {
+    setCelebration({ message, key: Date.now() });
+    window.setTimeout(() => setCelebration(null), 3200);
+  };
+
   const updateClipStatInLists = (clipId, field, delta) => {
     const applyDelta = (clip) => (
       clip.id === clipId
@@ -371,6 +382,61 @@ const loadTrendingData = async () => {
     // These loaders intentionally re-run when auth identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setProfileFriendships([]);
+      setProfileActivity([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadProfileSocial = async () => {
+      try {
+        const { getFriendships, getFriendActivity } = await import('../lib/firebase');
+        const friendships = await getFriendships(user.uid);
+        if (cancelled) return;
+        setProfileFriendships(friendships);
+        const friendIds = friendships
+          .filter(friendship => friendship.status === 'accepted')
+          .map(friendship => friendship.fromUid === user.uid ? friendship.toUid : friendship.fromUid);
+        const activity = await getFriendActivity(friendIds, 8).catch(() => []);
+        if (!cancelled) setProfileActivity(activity);
+      } catch (error) {
+        console.error('Profile social summary failed:', error);
+      }
+    };
+    loadProfileSocial();
+    return () => { cancelled = true; };
+  }, [user?.uid]);
+
+  useEffect(() => {
+    const query = clipSearchQuery.trim();
+    if (!query) {
+      setSearchablePublicClips([]);
+      setFeedSearchLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFeedSearchLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const { getPublicClipsForSearch } = await import('../lib/firebase');
+        const publicClips = await getPublicClipsForSearch(200);
+        if (!cancelled) setSearchablePublicClips(publicClips);
+      } catch (error) {
+        console.error('Feed search failed:', error);
+      } finally {
+        if (!cancelled) setFeedSearchLoading(false);
+      }
+    }, 180);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [clipSearchQuery]);
 
   useEffect(() => {
     if (topArtists.length === 0) return;
@@ -876,7 +942,44 @@ const openAddToPlaylist = (clipsToChoose) => {
   }, []).slice(0, 10);
   setPlaylistModalCandidates(unique);
   setSelectedClipsForPlaylist(unique);
+  setSelectedTargetPlaylistIds([]);
   setShowPlaylistModal(true);
+};
+
+const handleAddToSelectedPlaylists = async () => {
+  if (selectedTargetPlaylistIds.length === 0 || selectedClipsForPlaylist.length === 0) return;
+  const targets = playlists.filter(playlist => selectedTargetPlaylistIds.includes(playlist.id));
+  const duplicates = targets.flatMap(targetPlaylist =>
+    selectedClipsForPlaylist.filter(clip => isClipDuplicate(clip, targetPlaylist.clips || []))
+  );
+  if (duplicates.length > 0 && targets.length === 1) {
+    setDuplicatePlaylistAction({ targetPlaylist: targets[0], duplicates });
+    return;
+  }
+
+  try {
+    const { updatePlaylist } = await import('../lib/firebase');
+    let addedTotal = 0;
+    await Promise.all(targets.map(async targetPlaylist => {
+      const newClips = selectedClipsForPlaylist.filter(clip => !isClipDuplicate(clip, targetPlaylist.clips || []));
+      const combined = [...(targetPlaylist.clips || []), ...newClips].slice(0, 10);
+      addedTotal += Math.max(0, combined.length - (targetPlaylist.clips?.length || 0));
+      const mustUnpublish = targetPlaylist.isPublic === true && combined.some(clip => clip.isPublic !== true);
+      await updatePlaylist(targetPlaylist.id, {
+        clips: combined,
+        ...(mustUnpublish ? { isPublic: false, isFeatured: false } : {})
+      });
+    }));
+    setShowPlaylistModal(false);
+    setSelectedTargetPlaylistIds([]);
+    setSelectedClipsForPlaylist([]);
+    setPlaylistModalCandidates([]);
+    await loadUserPlaylists();
+    showNotification(`${addedTotal} clip placement${addedTotal === 1 ? '' : 's'} added across ${targets.length} playlist${targets.length === 1 ? '' : 's'}`, 'success');
+  } catch (error) {
+    console.error('Multi-playlist add failed:', error);
+    showNotification('Could not add the clip to the selected playlists', 'error');
+  }
 };
 
 const handleSortPlaylist = async (playlist, sortBy) => {
@@ -926,6 +1029,7 @@ const handleCreatePlaylist = async () => {
     await createPlaylist(user.uid, name, selectedClipsForPlaylist, user.displayName);
     const autoPublic = selectedClipsForPlaylist.every(clip => clip.isPublic === true);
     showNotification(autoPublic ? 'Playlist created and published — every clip is public' : 'Private playlist created', 'success');
+    celebrate(`“${name}” is ready!`);
     setShowPlaylistModal(false);
     setSelectedClipsForPlaylist([]);
     setPlaylistModalCandidates([]);
@@ -1827,6 +1931,7 @@ const startTimeTracking = () => {
     setStandaloneLoop(false);
     setMobileTab('library');
     showNotification(`✅ Clip posted! Now in Library → Your Clips.`, 'success');
+    celebrate(`“${videoTitle || 'Your clip'}” is ready!`);
   } catch (error) {
     console.error('Post error:', error);
     showNotification('❌ Failed to post — check connection', 'error');
@@ -2026,11 +2131,12 @@ const handleClipVisibilityChange = async (clip) => {
 
 const handlePlaylistVisibilityChange = async (playlist) => {
   if (!user?.uid || playlist.userId !== user.uid) return;
-  const makePublic = !(playlist.isPublic !== false);
-  const privateClips = (playlist.clips || []).filter(clip => {
+  const makePublic = playlist.isPublic !== true;
+  const hydratedClips = (playlist.clips || []).map(clip => {
     const liveClip = myClips.find(item => item.id === clip.id);
-    return (liveClip?.isPublic ?? clip.isPublic) !== true;
+    return liveClip ? { ...clip, ...liveClip } : clip;
   });
+  const privateClips = hydratedClips.filter(clip => clip.isPublic !== true);
 
   if (makePublic && privateClips.length > 0) {
     showNotification(
@@ -2042,7 +2148,11 @@ const handlePlaylistVisibilityChange = async (playlist) => {
 
   try {
     const { updatePlaylist: updatePlaylistRecord } = await import('../lib/firebase');
-    const updates = { isPublic: makePublic, isFeatured: makePublic ? playlist.isFeatured : false };
+    const updates = {
+      isPublic: makePublic,
+      isFeatured: makePublic ? !!playlist.isFeatured : false,
+      clips: hydratedClips
+    };
     await updatePlaylistRecord(playlist.id, updates);
     const updated = { ...playlist, ...updates };
     setManagingPlaylist(updated);
@@ -2205,6 +2315,10 @@ const handlePlaylistVisibilityChange = async (playlist) => {
   }, [isPlaying, videoTitle, artist]);
 
 const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
+  const showcasedPlaylistIds = new Set(publicPlaylistShowcase.map(item => item.playlist.id));
+  const remainingPublicPlaylists = publicPlaylists
+    .filter(playlist => !showcasedPlaylistIds.has(playlist.id))
+    .map(playlist => ({ ...playlist, runtimeSeconds: getPlaylistRuntime(playlist) }));
   const feedIsMostPlayed = feedSort === 'most-played';
 
   const triggerClipSearchHighlight = (query) => {
@@ -2224,18 +2338,57 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
     return () => clearTimeout(timeout);
   }, [searchHighlight]);
   const filteredClips = clipSearchQuery
-    ? clips.filter(c => fuzzyMatch(clipSearchQuery, c))
+    ? (searchablePublicClips.length > 0 ? searchablePublicClips : clips).filter(c => fuzzyMatch(clipSearchQuery, c))
     : clips;
   const topPlayCounts = [...clips].sort((a,b)=>(b.plays||0)-(a.plays||0)).slice(0,3).map(c=>c.id);
   const visibleFeedClips = feedIsMostPlayed
     ? trendingByPlays.slice(0, 5)
     : (feedExpanded ? filteredClips.slice(0, feedPage * FEED_PAGE_SIZE) : filteredClips.slice(0, 5));
 
+  const topProfileClips = [...myClips]
+    .sort((a, b) => getClipPlayCount(b) - getClipPlayCount(a))
+    .slice(0, 3);
+  const longestProfilePlaylists = [...playlists]
+    .map(playlist => ({ ...playlist, runtimeSeconds: getPlaylistRuntime(playlist) }))
+    .sort((a, b) => b.runtimeSeconds - a.runtimeSeconds)
+    .slice(0, 3);
+  const acceptedFriends = profileFriendships.filter(friendship => friendship.status === 'accepted');
+  const pendingRequests = profileFriendships.filter(friendship => friendship.status === 'pending');
+  const filteredUserPlaylists = playlistSearchQuery.trim()
+    ? playlists.filter(playlist => {
+        const haystack = [playlist.name, playlist.createdBy, ...(playlist.clips || []).flatMap(clip => [clip.title, clip.artist])]
+          .filter(Boolean).join(' ').toLocaleLowerCase();
+        return fuzzyMatch(playlistSearchQuery, { title: haystack, artist: '', createdBy: '' });
+      })
+    : playlists;
+
   const combinedQueueItems = buildCombinedQueue();
   
   return (
     <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-gold' : 'theme-classic'}`}>
     <BackgroundAmbience theme={themeMode === 'electric' ? 'gold' : 'purple'} />
+
+    {celebration && (
+      <div className="fixed inset-0 z-[120] pointer-events-none overflow-hidden flex items-center justify-center" aria-live="polite">
+        <div className="celebration-pop rounded-3xl border border-yellow-300/70 bg-black/85 px-8 py-6 text-center shadow-[0_0_70px_rgba(250,204,21,0.55)] backdrop-blur-xl">
+          <div className="text-5xl mb-2">🪅</div>
+          <p className="text-2xl font-black text-white">Hoorah!</p>
+          <p className="text-sm text-yellow-200 mt-1">{celebration.message}</p>
+        </div>
+        {Array.from({ length: 28 }).map((_, index) => (
+          <span
+            key={`${celebration.key}-${index}`}
+            className="confetti-piece"
+            style={{
+              left: `${(index * 37) % 100}%`,
+              animationDelay: `${(index % 7) * 0.08}s`,
+              animationDuration: `${1.8 + (index % 5) * 0.18}s`,
+              backgroundColor: ['#fde047', '#f472b6', '#a78bfa', '#34d399', '#fb923c'][index % 5]
+            }}
+          />
+        ))}
+      </div>
+    )}
 
     {/* Global loading overlay */}
     {globalLoading && (
@@ -2491,25 +2644,25 @@ className="btn-primary w-full py-5 text-xl">
               <div>
                 <p className="font-semibold text-sm">Visibility</p>
                 <p className="text-xs text-purple-400 mt-0.5">
-                  {managingPlaylist.isPublic !== false ? '🌍 Public  anyone can discover this' : '🔒 Private  only you'}
+                  {managingPlaylist.isPublic === true ? '🌍 Public — appears in the Feed for everyone' : '🔒 Private — only you can access it'}
                 </p>
               </div>
               <button
                 onClick={() => handlePlaylistVisibilityChange(managingPlaylist)}
-                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 ${managingPlaylist.isPublic !== false ? 'bg-emerald-500' : 'bg-purple-700'}`}
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors shrink-0 ${managingPlaylist.isPublic === true ? 'bg-emerald-500' : 'bg-purple-700'}`}
                 aria-label="Toggle playlist visibility"
               >
-                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${managingPlaylist.isPublic !== false ? 'translate-x-6' : 'translate-x-1'}`} />
+                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${managingPlaylist.isPublic === true ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
             </div>
 
             <div className="flex items-center justify-between bg-purple-900 bg-opacity-20 px-4 py-3 rounded-xl mb-3">
               <div>
-                <p className="font-semibold text-sm">Feature in Discover</p>
+                <p className="font-semibold text-sm">Promote as Featured Pick</p>
                 <p className="text-xs text-purple-400 mt-0.5">
                   {managingPlaylist.isFeatured
-                    ? 'Eligible for the Featured Pick card in public discovery'
-                    : 'Optional promotion only — this does not change who can access the playlist'}
+                    ? 'Shown in the special Featured Pick slot in the public Feed'
+                    : 'Optional: gives this public playlist extra placement; visibility is controlled above'}
                 </p>
               </div>
               <button
@@ -2599,29 +2752,19 @@ className="btn-primary w-full py-5 text-xl">
               <X size={32} />
             </button>
 
-            <h2 className="text-2xl sm:text-3xl font-bold mb-1">Add clips to a playlist</h2>
-            <p className="text-sm text-purple-300 mb-4">Choose clips with checkboxes, then choose a playlist or create a new one.</p>
+            <h2 className="text-2xl sm:text-3xl font-bold mb-1">Add to playlist</h2>
+            <p className="text-sm text-purple-300 mb-4">The clip is already selected. Tick every playlist you want to add it to.</p>
 
             <div className="bg-purple-900 bg-opacity-30 p-3 rounded-xl max-h-52 overflow-y-auto mb-5 space-y-1">
-              {playlistModalCandidates.map((clip, idx) => {
-                const checked = selectedClipsForPlaylist.some(item => isClipDuplicate(item, [clip]));
-                return (
-                <label key={clip.id || idx} className="flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:border-purple-600 hover:bg-purple-800/40 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => setSelectedClipsForPlaylist(current => checked
-                      ? current.filter(item => !isClipDuplicate(item, [clip]))
-                      : [...current, clip]
-                    )}
-                    className="w-5 h-5 accent-purple-500 shrink-0"
-                  />
+              {playlistModalCandidates.map((clip, idx) => (
+                <div key={clip.id || idx} className="flex items-center gap-3 p-2.5 rounded-xl border border-yellow-500/50 bg-yellow-500/10">
+                  <span className="w-6 h-6 rounded-full bg-yellow-400 text-black flex items-center justify-center font-black shrink-0">✓</span>
                   <div className="flex-1 min-w-0 mr-2">
                     <p className="font-semibold truncate">{idx + 1}. {clip.title}</p>
                     <p className="text-sm text-purple-300 truncate">{clip.artist}</p>
                   </div>
-                </label>
-              )})}
+                </div>
+              ))}
             </div>
 
             {/* Add to existing playlist */}
@@ -2629,15 +2772,31 @@ className="btn-primary w-full py-5 text-xl">
               <div className="mb-5">
                 <p className="font-bold text-purple-300 mb-2 text-sm uppercase tracking-wide">Add to existing playlist</p>
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                  {playlists.map(pl => (
-                    <button key={pl.id} onClick={() => handleAddToExistingPlaylist(pl)}
-                      disabled={(pl.clips?.length || 0) >= 10 || selectedClipsForPlaylist.length === 0}
-                      className={`w-full flex justify-between items-center px-4 py-3 rounded-xl font-semibold transition text-left ${(pl.clips?.length || 0) >= 10 ? 'opacity-40 cursor-not-allowed bg-purple-900 bg-opacity-20' : 'bg-purple-800 bg-opacity-40 hover:bg-opacity-60'}`}>
-                      <span>{pl.name}</span>
-                      <span className="text-sm text-purple-400">{pl.clips?.length || 0}/10</span>
-                    </button>
-                  ))}
+                  {playlists.map(pl => {
+                    const full = (pl.clips?.length || 0) >= 10;
+                    const checked = selectedTargetPlaylistIds.includes(pl.id);
+                    return (
+                      <label key={pl.id} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold transition text-left ${full ? 'opacity-40 cursor-not-allowed bg-purple-900/20' : checked ? 'bg-emerald-700/40 border border-emerald-400' : 'bg-purple-800/40 hover:bg-purple-800/60 border border-transparent'}`}>
+                        <input
+                          type="checkbox"
+                          disabled={full}
+                          checked={checked}
+                          onChange={() => setSelectedTargetPlaylistIds(current => checked ? current.filter(id => id !== pl.id) : [...current, pl.id])}
+                          className="w-5 h-5 accent-emerald-500 shrink-0"
+                        />
+                        <span className="flex-1 truncate">{pl.name}</span>
+                        <span className="text-sm text-purple-300">{pl.clips?.length || 0}/10</span>
+                      </label>
+                    );
+                  })}
                 </div>
+                <button
+                  onClick={handleAddToSelectedPlaylists}
+                  disabled={selectedTargetPlaylistIds.length === 0}
+                  className="mt-3 btn-primary w-full py-3 disabled:opacity-40"
+                >
+                  Add to {selectedTargetPlaylistIds.length || 0} selected playlist{selectedTargetPlaylistIds.length === 1 ? '' : 's'}
+                </button>
               </div>
             )}
 
@@ -2668,7 +2827,7 @@ className="btn-primary w-full py-5 text-xl">
             {/* Friends button — icon only on mobile */}
             <button
               onClick={() => setShowFriendsPanel(true)}
-              className="p-2 sm:px-3 sm:py-2 rounded-xl bg-purple-800 bg-opacity-50 hover:bg-opacity-80 transition flex items-center gap-1.5 text-sm font-semibold shrink-0"
+              className="hidden sm:flex p-2 sm:px-3 sm:py-2 rounded-xl bg-purple-800 bg-opacity-50 hover:bg-opacity-80 transition items-center gap-1.5 text-sm font-semibold shrink-0"
               aria-label="Friends"
             >
               <UserPlus size={18} />
@@ -2755,6 +2914,7 @@ className="btn-primary w-full py-5 text-xl">
         </div>
         <div className="grid grid-cols-2 xl:grid-cols-3 gap-4">
           {[
+            { key: 'profile', icon: '👤', title: 'Profile', copy: 'Friends, requests, activity and your listening highlights.' },
             { key: 'create', icon: '✂️', title: 'Clip Studio', copy: 'Load a song and shape the exact moment.' },
             { key: 'clips', icon: '🔥', title: 'Discover Clips', copy: `${clips.length || 'Fresh'} community moments to explore.` },
             { key: 'playlists', icon: '🎧', title: 'Playlist Picks', copy: `${publicPlaylists.length || 'Curated'} public collections ready to play.` },
@@ -2788,7 +2948,7 @@ className="btn-primary w-full py-5 text-xl">
         <div className="h-7 w-px bg-purple-700/50" />
         <div className="flex gap-2 overflow-x-auto py-1">
           {[
-            ['create', 'Studio'], ['clips', 'Clips'], ['playlists', 'Picks'],
+            ['profile', 'Profile'], ['create', 'Studio'], ['clips', 'Clips'], ['playlists', 'Picks'],
             ['community', 'Community'], ['library', 'Library'], ['about', 'About']
           ].map(([key, label]) => (
             <button
@@ -2810,6 +2970,54 @@ className="btn-primary w-full py-5 text-xl">
         Kept outside all tab-hidden containers so audio keeps playing on every
         mobile tab. Visually hidden; audio plays through the hidden iframe. */}
     <div id="youtube-player" style={{position:'fixed',top:'-9999px',width:'2px',height:'2px',overflow:'hidden'}} aria-hidden="true"></div>
+
+    <section className={`${mobileTab === 'profile' ? 'block' : 'hidden'} ${desktopView === 'profile' ? 'md:block' : 'md:hidden'}`} aria-label="Profile">
+      <div className="card space-y-5">
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-2xl font-black">
+            {(user?.displayName || 'G')[0].toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs uppercase tracking-[0.2em] text-purple-400 font-black">Profile</p>
+            <h2 className="text-2xl font-black truncate">{user?.displayName || 'Guest'}</h2>
+            <p className="text-sm text-purple-300 truncate">{user?.email || 'Sign in to sync your profile'}</p>
+          </div>
+          {user?.uid && <button onClick={handleChangeUsername} className="px-3 py-2 rounded-xl bg-purple-700 hover:bg-purple-600 text-sm font-bold">Edit name</button>}
+        </div>
+
+        {!user?.uid ? (
+          <button onClick={() => setShowAuthModal(true)} className="btn-primary w-full">Sign in to view your profile</button>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-2xl bg-purple-900/40 p-3 text-center"><p className="text-xl font-black">{acceptedFriends.length}</p><p className="text-xs text-purple-300">Friends</p></div>
+              <div className="rounded-2xl bg-purple-900/40 p-3 text-center"><p className="text-xl font-black">{pendingRequests.length}</p><p className="text-xs text-purple-300">Requests</p></div>
+              <div className="rounded-2xl bg-purple-900/40 p-3 text-center"><p className="text-xl font-black">{profileActivity.length}</p><p className="text-xs text-purple-300">Activity</p></div>
+            </div>
+            <button onClick={() => setShowFriendsPanel(true)} className="w-full min-h-12 rounded-xl bg-purple-700 hover:bg-purple-600 font-black flex items-center justify-center gap-2"><Users size={18}/> Friends, requests & activity</button>
+
+            <div>
+              <h3 className="font-black mb-2">Your top 3 listened clips</h3>
+              {topProfileClips.length ? <div className="space-y-2">{topProfileClips.map((clip, index) => (
+                <button key={clip.id} onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)} className="w-full flex items-center gap-3 rounded-xl bg-purple-900/35 p-3 text-left">
+                  <span className="font-black text-yellow-400">{index + 1}</span><span className="min-w-0 flex-1"><span className="block truncate font-bold">{clip.title}</span><span className="block truncate text-xs text-purple-300">{clip.artist}</span></span><span className="text-xs text-purple-300">▶ {getClipPlayCount(clip)}</span>
+                </button>
+              ))}</div> : <p className="text-sm text-purple-400">Your listening stats will appear after you create and play clips.</p>}
+            </div>
+
+            <div>
+              <h3 className="font-black mb-2">Your 3 longest playlists</h3>
+              {longestProfilePlaylists.length ? <div className="space-y-2">{longestProfilePlaylists.map((playlist, index) => (
+                <button key={playlist.id} onClick={() => handlePlayPlaylist(playlist)} className="w-full flex items-center gap-3 rounded-xl bg-purple-900/35 p-3 text-left">
+                  <span className="font-black text-yellow-400">{index + 1}</span><span className="min-w-0 flex-1"><span className="block truncate font-bold">{playlist.name}</span><span className="block text-xs text-purple-300">{playlist.clips?.length || 0} clips · cumulative repeats included</span></span><span className="text-xs text-purple-300">{formatSeconds(playlist.runtimeSeconds)}</span>
+                </button>
+              ))}</div> : <p className="text-sm text-purple-400">Create a playlist to see its full repeated runtime here.</p>}
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+
     {/* LEFT COLUMN - Create Loop */}
     <div className={`space-y-6 ${mobileTab !== 'create' && mobileTab !== 'more' ? 'hidden md:block' : ''}`}>
             <div className={`${mobileTab === 'more' ? 'hidden' : ''} ${desktopView === 'create' ? 'md:block' : 'md:hidden'}`}>
@@ -3418,8 +3626,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
           </div>
 
-          <div className={`space-y-6 ${mobileTab === 'create' || mobileTab === 'more' ? 'hidden md:block' : ''}`}>
-            <div className={`${mobileTab === 'library' ? 'hidden' : ''} ${desktopView === 'clips' ? 'md:block' : 'md:hidden'}`}>
+          <div className={`space-y-6 ${mobileTab !== 'feed' ? 'hidden md:block' : ''}`}>
+            <div className={`${mobileTab !== 'feed' ? 'hidden' : ''} ${desktopView === 'clips' ? 'md:block' : 'md:hidden'}`}>
             <div className="card">
               {/* Clip search */}
               <div className="relative mb-4">
@@ -3436,8 +3644,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                       setFeedExpanded(false);
                     }
                   }}
-                  placeholder="Search by artist, song, or creator..."
-                  className="w-full pl-9 pr-8 py-2.5 bg-purple-900 bg-opacity-40 border border-purple-700 rounded-xl text-sm text-white placeholder-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  placeholder="Search for creator, clip, or artist…"
+                  className={`w-full pl-9 pr-8 py-2.5 bg-purple-900 bg-opacity-40 border rounded-xl text-sm text-white placeholder-purple-400 focus:outline-none transition ${clipSearchQuery ? 'border-yellow-300 ring-2 ring-yellow-400/70 shadow-[0_0_22px_rgba(250,204,21,0.45)]' : 'border-purple-700 focus:ring-2 focus:ring-purple-500'}`}
                 />
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 text-sm pointer-events-none">🔍</span>
                 {clipSearchQuery && (
@@ -3450,7 +3658,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               </div>
               {clipSearchQuery && (
                 <p className="text-xs text-purple-400 mb-3 -mt-2">
-                  {filteredClips.length === 0
+                  {feedSearchLoading
+                    ? 'Searching the full public clip catalogue…'
+                    : filteredClips.length === 0
                     ? 'No clips found'
                     : `${filteredClips.length} clip${filteredClips.length !== 1 ? 's' : ''} found`}
                 </p>
@@ -3494,7 +3704,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               </div>
               <p className="text-xs text-purple-400 mb-4">
-                {feedIsMostPlayed ? 'Top 5 public clips by qualified replay count.' : 'Latest public uploads first. Likes are visible as totals; who liked a clip stays private.'}
+                {feedIsMostPlayed ? 'Top 5 public clips by qualified replay count.' : 'Latest means public uploads from the last 168 hours (7 days). Likes are visible as totals; who liked a clip stays private.'}
               </p>
               {discoveryLoading && feedIsMostPlayed ? (
                 <div className="text-center py-12 text-purple-300">
@@ -3522,7 +3732,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                         draggable
                         onDragStart={(event) => handleClipQueueDragStart(event, clip)}
                         onDragEnd={handleClipQueueDragEnd}
-                        className={`relative rounded-2xl overflow-hidden border border-purple-700 border-opacity-40 hover:border-purple-500 transition group cursor-pointer md:cursor-grab md:active:cursor-grabbing ${searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
+                        className={`relative rounded-2xl overflow-hidden border border-purple-700 border-opacity-40 hover:border-purple-500 transition group cursor-pointer md:cursor-grab md:active:cursor-grabbing ${clipSearchQuery ? 'feed-search-match' : searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
                         onClick={() => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
                       >
                         {/* YouTube thumbnail */}
@@ -3594,7 +3804,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                         draggable
                         onDragStart={(event) => handleClipQueueDragStart(event, clip)}
                         onDragEnd={handleClipQueueDragEnd}
-                        className={`bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30 ${searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
+                        className={`bg-purple-900 bg-opacity-30 rounded-2xl p-5 hover:bg-opacity-50 transition border border-purple-700 border-opacity-30 ${clipSearchQuery ? 'feed-search-match' : searchHighlight?.id === clip.id ? 'animate-search-highlight' : ''}`}
                         role="article"
                         aria-label={`${clip.title} by ${clip.artist}`}
                       >
@@ -3817,7 +4027,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
             </div>
 
-            <div className={`${mobileTab === 'library' ? 'hidden' : ''} ${desktopView === 'playlists' ? 'md:block' : 'md:hidden'}`}>
+            <div className={`${mobileTab !== 'feed' ? 'hidden' : ''} ${desktopView === 'playlists' ? 'md:block' : 'md:hidden'}`}>
 {publicPlaylistShowcase.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
     <div className="flex items-start justify-between gap-3 mb-4">
@@ -3873,10 +4083,24 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         </div>
       ))}
     </div>
+    {remainingPublicPlaylists.length > 0 && (
+      <div className="mt-5 border-t border-purple-700/40 pt-4">
+        <h4 className="font-black text-white mb-3">All public playlists</h4>
+        <div className="space-y-2">
+          {remainingPublicPlaylists.map(playlist => (
+            <div key={playlist.id} className="flex items-center gap-3 rounded-xl bg-purple-900/30 p-3">
+              <button onClick={() => handlePlayPlaylist(playlist)} className="w-10 h-10 rounded-full bg-emerald-500 text-black flex items-center justify-center shrink-0" aria-label={`Play ${playlist.name}`}><Play size={16} fill="currentColor" /></button>
+              <div className="min-w-0 flex-1"><p className="font-bold truncate">{playlist.name}</p><p className="text-xs text-purple-300">{playlist.clips?.length || 0} clips · {formatSeconds(playlist.runtimeSeconds)} · @{playlist.createdBy || 'community'}</p></div>
+              {user?.uid && <button onClick={() => handleAddToQueue(playlist)} className="px-3 py-2 rounded-xl bg-yellow-500/20 text-yellow-300 text-xs font-black">+ Queue</button>}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
   </div>
 )}
-{publicPlaylistShowcase.length === 0 && desktopView === 'playlists' && (
-  <div className="hidden md:block card text-center py-16">
+{publicPlaylistShowcase.length === 0 && (
+  <div className={`${mobileTab === 'feed' ? 'block' : 'hidden'} md:block card text-center py-16 mt-6`}>
     <Music size={42} className="mx-auto text-purple-500 mb-4" />
     <h3 className="text-2xl font-black text-white">Playlist picks are warming up</h3>
     <p className="text-purple-300 mt-2">Public community playlists will appear here as soon as they are shared.</p>
@@ -3888,7 +4112,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 <div className="h-px bg-gradient-to-r from-transparent via-purple-700 via-opacity-40 to-transparent my-2 md:hidden" />
 
 {/* FEED WRAPPER — Leaderboard + Top Artists (discovery content) */}
-<div className={`${mobileTab === 'library' ? 'hidden' : ''} ${desktopView === 'community' ? 'md:block' : 'md:hidden'}`}>
+<div className={`${mobileTab !== 'feed' ? 'hidden' : ''} ${desktopView === 'community' ? 'md:block' : 'md:hidden'}`}>
 
             {/* STRATHMORE LEADERBOARD SECTION */}
             <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
@@ -3957,7 +4181,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                           </span>
                           <div>
                             <p className="font-bold text-lg">@{entry.name}</p>
-                            <p className="text-sm text-purple-300">Top public artist: {entry.artist || '—'}</p>
+                            <p className="text-sm text-purple-300">Top public artist: {entry.artist || 'Hidden'}</p>
                             <p className="text-xs text-purple-500 mt-0.5">{entry.songs || 0} public clips · {entry.likes || 0} likes</p>
                           </div>
                         </div>
@@ -4095,7 +4319,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               </div>
             )}
 
-            <div className={`${mobileTab === 'feed' ? 'hidden' : ''} ${desktopView === 'library' ? 'md:block' : 'md:hidden'}`}>
+            <div className={`${mobileTab !== 'library' ? 'hidden' : ''} ${desktopView === 'library' ? 'md:block' : 'md:hidden'}`}>
 {user?.uid && (
   (() => {
     const myPrivateClips = myClips; // all user clips, public + private
@@ -4322,7 +4546,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 )}
             </div>
 
-            <div className={`${mobileTab === 'feed' ? 'hidden' : ''} ${desktopView === 'library' ? 'md:block' : 'md:hidden'}`}>
+            <div className={`${mobileTab !== 'library' ? 'hidden' : ''} ${desktopView === 'library' ? 'md:block' : 'md:hidden'}`}>
 {/* MY PLAYLISTS SECTION */}
 {user?.uid && playlists.length > 0 && (
   <div className="bg-purple-900 bg-opacity-30 border border-purple-700 border-opacity-40 rounded-2xl mt-6">
@@ -4330,6 +4554,18 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       <Music size={24} className="text-purple-400" />
       My Playlists
     </h3>
+
+    <div className="relative mb-3">
+      <Search size={17} className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" />
+      <input
+        type="search"
+        value={playlistSearchQuery}
+        onChange={event => setPlaylistSearchQuery(event.target.value)}
+        placeholder="Search playlist, clip, or artist…"
+        className="w-full rounded-xl border border-purple-700 bg-purple-950/60 py-3 pl-10 pr-9 text-sm text-white placeholder-purple-400 focus:border-yellow-400 focus:outline-none focus:ring-2 focus:ring-yellow-400/40"
+      />
+      {playlistSearchQuery && <button onClick={() => setPlaylistSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-purple-300" aria-label="Clear playlist search">×</button>}
+    </div>
 
     {/* Play mode toggle */}
     <div className="flex gap-2 mb-3">
@@ -4355,7 +4591,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     </p>
 
     <div className="space-y-2">
-      {playlists.map((playlist) => {
+      {filteredUserPlaylists.map((playlist) => {
         const isExpanded = expandedPlaylistId === playlist.id;
         const inQueue = playlistQueue.some(p => p.id === playlist.id);
         return (
@@ -4446,6 +4682,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
         );
       })}
+      {filteredUserPlaylists.length === 0 && playlistSearchQuery && (
+        <p className="rounded-xl border border-purple-800/50 bg-purple-950/30 p-4 text-center text-sm text-purple-300">No close playlist, clip, or artist match found.</p>
+      )}
     </div>
 
     {/* Unified Queue Panel — playlists + individual clips */}
@@ -4530,7 +4769,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           <div className="px-5 pt-2 pb-1">
             <div className="flex items-center justify-between mb-2">
               <span className="text-amber-300 font-bold text-sm">
-                Drag ⠿ to reorder
+                Reorder staged clips
               </span>
               <button
                 onClick={() => setStagedClipsEditMode(v => !v)}
@@ -4563,10 +4802,35 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                         : 'border-amber-700 border-opacity-30 bg-amber-900 bg-opacity-20 hover:bg-opacity-30'
                     }`}
                   >
+                    <span className="text-amber-400 text-xl cursor-grab" aria-hidden="true">⠿</span>
                     <span className="text-amber-400 font-bold text-sm w-5 shrink-0">{idx + 1}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-white truncate">{clip.title}</p>
                       <p className="text-xs text-amber-400 truncate">{clip.artist}</p>
+                    </div>
+                    <div className="flex gap-1 md:hidden">
+                      <button
+                        onClick={() => {
+                          if (idx === 0) return;
+                          const reordered = [...selectedClipsForPlaylist];
+                          [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
+                          setSelectedClipsForPlaylist(reordered);
+                        }}
+                        disabled={idx === 0}
+                        className="w-9 h-9 rounded-full bg-amber-950 text-amber-300 disabled:opacity-25"
+                        aria-label={`Move ${clip.title} up`}
+                      >↑</button>
+                      <button
+                        onClick={() => {
+                          if (idx === selectedClipsForPlaylist.length - 1) return;
+                          const reordered = [...selectedClipsForPlaylist];
+                          [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
+                          setSelectedClipsForPlaylist(reordered);
+                        }}
+                        disabled={idx === selectedClipsForPlaylist.length - 1}
+                        className="w-9 h-9 rounded-full bg-amber-950 text-amber-300 disabled:opacity-25"
+                        aria-label={`Move ${clip.title} down`}
+                      >↓</button>
                     </div>
                     <button
                       onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
@@ -4984,10 +5248,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 {/* Mobile bottom tab bar — hidden on desktop */}
 <nav className="fixed bottom-0 left-0 right-0 z-50 bg-black bg-opacity-90 backdrop-blur-md border-t border-purple-800 border-opacity-50 flex md:hidden">
   {[
+    { key: 'profile', icon: '👤', label: 'Profile' },
     { key: 'create', icon: '🎵', label: 'Create' },
     { key: 'feed', icon: '🔥', label: 'Feed' },
     { key: 'library', icon: '📋', label: 'Library' },
-    { key: 'more', icon: '☰', label: 'More' },
+    { key: 'more', icon: '•••', label: 'More' },
   ].map(tab => (
     <button
       key={tab.key}

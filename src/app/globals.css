@@ -232,3 +232,36 @@ select option {
 .animate-search-highlight {
   animation: clip-search-fade 2s ease-out 1 forwards;
 }
+
+.feed-search-match {
+  border-color: rgb(253 224 71) !important;
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.72), 0 0 26px rgba(250, 204, 21, 0.42) !important;
+}
+
+@keyframes confetti-fall {
+  0% { transform: translate3d(0, -12vh, 0) rotate(0deg); opacity: 0; }
+  10% { opacity: 1; }
+  100% { transform: translate3d(30px, 112vh, 0) rotate(820deg); opacity: 0.9; }
+}
+
+@keyframes celebration-pop {
+  0% { transform: scale(0.4) rotate(-7deg); opacity: 0; }
+  55% { transform: scale(1.08) rotate(2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -24px;
+  width: 10px;
+  height: 18px;
+  border-radius: 2px;
+  animation: confetti-fall 2.2s cubic-bezier(.2,.7,.3,1) forwards;
+}
+
+.celebration-pop { animation: celebration-pop 520ms cubic-bezier(.2,.9,.3,1.2) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece { display: none; }
+  .celebration-pop { animation: none; }
+}

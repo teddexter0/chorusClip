@@ -1,11 +1,13 @@
 'use client';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-// Curated seven-second highlights from official NFL performances. Both players
-// preload muted so switching scenes does not spend the whole interval buffering.
+// Curated high-engagement highlight windows from official NFL performances.
+// Only the visible player is mounted: browsers commonly throttle or reject two
+// simultaneous background autoplay requests, which left the old crossfade stuck
+// on poster images on both mobile and desktop.
 const BG_VIDEOS = [
-  { id: 'c9cUytejf1k', start: 338, end: 345, title: 'Coldplay, Beyoncé and Bruno Mars — Super Bowl 50' },
-  { id: 'gdsUKphmB3Y', start: 248, end: 255, title: 'Dr. Dre, Snoop Dogg, Eminem, Mary J. Blige, Kendrick Lamar and 50 Cent — Super Bowl LVI' }
+  { id: 'K4DyBUG242c', start: 55, end: 63, title: 'Cartoon — On & On (NCS)' },
+  { id: '60ItHLz5WEA', start: 64, end: 72, title: 'Alan Walker — Fade (NCS)' }
 ];
 
 const getEmbedUrl = ({ id, start, end }, origin) => (
@@ -15,19 +17,19 @@ const getEmbedUrl = ({ id, start, end }, origin) => (
 const BackgroundAmbience = ({ theme = 'purple' }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [origin, setOrigin] = useState('');
-  const iframeRefs = useRef([]);
+  const iframeRef = useRef(null);
 
-  const sendPlayerCommand = useCallback((index, func) => {
-    iframeRefs.current[index]?.contentWindow?.postMessage(JSON.stringify({
+  const sendPlayerCommand = useCallback((func) => {
+    iframeRef.current?.contentWindow?.postMessage(JSON.stringify({
       event: 'command',
       func,
       args: []
     }), 'https://www.youtube-nocookie.com');
   }, []);
 
-  const playBackgroundVideo = useCallback((index) => {
-    sendPlayerCommand(index, 'mute');
-    sendPlayerCommand(index, 'playVideo');
+  const playBackgroundVideo = useCallback(() => {
+    sendPlayerCommand('mute');
+    sendPlayerCommand('playVideo');
   }, [sendPlayerCommand]);
 
   const gradientClass = theme === 'gold'
@@ -48,7 +50,7 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
   // Browser autoplay policies often ignore a URL-only autoplay request. Explicit
   // muted player commands, retried as the embed becomes ready, are more reliable.
   useEffect(() => {
-    const attempts = [250, 800, 1800].map(delay => setTimeout(() => playBackgroundVideo(currentIdx), delay));
+    const attempts = [150, 500, 1200, 2400].map(delay => setTimeout(playBackgroundVideo, delay));
     return () => attempts.forEach(clearTimeout);
   }, [currentIdx, playBackgroundVideo]);
 
@@ -62,20 +64,23 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
           aria-hidden="true"
         />
       ))}
-      {origin && BG_VIDEOS.map((video, index) => (
+      {origin && (() => {
+        const video = BG_VIDEOS[currentIdx];
+        return (
         <iframe
-          ref={element => { iframeRefs.current[index] = element; }}
-          key={video.id}
+          ref={iframeRef}
+          key={`${video.id}-${currentIdx}`}
           src={getEmbedUrl(video, origin)}
           title={video.title}
           allow="autoplay; encrypted-media; picture-in-picture"
           tabIndex="-1"
           aria-hidden="true"
-          onLoad={() => playBackgroundVideo(index)}
-          className={`absolute left-1/2 top-1/2 h-full min-h-[100svh] w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 border-0 transition-opacity duration-700 md:h-[56.25vw] md:min-h-full md:w-full md:min-w-[177.78vh] ${index === currentIdx ? 'opacity-100' : 'opacity-0'}`}
+          onLoad={playBackgroundVideo}
+          className="absolute left-1/2 top-1/2 h-full min-h-[100svh] w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 border-0 opacity-100 md:h-[56.25vw] md:min-h-full md:w-full md:min-w-[177.78vh]"
           style={{ filter: 'brightness(0.62) saturate(1.2)', transform: 'translate(-50%, -50%) scale(1.04)' }}
         />
-      ))}
+        );
+      })()}
 
       {/* Gradient overlay — theme-aware */}
       <div className={`absolute inset-0 ${gradientClass}`} />

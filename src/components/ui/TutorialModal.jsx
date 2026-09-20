@@ -54,7 +54,7 @@ export default function TutorialModal({ onClose }) {
           <div className="grid sm:grid-cols-2 gap-3">
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-blue-400">
               <p className="font-semibold mb-1">Add clips to playlists</p>
-              <p className="text-purple-200 text-sm">Tap <strong>+ List</strong> on a clip, choose clips with checkboxes, then pick an existing playlist or create one.</p>
+              <p className="text-purple-200 text-sm">Tap <strong>+ List</strong> on a clip. That clip is already selected; tick one or more destination playlists, or create a new one.</p>
               <p className="text-purple-400 text-xs mt-2">→ Existing duplicates always ask before being added again</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-orange-400">

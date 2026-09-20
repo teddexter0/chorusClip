@@ -146,12 +146,14 @@ export const getLeaderboard = async (limitCount = 10) => {
       creatorStats[creator].songs++;
       creatorStats[creator].plays += data.plays ?? data.playCount ?? 0;
       creatorStats[creator].likes += data.likes || 0;
-      const artist = (data.artist || 'Unknown Artist').trim();
-      if (!creatorStats[creator].artistStats[artist]) {
-        creatorStats[creator].artistStats[artist] = { clips: 0, plays: 0 };
+      const artist = (data.artist || '').trim();
+      if (artist && !/^unknown artist$/i.test(artist)) {
+        if (!creatorStats[creator].artistStats[artist]) {
+          creatorStats[creator].artistStats[artist] = { clips: 0, plays: 0 };
+        }
+        creatorStats[creator].artistStats[artist].clips += 1;
+        creatorStats[creator].artistStats[artist].plays += data.plays ?? data.playCount ?? 0;
       }
-      creatorStats[creator].artistStats[artist].clips += 1;
-      creatorStats[creator].artistStats[artist].plays += data.plays ?? data.playCount ?? 0;
     });
 
     return Object.values(creatorStats)
@@ -210,9 +212,10 @@ export const getTrendingClips = async (limitCount = 20) => {
 
 export const getClipsPage = async (limitCount = 15, lastVisibleDoc = null) => {
   try {
-    const constraints = [where('isPublic', '==', true), orderBy('createdAt', 'desc'), limit(limitCount)];
+    const sevenDaysAgo = new Date(Date.now() - (168 * 60 * 60 * 1000));
+    const constraints = [where('isPublic', '==', true), where('createdAt', '>=', sevenDaysAgo), orderBy('createdAt', 'desc'), limit(limitCount)];
     if (lastVisibleDoc) {
-      constraints.splice(2, 0, startAfter(lastVisibleDoc));
+      constraints.splice(3, 0, startAfter(lastVisibleDoc));
     }
 
     const q = query(collection(db, 'clips'), ...constraints);
@@ -232,16 +235,17 @@ export const getClipsPage = async (limitCount = 15, lastVisibleDoc = null) => {
     if (error.code === 'failed-precondition') {
       // Composite index not ready — fall back to simple public-clip query (single-field index)
       try {
-        const fallbackConstraints = [where('isPublic', '==', true), limit(limitCount)];
-        if (lastVisibleDoc) {
-          fallbackConstraints.splice(1, 0, startAfter(lastVisibleDoc));
-        }
-        const snap = await getDocs(query(collection(db, 'clips'), ...fallbackConstraints));
-        const clips = snap.docs.map(entry => ({ id: entry.id, ...entry.data() }));
+        const snap = await getDocs(query(collection(db, 'clips'), where('isPublic', '==', true), limit(200)));
+        const cutoff = Date.now() - (168 * 60 * 60 * 1000);
+        const clips = snap.docs
+          .map(entry => ({ id: entry.id, ...entry.data() }))
+          .filter(clip => (clip.createdAt?.toMillis?.() || ((clip.createdAt?.seconds || 0) * 1000)) >= cutoff)
+          .sort((a, b) => (b.createdAt?.toMillis?.() || ((b.createdAt?.seconds || 0) * 1000)) - (a.createdAt?.toMillis?.() || ((a.createdAt?.seconds || 0) * 1000)))
+          .slice(0, limitCount);
         return {
           clips,
-          lastVisibleDoc: snap.docs[snap.docs.length - 1] || null,
-          hasMore: snap.docs.length === limitCount,
+          lastVisibleDoc: null,
+          hasMore: false,
           error: 'failed-precondition'
         };
       } catch (fallbackError) {
@@ -365,7 +369,8 @@ const rankArtistsByPublicPlays = (docs, limitCount) => {
 
   docs.forEach(clipDoc => {
     const data = typeof clipDoc.data === 'function' ? clipDoc.data() : clipDoc;
-    const artist = (data.artist || 'Unknown Artist').trim();
+    const artist = (data.artist || '').trim();
+    if (!artist || /^unknown artist$/i.test(artist)) return;
     const key = artist.toLocaleLowerCase();
     const current = artists.get(key) || { artist, clips: 0, plays: 0 };
     current.clips += 1;
@@ -376,6 +381,15 @@ const rankArtistsByPublicPlays = (docs, limitCount) => {
   return [...artists.values()]
     .sort((a, b) => b.plays - a.plays || b.clips - a.clips || a.artist.localeCompare(b.artist))
     .slice(0, limitCount);
+};
+
+export const getPublicClipsForSearch = async (limitCount = 200) => {
+  const snapshot = await getDocs(query(
+    collection(db, 'clips'),
+    where('isPublic', '==', true),
+    limit(limitCount)
+  ));
+  return snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() }));
 };
 
 // TOP ARTISTS - Same public, all-time play-count basis as Most Played clips.
@@ -521,7 +535,7 @@ export const signUpUser = async (email, password, displayName) => {
       displayName: displayName,
       usernameLower: displayName.trim().toLocaleLowerCase(),
       isPremium: false,
-      appTheme: 'electric',
+      appTheme: 'classic',
       accountCreated: new Date(),
       songsToday: 0,
       lastResetDate: new Date().toDateString()

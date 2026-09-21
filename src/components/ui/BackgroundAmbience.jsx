@@ -1,35 +1,40 @@
 'use client';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-// The three requested performance moments. Keep this list intentionally fixed:
+// The requested performance moments. Keep this list intentionally fixed:
 // this ambience is not a generic music-video rotation.
 // Only the visible player is mounted: browsers commonly throttle or reject two
 // simultaneous background autoplay requests, which left the old crossfade stuck
 // on poster images on both mobile and desktop.
 const BG_VIDEOS = [
-  { id: 'c9cUytejf1k', start: 476, end: 488, title: 'Coldplay, Beyoncé & Bruno Mars — Super Bowl 50' },
-  { id: 'gdsUKphmB3Y', start: 195, end: 207, title: 'Dr. Dre, Snoop Dogg & 50 Cent — Super Bowl LVI' },
-  { id: 'HJH-uSiOekk', start: 35, end: 47, title: 'The Rock — WrestleMania 32 flamethrower entrance' }
+  // Replay-heatmap peak: ~3:31 (the Beyoncé/Bruno dance-off).
+  { id: 'SDPITj1wlkg', start: 208, end: 220, title: 'Beyoncé & Bruno Mars — Super Bowl 50' },
+  // Replay-heatmap peak: ~9:15 in the full LVI halftime show.
+  { id: 'gdsUKphmB3Y', start: 553, end: 565, title: 'Dr. Dre, Snoop Dogg & friends — Super Bowl LVI' }
 ];
 
 const getEmbedUrl = ({ id, start, end }, origin) => (
-  `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&controls=0&disablekb=1&enablejsapi=1&fs=0&loop=1&playlist=${id}&playsinline=1&rel=0&start=${start}&end=${end}&origin=${encodeURIComponent(origin)}`
+  `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&mute=1&controls=0&disablekb=1&enablejsapi=1&fs=0&loop=1&playlist=${id}&playsinline=1&rel=0&modestbranding=1&iv_load_policy=3&start=${start}&end=${end}&origin=${encodeURIComponent(origin)}`
 );
 
 const BackgroundAmbience = ({ theme = 'purple' }) => {
   const [currentIdx, setCurrentIdx] = useState(0);
   const [origin, setOrigin] = useState('');
+  const [videoIsPlaying, setVideoIsPlaying] = useState(false);
   const iframeRef = useRef(null);
 
-  const sendPlayerCommand = useCallback((func) => {
+  const sendPlayerCommand = useCallback((func, args = []) => {
     iframeRef.current?.contentWindow?.postMessage(JSON.stringify({
       event: 'command',
       func,
-      args: []
+      args
     }), 'https://www.youtube-nocookie.com');
   }, []);
 
   const playBackgroundVideo = useCallback(() => {
+    iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ event: 'listening', id: 'chorusclip-ambience' }), 'https://www.youtube-nocookie.com');
+    sendPlayerCommand('addEventListener', ['onStateChange']);
+    sendPlayerCommand('addEventListener', ['onError']);
     sendPlayerCommand('mute');
     sendPlayerCommand('playVideo');
   }, [sendPlayerCommand]);
@@ -44,6 +49,7 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
 
   useEffect(() => {
     const timer = setInterval(() => {
+      setVideoIsPlaying(false);
       setCurrentIdx(index => (index + 1) % BG_VIDEOS.length);
     }, 12000);
     return () => clearInterval(timer);
@@ -55,6 +61,23 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
     const attempts = [150, 500, 1200, 2400].map(delay => setTimeout(playBackgroundVideo, delay));
     return () => attempts.forEach(clearTimeout);
   }, [currentIdx, playBackgroundVideo]);
+
+  useEffect(() => {
+    const receivePlayerEvent = event => {
+      if (event.origin !== 'https://www.youtube-nocookie.com') return;
+      let payload = event.data;
+      if (typeof payload === 'string') {
+        try { payload = JSON.parse(payload); } catch { return; }
+      }
+      if (payload?.event === 'onStateChange') setVideoIsPlaying(payload.info === 1);
+      if (payload?.event === 'onError') {
+        setVideoIsPlaying(false);
+        setCurrentIdx(index => (index + 1) % BG_VIDEOS.length);
+      }
+    };
+    window.addEventListener('message', receivePlayerEvent);
+    return () => window.removeEventListener('message', receivePlayerEvent);
+  }, []);
 
   return (
     <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none bg-black">
@@ -78,14 +101,19 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
           tabIndex="-1"
           aria-hidden="true"
           onLoad={playBackgroundVideo}
-          className="absolute left-1/2 top-1/2 h-full min-h-[100svh] w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 border-0 opacity-100 md:h-[56.25vw] md:min-h-full md:w-full md:min-w-[177.78vh]"
-          style={{ filter: 'brightness(0.62) saturate(1.2)', transform: 'translate(-50%, -50%) scale(1.04)' }}
+          className={`absolute left-1/2 top-1/2 h-full min-h-[100svh] w-[177.78vh] min-w-full -translate-x-1/2 -translate-y-1/2 border-0 transition-opacity duration-700 md:h-[56.25vw] md:min-h-full md:w-full md:min-w-[177.78vh] ${videoIsPlaying ? 'opacity-100' : 'opacity-0'}`}
+          style={{ filter: 'brightness(0.62) saturate(1.2)', transform: 'translate(-50%, -50%) scale(1.16)' }}
         />
         );
       })()}
 
       {/* Gradient overlay — theme-aware */}
       <div className={`absolute inset-0 ${gradientClass}`} />
+      {/* YouTube branding sits inside its cross-origin frame and cannot be
+          removed by CSS. These masks keep the decorative ambience clean while
+          the app's own player controls remain the only visible controls. */}
+      <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-black/70 to-transparent" />
+      <div className="absolute bottom-0 right-0 h-24 w-48 bg-gradient-to-tl from-black/75 via-black/30 to-transparent" />
 
       {/* Animated blobs */}
       <div className="absolute inset-0 opacity-10 pointer-events-none">

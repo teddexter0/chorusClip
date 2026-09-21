@@ -181,25 +181,37 @@ export const deletePlaylist = async (playlistId) => {
 };
 
 export const updatePlaylist = async (playlistId, updates) => {
-  const { deleteDoc } = await import('firebase/firestore');
+  const { writeBatch } = await import('firebase/firestore');
   const playlistRef = doc(db, 'playlists', playlistId);
   const currentSnapshot = await getDoc(playlistRef);
   if (!currentSnapshot.exists()) throw new Error('Playlist not found');
 
   const updatedAt = new Date();
   const merged = { id: playlistId, ...currentSnapshot.data(), ...updates, updatedAt };
-  await updateDoc(playlistRef, { ...updates, updatedAt });
-
   const publicRef = doc(db, 'publicPlaylists', playlistId);
   const publicClips = (merged.clips || []).filter(clip => clip.isPublic === true);
+  const batch = writeBatch(db);
+  batch.update(playlistRef, { ...updates, updatedAt });
+
   if (merged.isPublic === true && publicClips.length > 0) {
     const { id, ...publicPlaylist } = merged;
     const currentPublic = await getDoc(publicRef);
     const publicLikes = currentPublic.exists() ? (currentPublic.data().likes || 0) : (publicPlaylist.likes || 0);
-    await setDoc(publicRef, { ...publicPlaylist, clips: publicClips, likes: publicLikes }, { merge: false });
+    batch.set(publicRef, {
+      ...publicPlaylist,
+      clips: publicClips,
+      publicClipCount: publicClips.length,
+      totalClipCount: (merged.clips || []).length,
+      likes: publicLikes
+    });
   } else {
-    await deleteDoc(publicRef).catch(() => {});
+    batch.delete(publicRef);
   }
+
+  // Keep the private source and its privacy-safe public projection in sync.
+  // The previous two-step write could leave the switch looking reset after a
+  // partial network/permission failure.
+  await batch.commit();
 };
 
 export const getUserData = async (uid) => {

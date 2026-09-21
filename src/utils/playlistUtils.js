@@ -26,7 +26,12 @@ export const createPlaylist = async (userId, name, clips, ownerDisplayName = '')
   const batch = writeBatch(db);
   batch.set(playlistRef, playlist);
   if (playlist.isPublic && publicClips.length > 0) {
-    batch.set(doc(db, 'publicPlaylists', playlistRef.id), { ...playlist, clips: publicClips });
+    batch.set(doc(db, 'publicPlaylists', playlistRef.id), {
+      ...playlist,
+      clips: publicClips,
+      publicClipCount: publicClips.length,
+      totalClipCount: playlist.clips.length
+    });
   }
   await batch.commit();
   return playlistRef.id;

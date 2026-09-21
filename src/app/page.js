@@ -10,13 +10,20 @@ import AuthModal from '../components/ui/AuthModal';
 import TutorialModal from '../components/ui/TutorialModal';
 import { useAuth } from '../hooks/useAuth';
 import BackgroundAmbience from '../components/ui/BackgroundAmbience';
+import ClipNetworkView from '../components/ui/ClipNetworkView';
 
 import AudioVisualizer from '../components/ui/AudioVisualizer';
 import FriendsPanel from '../components/ui/FriendsPanel';
 import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists, ENDLESS_CAP_IN_PLAYLIST } from '../utils/playlistUtils';
 import { getArtistImageWithCache } from '../utils/spotifyUtils';
 import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
+import { validateDisplayName } from '../lib/profanityFilter';
 
+const getAvatarUrl = (user) => {
+  const safeName = (user?.displayName || 'Guest').replace(/[^a-zA-Z0-9_ ]/g, '').slice(0, 20) || 'Guest';
+  const seed = `${user?.uid || 'guest'}-${safeName}`;
+  return `https://api.dicebear.com/10.x/lorelei/svg?seed=${encodeURIComponent(seed)}&backgroundColor=6d28d9,db2777&radius=50`;
+};
 
 export default function ChorusClipModern() { 
   // Use auth hook instead of local state
@@ -52,6 +59,7 @@ const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
 const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
 const [myClips, setMyClips] = useState([]);
+const [libraryLoading, setLibraryLoading] = useState(false);
 const [privateClipsLimit, setPrivateClipsLimit] = useState(8);
 const [libraryClipFilter, setLibraryClipFilter] = useState('all'); // 'all' | 'public' | 'private'
 const [libraryClipSort, setLibraryClipSort] = useState('newest'); // 'newest' | 'plays' | 'likes'
@@ -62,7 +70,7 @@ const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
 const [draggedClipForQueue, setDraggedClipForQueue] = useState(null);
 const [queueDropActive, setQueueDropActive] = useState(false);
 const [showClearQueueConfirm, setShowClearQueueConfirm] = useState(false);
-const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list'
+const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list' | 'map'
 const [desktopView, setDesktopView] = useState('overview'); // focused desktop workspace
 
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -346,6 +354,7 @@ const loadTrendingData = async () => {
       window.__migrateAllPlaylistsToPrivate = handleMigratePlaylistsToPrivate;
 
       if (user?.uid) {
+        setLibraryLoading(true);
         loadUserPlaylists();
         loadSavedQueue();
 
@@ -356,6 +365,7 @@ const loadTrendingData = async () => {
           import('../lib/firebase').then(({ subscribeToUserClips }) => {
             unsubUserClips = subscribeToUserClips(user.uid, (userClips) => {
               setMyClips(userClips);
+              setLibraryLoading(false);
               // If we got clips, clear any pending retry
               if (userClips.length > 0 && retryTimer) {
                 clearTimeout(retryTimer);
@@ -405,6 +415,7 @@ const loadTrendingData = async () => {
       } catch (error) {
         console.error('Profile social summary failed:', error);
       }
+      setLibraryLoading(false);
     };
     loadProfileSocial();
     return () => { cancelled = true; };
@@ -759,23 +770,17 @@ const loadUserPlaylists = async () => {
   if (!user?.uid) return;
   try {
     const userPlaylists = await getUserPlaylists(user.uid);
-    const invalidPublicPlaylists = userPlaylists.filter(playlist =>
-      playlist.isPublic && (playlist.clips || []).some(clip => clip.isPublic === false)
-    );
-    if (invalidPublicPlaylists.length > 0) {
-      const { updatePlaylist: updatePlaylistRecord } = await import('../lib/firebase');
-      await Promise.all(invalidPublicPlaylists.map(playlist =>
-        updatePlaylistRecord(playlist.id, { isPublic: false, isFeatured: false })
-      ));
-    }
-    const invalidIds = new Set(invalidPublicPlaylists.map(playlist => playlist.id));
-    setPlaylists(userPlaylists.map(playlist => invalidIds.has(playlist.id)
-      ? { ...playlist, isPublic: false, isFeatured: false }
-      : playlist
-    ).sort((a, b) => getCreatedAtValue(b.updatedAt || b.createdAt) - getCreatedAtValue(a.updatedAt || a.createdAt)));
-    if (invalidPublicPlaylists.length > 0) loadPublicPlaylists();
+    setPlaylists(userPlaylists.sort((a, b) => getCreatedAtValue(b.updatedAt || b.createdAt) - getCreatedAtValue(a.updatedAt || a.createdAt)));
+
+    // Backfill/migrate privacy-safe public projections for existing playlists.
+    const { updatePlaylist: updatePlaylistRecord } = await import('../lib/firebase');
+    await Promise.all(userPlaylists.filter(playlist => playlist.isPublic).map(playlist =>
+      updatePlaylistRecord(playlist.id, { clips: playlist.clips || [] })
+    ));
   } catch (error) {
     console.error('Failed to load playlists:', error);
+  } finally {
+    setLibraryLoading(false);
   }
 };
 
@@ -913,16 +918,12 @@ const commitClipsToPlaylist = async (targetPlaylist, clipsToAdd) => {
   const combined = [...targetPlaylist.clips, ...clipsToAdd].slice(0, 10);
   try {
     const { updatePlaylist } = await import('../lib/firebase');
-    const mustUnpublish = targetPlaylist.isPublic && combined.some(clip => clip.isPublic !== true);
     await updatePlaylist(targetPlaylist.id, {
-      clips: combined,
-      ...(mustUnpublish ? { isPublic: false, isFeatured: false } : {})
+      clips: combined
     });
     const addedCount = combined.length - targetPlaylist.clips.length;
     showNotification(
-      mustUnpublish
-        ? `${addedCount} clip${addedCount === 1 ? '' : 's'} added; “${targetPlaylist.name}” is now private because one is private`
-        : `${addedCount} clip${addedCount === 1 ? '' : 's'} added to “${targetPlaylist.name}”`,
+      `${addedCount} clip${addedCount === 1 ? '' : 's'} added to “${targetPlaylist.name}”${targetPlaylist.isPublic && clipsToAdd.some(clip => clip.isPublic !== true) ? '; private additions are hidden from its public view' : ''}`,
       'success'
     );
     setSelectedClipsForPlaylist([]);
@@ -964,10 +965,8 @@ const handleAddToSelectedPlaylists = async () => {
       const newClips = selectedClipsForPlaylist.filter(clip => !isClipDuplicate(clip, targetPlaylist.clips || []));
       const combined = [...(targetPlaylist.clips || []), ...newClips].slice(0, 10);
       addedTotal += Math.max(0, combined.length - (targetPlaylist.clips?.length || 0));
-      const mustUnpublish = targetPlaylist.isPublic === true && combined.some(clip => clip.isPublic !== true);
       await updatePlaylist(targetPlaylist.id, {
-        clips: combined,
-        ...(mustUnpublish ? { isPublic: false, isFeatured: false } : {})
+        clips: combined
       });
     }));
     setShowPlaylistModal(false);
@@ -1658,6 +1657,41 @@ const handlePlayClip = async (clipId, videoIdToPlay, clipData) => {
   }
 };
 
+const handleEditClipInStudio = (clip) => {
+  if (!clip) return;
+  const clipLoops = clip.loops || [{
+    start: clip.startTime || 0,
+    end: clip.endTime || 30,
+    loopCount: clip.loopCount ?? 1
+  }];
+  setYoutubeUrl(`https://youtube.com/watch?v=${clip.youtubeVideoId}`);
+  setVideoId(clip.youtubeVideoId);
+  setVideoTitle(clip.title || 'Untitled clip');
+  setArtist(clip.artist || '');
+  setLoops(clipLoops);
+  loopsRef.current = clipLoops;
+  setCurrentLoopIndex(0);
+  currentLoopIndexRef.current = 0;
+  setCurrentLoopIteration(0);
+  currentLoopIterationRef.current = 0;
+  setIsReadOnlyMode(false);
+  setExpandedSections([0]);
+  setMobileTab('create');
+  setDesktopView('create');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showNotification('✏️ Clip opened as a new Studio edit', 'info');
+  window.setTimeout(() => {
+    if (playerRef.current?.loadVideoById) {
+      playerRef.current.loadVideoById({
+        videoId: clip.youtubeVideoId,
+        startSeconds: clipLoops[0]?.start || 0
+      });
+    } else {
+      loadYouTubePlayer(clip.youtubeVideoId);
+    }
+  }, 400);
+};
+
 const startTimeTracking = () => {
   if (intervalRef.current) clearInterval(intervalRef.current);
   skipTrackingUntilRef.current = 0; // Clear any leftover dead zone on fresh start
@@ -1952,26 +1986,21 @@ const startTimeTracking = () => {
       return;
     }
     
+    // Update the visible heart/count immediately; Firestore catches up in the background.
+    setUser(prev => ({ ...prev, likedClips: [...(prev.likedClips || []), clipId] }));
+    updateClipStatInLists(clipId, 'likes', 1);
     try {
       const { db } = await import('../lib/firebase');
       const { doc, updateDoc, increment, setDoc, arrayUnion } = await import('firebase/firestore');
-      
-      await updateDoc(doc(db, 'clips', clipId), {
-        likes: increment(1)
-      });
-
-      await setDoc(doc(db, 'userLikes', user?.uid), {
-        likedClips: arrayUnion(clipId)
-      }, { merge: true });
-
-      setUser(prev => ({
-        ...prev,
-        likedClips: [...(prev.likedClips || []), clipId]
-      }));
-      updateClipStatInLists(clipId, 'likes', 1);
+      await Promise.all([
+        updateDoc(doc(db, 'clips', clipId), { likes: increment(1) }),
+        setDoc(doc(db, 'userLikes', user.uid), { likedClips: arrayUnion(clipId) }, { merge: true })
+      ]);
 
       showNotification('❤️ Clip liked!', 'success');
     } catch (error) {
+      setUser(prev => ({ ...prev, likedClips: (prev.likedClips || []).filter(id => id !== clipId) }));
+      updateClipStatInLists(clipId, 'likes', -1);
       showNotification('Failed to like. Check your permissions.', 'error');
       console.error('Like error:', error);
     }
@@ -2048,28 +2077,70 @@ const startTimeTracking = () => {
 
 const handleUnlikeClip = async (clipId) => {
   if (!user?.uid) return;
-  
+  setUser(prev => ({ ...prev, likedClips: (prev.likedClips || []).filter(id => id !== clipId) }));
+  updateClipStatInLists(clipId, 'likes', -1);
   try {
     const { db } = await import('../lib/firebase');
     const { doc, updateDoc, increment, arrayRemove, setDoc } = await import('firebase/firestore');
     
-    await updateDoc(doc(db, 'clips', clipId), {
-      likes: increment(-1)
-    });
-
-    await setDoc(doc(db, 'userLikes', user?.uid), {
-      likedClips: arrayRemove(clipId)
-    }, { merge: true });
-
-    setUser(prev => ({
-      ...prev,
-      likedClips: (prev.likedClips || []).filter(id => id !== clipId)
-    }));
-    updateClipStatInLists(clipId, 'likes', -1);
+    await Promise.all([
+      updateDoc(doc(db, 'clips', clipId), { likes: increment(-1) }),
+      setDoc(doc(db, 'userLikes', user.uid), { likedClips: arrayRemove(clipId) }, { merge: true })
+    ]);
 
     showNotification('💔 Unliked!', 'info');
   } catch (error) {
+    setUser(prev => ({ ...prev, likedClips: [...new Set([...(prev.likedClips || []), clipId])] }));
+    updateClipStatInLists(clipId, 'likes', 1);
     console.error('Unlike error:', error);
+    showNotification('Could not update the like. Please try again.', 'error');
+  }
+};
+
+const handleTogglePlaylistLike = async (playlist) => {
+  if (!user?.uid) {
+    showNotification('Sign in to like playlists!', 'error');
+    setShowAuthModal(true);
+    return;
+  }
+  if (pendingAction === `playlist-like-${playlist.id}`) return;
+
+  const wasLiked = user.likedPlaylists?.includes(playlist.id);
+  const delta = wasLiked ? -1 : 1;
+  setPendingAction(`playlist-like-${playlist.id}`);
+  setUser(prev => ({
+    ...prev,
+    likedPlaylists: wasLiked
+      ? (prev.likedPlaylists || []).filter(id => id !== playlist.id)
+      : [...(prev.likedPlaylists || []), playlist.id]
+  }));
+  setPublicPlaylists(prev => prev.map(item => item.id === playlist.id
+    ? { ...item, likes: Math.max(0, (item.likes || 0) + delta) }
+    : item));
+
+  try {
+    const { db } = await import('../lib/firebase');
+    const { doc, updateDoc, increment, setDoc, arrayUnion, arrayRemove } = await import('firebase/firestore');
+    await Promise.all([
+      updateDoc(doc(db, 'publicPlaylists', playlist.id), { likes: increment(delta) }),
+      setDoc(doc(db, 'userPlaylistLikes', user.uid), {
+        likedPlaylists: wasLiked ? arrayRemove(playlist.id) : arrayUnion(playlist.id)
+      }, { merge: true })
+    ]);
+    showNotification(wasLiked ? 'Playlist unliked' : '❤️ Playlist liked!', wasLiked ? 'info' : 'success');
+  } catch (error) {
+    setUser(prev => ({
+      ...prev,
+      likedPlaylists: wasLiked
+        ? [...new Set([...(prev.likedPlaylists || []), playlist.id])]
+        : (prev.likedPlaylists || []).filter(id => id !== playlist.id)
+    }));
+    setPublicPlaylists(prev => prev.map(item => item.id === playlist.id
+      ? { ...item, likes: Math.max(0, (item.likes || 0) - delta) }
+      : item));
+    showNotification('Could not update the playlist like', 'error');
+  } finally {
+    setPendingAction(null);
   }
 };
 
@@ -2081,43 +2152,31 @@ const handleClipVisibilityChange = async (clip) => {
     const { db, updatePlaylist: updatePlaylistRecord } = await import('../lib/firebase');
     const { doc, updateDoc } = await import('firebase/firestore');
 
-    if (!makePublic) {
-      // Privacy wins over playlist visibility. A public playlist may never keep
-      // exposing a clip after its owner makes that clip private.
-      const affectedPlaylists = playlists.filter(playlist =>
-        playlist.isPublic && (playlist.clips || []).some(item => item.id === clip.id)
-      );
-      if (affectedPlaylists.length > 0) {
-        await Promise.all(affectedPlaylists.map(playlist =>
-          updatePlaylistRecord(playlist.id, { isPublic: false, isFeatured: false })
-        ));
-        const affectedIds = new Set(affectedPlaylists.map(playlist => playlist.id));
-        setPlaylists(prev => prev.map(playlist =>
-          affectedIds.has(playlist.id) ? { ...playlist, isPublic: false, isFeatured: false } : playlist
-        ));
-        setManagingPlaylist(prev => prev && affectedIds.has(prev.id)
-          ? { ...prev, isPublic: false, isFeatured: false }
-          : prev
-        );
-      }
-    }
-
     const updatedAt = new Date();
     await updateDoc(doc(db, 'clips', clip.id), { isPublic: makePublic, updatedAt });
+    const affectedPlaylists = playlists
+      .filter(playlist => (playlist.clips || []).some(item => item.id === clip.id))
+      .map(playlist => ({
+        ...playlist,
+        clips: playlist.clips.map(item => item.id === clip.id ? { ...item, isPublic: makePublic } : item)
+      }));
+    await Promise.all(affectedPlaylists.map(playlist =>
+      updatePlaylistRecord(playlist.id, { clips: playlist.clips })
+    ));
+    const affectedById = new Map(affectedPlaylists.map(playlist => [playlist.id, playlist]));
+    setPlaylists(prev => prev.map(playlist => affectedById.get(playlist.id) || playlist));
+    setManagingPlaylist(prev => prev ? (affectedById.get(prev.id) || prev) : null);
     setMyClips(prev => prev.map(item => item.id === clip.id ? { ...item, isPublic: makePublic, updatedAt } : item));
     setClips(prev => prev.filter(item => item.id !== clip.id || makePublic).map(item =>
       item.id === clip.id ? { ...item, isPublic: makePublic } : item
     ));
     await Promise.all([loadTrendingClips(), loadTrendingData(), loadPublicPlaylists()]);
 
-    const unpublishedCount = !makePublic
-      ? playlists.filter(playlist => playlist.isPublic && (playlist.clips || []).some(item => item.id === clip.id)).length
-      : 0;
     showNotification(
       makePublic
-        ? 'Now public — other listeners can discover, play and like it'
-        : unpublishedCount > 0
-          ? `Clip is private. ${unpublishedCount} affected public playlist${unpublishedCount === 1 ? ' was' : 's were'} also made private.`
+        ? 'Now public — it is also restored in any public playlists that contain it'
+        : affectedPlaylists.some(playlist => playlist.isPublic)
+          ? 'Clip is private. It stays in your playlist, but is hidden from every public playlist view.'
           : 'Clip is private — only you can find it in your library',
       'success'
     );
@@ -2137,10 +2196,11 @@ const handlePlaylistVisibilityChange = async (playlist) => {
     return liveClip ? { ...clip, ...liveClip } : clip;
   });
   const privateClips = hydratedClips.filter(clip => clip.isPublic !== true);
+  const publicClips = hydratedClips.filter(clip => clip.isPublic === true);
 
-  if (makePublic && privateClips.length > 0) {
+  if (makePublic && publicClips.length === 0) {
     showNotification(
-      `Keep it private for now: make all ${privateClips.length} private clip${privateClips.length === 1 ? '' : 's'} public before publishing this playlist.`,
+      'Publish at least one clip first. A public playlist needs something safe to show.',
       'info'
     );
     return;
@@ -2160,7 +2220,7 @@ const handlePlaylistVisibilityChange = async (playlist) => {
     await loadPublicPlaylists();
     showNotification(
       makePublic
-        ? 'Playlist is public — every included clip is public too'
+        ? `Playlist is public with ${publicClips.length} public clip${publicClips.length === 1 ? '' : 's'}${privateClips.length ? `; ${privateClips.length} private clip${privateClips.length === 1 ? ' stays' : 's stay'} visible only to you` : ''}`
         : 'Playlist is private — only you can access it',
       'success'
     );
@@ -2197,7 +2257,8 @@ const handlePlaylistVisibilityChange = async (playlist) => {
         displayName: 'Guest',
         email: '',
         accountCreatedDaysAgo: 0,
-        likedClips: []
+        likedClips: [],
+        likedPlaylists: []
       });
       showNotification('✅ Signed out successfully!', 'success');
     } catch (error) {
@@ -2221,12 +2282,9 @@ const handlePlaylistVisibilityChange = async (playlist) => {
   const newName = prompt(`Enter new display name (3-20 chars, alphanumeric/underscore/spaces).\nChanges remaining after this: ${remaining - 1}/${USERNAME_CHANGE_QUOTA}`);
   if (!newName?.trim()) return;
   const trimmed = newName.trim();
-  if (trimmed.length < 3 || trimmed.length > 20) {
-    showNotification('Name must be 3-20 characters.', 'error');
-    return;
-  }
-  if (!/^[a-zA-Z0-9_ ]+$/.test(trimmed)) {
-    showNotification('Only letters, numbers, underscores and spaces allowed.', 'error');
+  const nameValidation = validateDisplayName(trimmed);
+  if (!nameValidation.valid) {
+    showNotification(nameValidation.message, 'error');
     return;
   }
 
@@ -2344,6 +2402,7 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   const visibleFeedClips = feedIsMostPlayed
     ? trendingByPlays.slice(0, 5)
     : (feedExpanded ? filteredClips.slice(0, feedPage * FEED_PAGE_SIZE) : filteredClips.slice(0, 5));
+  const networkClips = feedIsMostPlayed ? trendingByPlays : filteredClips;
 
   const topProfileClips = [...myClips]
     .sort((a, b) => getClipPlayCount(b) - getClipPlayCount(a))
@@ -2644,7 +2703,9 @@ className="btn-primary w-full py-5 text-xl">
               <div>
                 <p className="font-semibold text-sm">Visibility</p>
                 <p className="text-xs text-purple-400 mt-0.5">
-                  {managingPlaylist.isPublic === true ? '🌍 Public — appears in the Feed for everyone' : '🔒 Private — only you can access it'}
+                  {managingPlaylist.isPublic === true
+                    ? `🌍 Public — Feed shows ${(managingPlaylist.clips || []).filter(clip => (myClips.find(item => item.id === clip.id)?.isPublic ?? clip.isPublic) === true).length} public clip(s); private clips stay yours`
+                    : '🔒 Private — only you can access it'}
                 </p>
               </div>
               <button
@@ -2668,19 +2729,23 @@ className="btn-primary w-full py-5 text-xl">
               <button
                 onClick={async () => {
                   const nextFeatured = !managingPlaylist.isFeatured;
-                  const privateClipCount = (managingPlaylist.clips || []).filter(clip => {
+                  const publicClipCount = (managingPlaylist.clips || []).filter(clip => {
                     const liveClip = myClips.find(item => item.id === clip.id);
-                    return (liveClip?.isPublic ?? clip.isPublic) !== true;
+                    return (liveClip?.isPublic ?? clip.isPublic) === true;
                   }).length;
-                  if (nextFeatured && privateClipCount > 0) {
-                    showNotification(`Make all ${privateClipCount} private clip${privateClipCount === 1 ? '' : 's'} public before featuring this playlist.`, 'info');
+                  if (nextFeatured && publicClipCount === 0) {
+                    showNotification('A featured playlist needs at least one public clip.', 'info');
                     return;
                   }
                   try {
                     const { updatePlaylist } = await import('../lib/firebase');
                     const updates = {
                       isFeatured: nextFeatured,
-                      isPublic: nextFeatured ? true : managingPlaylist.isPublic
+                      isPublic: nextFeatured ? true : managingPlaylist.isPublic,
+                      clips: (managingPlaylist.clips || []).map(clip => {
+                        const liveClip = myClips.find(item => item.id === clip.id);
+                        return liveClip ? { ...clip, ...liveClip } : clip;
+                      })
                     };
                     await updatePlaylist(managingPlaylist.id, updates);
                     setManagingPlaylist(prev => prev ? { ...prev, ...updates } : null);
@@ -2846,11 +2911,8 @@ className="btn-primary w-full py-5 text-xl">
 
             {/* User info — avatar + username edit on desktop; hidden on mobile */}
             <div className="hidden sm:flex items-center gap-2 min-w-0">
-              {/* Avatar — static initial circle */}
-              <div className="relative w-8 h-8 rounded-full overflow-hidden shrink-0">
-                <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-xs font-black">
-                  {(user.displayName || 'U')[0].toUpperCase()}
-                </div>
+              <div className="relative w-8 h-8 rounded-full overflow-hidden shrink-0 bg-gradient-to-br from-purple-500 to-pink-500">
+                <Image unoptimized src={getAvatarUrl(user)} alt="" width={32} height={32} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               </div>
               {/* Username — click to edit */}
               <button
@@ -2864,11 +2926,8 @@ className="btn-primary w-full py-5 text-xl">
               </button>
             </div>
 
-            {/* Mobile: static avatar initial circle */}
-            <div className="sm:hidden w-9 h-9 rounded-full overflow-hidden shrink-0">
-              <div className="w-full h-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-sm font-black">
-                {(user.displayName || 'U')[0].toUpperCase()}
-              </div>
+            <div className="sm:hidden w-9 h-9 rounded-full overflow-hidden shrink-0 bg-gradient-to-br from-purple-500 to-pink-500">
+              <Image unoptimized src={getAvatarUrl(user)} alt="" width={36} height={36} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             </div>
 
             {/* Sign out */}
@@ -2974,8 +3033,8 @@ className="btn-primary w-full py-5 text-xl">
     <section className={`${mobileTab === 'profile' ? 'block' : 'hidden'} ${desktopView === 'profile' ? 'md:block' : 'md:hidden'}`} aria-label="Profile">
       <div className="card space-y-5">
         <div className="flex items-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-2xl font-black">
-            {(user?.displayName || 'G')[0].toUpperCase()}
+          <div className="w-16 h-16 rounded-full overflow-hidden bg-gradient-to-br from-purple-500 to-pink-500 shrink-0">
+            <Image unoptimized src={getAvatarUrl(user)} alt={`${user?.displayName || 'Guest'} avatar`} width={64} height={64} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-xs uppercase tracking-[0.2em] text-purple-400 font-black">Profile</p>
@@ -3626,7 +3685,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
           </div>
 
-          <div className={`space-y-6 ${mobileTab !== 'feed' ? 'hidden md:block' : ''}`}>
+          <div className={`space-y-6 ${mobileTab !== 'feed' && mobileTab !== 'library' ? 'hidden md:block' : ''}`}>
             <div className={`${mobileTab !== 'feed' ? 'hidden' : ''} ${desktopView === 'clips' ? 'md:block' : 'md:hidden'}`}>
             <div className="card">
               {/* Clip search */}
@@ -3667,12 +3726,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               )}
               <button
                 className="w-full flex justify-between items-center mb-4"
-                onClick={() => !feedIsMostPlayed && setFeedExpanded(v => !v)}
+                onClick={() => clipsViewMode !== 'map' && !feedIsMostPlayed && setFeedExpanded(v => !v)}
               >
                 <h2 className="text-3xl font-black tracking-tight text-white">Trending Clips</h2>
                 <span className="flex items-center gap-2 text-purple-400 text-sm font-semibold">
-                  {feedIsMostPlayed ? 'Top 5 played' : feedExpanded ? `${clips.length} loaded` : `${Math.min(clips.length, 5)} shown`}
-                  {!feedIsMostPlayed && (feedExpanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>)}
+                  {clipsViewMode === 'map'
+                    ? `${Math.min(networkClips.length, 36)} mapped`
+                    : feedIsMostPlayed ? 'Top 5 played' : feedExpanded ? `${clips.length} loaded` : `${Math.min(clips.length, 5)} shown`}
+                  {!feedIsMostPlayed && clipsViewMode !== 'map' && (feedExpanded ? <ChevronUp size={20}/> : <ChevronDown size={20}/>)}
                 </span>
               </button>
               <div className="flex flex-wrap gap-2 mb-4">
@@ -3701,6 +3762,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                     onClick={() => setClipsViewMode('list')}
                     className={`px-2 py-1 rounded-lg text-xs font-bold transition ${clipsViewMode === 'list' ? 'bg-purple-600 text-white' : 'text-purple-400 hover:text-purple-200'}`}
                   >≡ List</button>
+                  <button
+                    onClick={() => setClipsViewMode('map')}
+                    className={`px-2 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${clipsViewMode === 'map' ? 'bg-purple-600 text-white' : 'text-purple-400 hover:text-purple-200'}`}
+                    aria-label="Show clips as a relationship map"
+                  ><Share2 size={12} /> Map</button>
                 </div>
               </div>
               <p className="text-xs text-purple-400 mb-4">
@@ -3721,7 +3787,13 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
               ) : (
                 <>
-                {clipsViewMode === 'grid' ? (
+                {clipsViewMode === 'map' ? (
+                  <ClipNetworkView
+                    clips={networkClips}
+                    onPlay={(clip) => handlePlayClip(clip.id, clip.youtubeVideoId, clip)}
+                    onEdit={handleEditClipInStudio}
+                  />
+                ) : clipsViewMode === 'grid' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {visibleFeedClips.map((clip) => {
                     const clipSections = clip.loops || [{ start: clip.startTime || 0, end: clip.endTime || 30 }];
@@ -3771,7 +3843,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                               aria-label={`${user?.likedClips?.includes(clip.id) ? 'Unlike' : 'Like'} ${clip.title}`}
                               aria-pressed={user?.likedClips?.includes(clip.id)}
                             >
-                              <Heart size={12} fill={user?.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                              {pendingAction === `like-${clip.id}`
+                                ? <Loader2 size={12} className="animate-spin" />
+                                : <Heart size={12} fill={user?.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />}
                               {clip.likes || 0}
                             </button>
                             <button
@@ -3852,7 +3926,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                               aria-label={`${user?.likedClips?.includes(clip.id) ? 'Unlike' : 'Like'} ${clip.title}`}
                               aria-pressed={user?.likedClips?.includes(clip.id)}
                             >
-                              <Heart size={14} fill={user?.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />
+                              {pendingAction === `like-${clip.id}`
+                                ? <Loader2 size={14} className="animate-spin" />
+                                : <Heart size={14} fill={user?.likedClips?.includes(clip.id) ? 'currentColor' : 'none'} />}
                               <span className="text-xs font-semibold">{clip.likes || 0}</span>
                             </button>
                             {/* Play with count — always visible */}
@@ -3946,23 +4022,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                                     {/* Edit */}
                                     <button
                                       onClick={() => {
-                                        setYoutubeUrl(`https://youtube.com/watch?v=${clip.youtubeVideoId}`);
-                                        setVideoId(clip.youtubeVideoId);
-                                        setVideoTitle(clip.title);
-                                        setArtist(clip.artist);
-                                        setLoops(clip.loops || [{ start: 0, end: 30, loopCount: 1 }]);
-                                        setCurrentLoopIndex(0);
-                                        setIsReadOnlyMode(false);
-                                        if (typeof setExpandedSections === 'function') setExpandedSections([0]);
-                                        setMobileTab('create');
-                                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                                        showNotification('✏️ Loaded for editing', 'info');
+                                        handleEditClipInStudio(clip);
                                         setOpenClipMenuId(null);
-                                        setTimeout(() => {
-                                          if (playerRef.current?.loadVideoById) {
-                                            playerRef.current.loadVideoById({ videoId: clip.youtubeVideoId, startSeconds: clip.loops?.[0]?.start || 0 });
-                                          } else { loadYouTubePlayer(clip.youtubeVideoId); }
-                                        }, 400);
                                       }}
                                       className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
                                     >
@@ -3990,7 +4051,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 </div>
                 )}
 
-                  {!feedIsMostPlayed && clips.length > 5 && (
+                  {clipsViewMode !== 'map' && !feedIsMostPlayed && clips.length > 5 && (
                     <div className="space-y-2">
                       {!feedExpanded && (
                         <button
@@ -4034,7 +4095,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       <div>
         <h3 className="font-black text-xl flex items-center gap-2 text-white">
           <Music size={22} className="text-purple-300" />
-          Public Playlist Picks
+          Community Playlist Picks
         </h3>
         <p className="text-sm text-purple-200 mt-1">Visible even to signed-out listeners. Curated from public playlists only.</p>
       </div>
@@ -4061,7 +4122,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           </div>
           <h4 className="text-lg font-bold leading-tight">{playlist.name}</h4>
           <p className="text-sm text-purple-100 mt-1">
-            by @{playlist.createdBy || playlist.ownerDisplayName || 'community'} · runtime {formatSeconds(playlist.runtimeSeconds)}
+            by @{playlist.createdBy || playlist.ownerDisplayName || 'creator'} · runtime {formatSeconds(playlist.runtimeSeconds)}
           </p>
           <div className="mt-3 flex gap-2">
             <button
@@ -4070,6 +4131,17 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             >
               <Play size={16} fill="currentColor" />
               Preview
+            </button>
+            <button
+              onClick={() => handleTogglePlaylistLike(playlist)}
+              disabled={pendingAction === `playlist-like-${playlist.id}`}
+              className={`min-w-11 px-3 py-2.5 rounded-xl flex items-center justify-center gap-1 text-sm font-black transition ${user?.likedPlaylists?.includes(playlist.id) ? 'bg-pink-500/25 text-pink-300' : 'bg-purple-900/60 text-purple-300'}`}
+              aria-label={`${user?.likedPlaylists?.includes(playlist.id) ? 'Unlike' : 'Like'} playlist ${playlist.name}`}
+            >
+              {pendingAction === `playlist-like-${playlist.id}`
+                ? <Loader2 size={15} className="animate-spin" />
+                : <Heart size={15} fill={user?.likedPlaylists?.includes(playlist.id) ? 'currentColor' : 'none'} />}
+              {playlist.likes || 0}
             </button>
             {user?.uid && (
               <button
@@ -4090,7 +4162,10 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           {remainingPublicPlaylists.map(playlist => (
             <div key={playlist.id} className="flex items-center gap-3 rounded-xl bg-purple-900/30 p-3">
               <button onClick={() => handlePlayPlaylist(playlist)} className="w-10 h-10 rounded-full bg-emerald-500 text-black flex items-center justify-center shrink-0" aria-label={`Play ${playlist.name}`}><Play size={16} fill="currentColor" /></button>
-              <div className="min-w-0 flex-1"><p className="font-bold truncate">{playlist.name}</p><p className="text-xs text-purple-300">{playlist.clips?.length || 0} clips · {formatSeconds(playlist.runtimeSeconds)} · @{playlist.createdBy || 'community'}</p></div>
+              <div className="min-w-0 flex-1"><p className="font-bold truncate">{playlist.name}</p><p className="text-xs text-purple-300">{playlist.clips?.length || 0} clips · {formatSeconds(playlist.runtimeSeconds)} · by @{playlist.createdBy || playlist.ownerDisplayName || 'creator'}</p></div>
+              <button onClick={() => handleTogglePlaylistLike(playlist)} disabled={pendingAction === `playlist-like-${playlist.id}`} className="px-2.5 py-2 rounded-xl bg-pink-500/15 text-pink-300 text-xs font-black flex items-center gap-1" aria-label={`Like ${playlist.name}`}>
+                {pendingAction === `playlist-like-${playlist.id}` ? <Loader2 size={13} className="animate-spin" /> : <Heart size={13} fill={user?.likedPlaylists?.includes(playlist.id) ? 'currentColor' : 'none'} />}{playlist.likes || 0}
+              </button>
               {user?.uid && <button onClick={() => handleAddToQueue(playlist)} className="px-3 py-2 rounded-xl bg-yellow-500/20 text-yellow-300 text-xs font-black">+ Queue</button>}
             </div>
           ))}
@@ -4268,9 +4343,15 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 </div>
             </div>
 
+            {user?.uid && libraryLoading && (
+              <div className={`${mobileTab === 'library' ? 'flex' : 'hidden'} ${desktopView === 'library' ? 'md:flex' : 'md:hidden'} items-center justify-center gap-3 py-16 text-purple-300`}>
+                <Loader2 size={22} className="animate-spin" /> Loading your library…
+              </div>
+            )}
+
             {/* Library empty state — signed-in user with no clips and no playlists */}
-            {user?.uid && playlists.length === 0 && myClips.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-20 text-center px-6">
+            {user?.uid && !libraryLoading && playlists.length === 0 && myClips.length === 0 && (
+              <div className={`${mobileTab === 'library' ? 'flex' : 'hidden'} ${desktopView === 'library' ? 'md:flex' : 'md:hidden'} flex-col items-center justify-center py-20 text-center px-6`}>
                 <div className="text-6xl mb-4 animate-bounce">🎵</div>
                 <h3 className="text-2xl font-black mb-2">
                   Nothing here yet{user.displayName ? `, ${user.displayName.split(' ')[0]}` : ''}!
@@ -4310,8 +4391,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               </div>
             )}
 
-            {!user?.uid && desktopView === 'library' && (
-              <div className="hidden md:block card text-center py-16">
+            {!user?.uid && (desktopView === 'library' || mobileTab === 'library') && (
+              <div className={`${mobileTab === 'library' ? 'block' : 'hidden'} ${desktopView === 'library' ? 'md:block' : 'md:hidden'} card text-center py-16`}>
                 <ListMusic size={44} className="mx-auto text-purple-400 mb-4" />
                 <h3 className="text-2xl font-black text-white">Your library lives here</h3>
                 <p className="text-purple-300 mt-2 mb-6">Sign in to open your clips, playlists and saved queue.</p>
@@ -4481,26 +4562,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                         {/* Edit button — loads clip into Create editor */}
                         <button
                           onClick={() => {
-                            setYoutubeUrl(`https://youtube.com/watch?v=${clip.youtubeVideoId}`);
-                            setVideoId(clip.youtubeVideoId);
-                            setVideoTitle(clip.title);
-                            setArtist(clip.artist);
-                            setLoops(clip.loops || [{ start: 0, end: 30, loopCount: 1 }]);
-                            setCurrentLoopIndex(0);
-                            setCurrentLoopIteration(0);
-                            setIsReadOnlyMode(false);
-                            setExpandedSections([0]);
-                            setMobileTab('create');
-                            window.scrollTo({ top: 0, behavior: 'smooth' });
-                            showNotification('✏️ Clip loaded for editing — adjust and re-post', 'info');
+                            handleEditClipInStudio(clip);
                             setOpenClipMenuId(null);
-                            setTimeout(() => {
-                              if (window.YT?.Player && !playerRef.current?.loadVideoById) {
-                                loadYouTubePlayer(clip.youtubeVideoId);
-                              } else if (playerRef.current?.loadVideoById) {
-                                playerRef.current.loadVideoById({ videoId: clip.youtubeVideoId, startSeconds: clip.loops?.[0]?.start || 0 });
-                              }
-                            }, 400);
                           }}
                           className="w-full flex items-center gap-3 px-4 py-3 hover:bg-purple-900 hover:bg-opacity-40 transition text-left"
                         >
@@ -4914,12 +4977,12 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 
 {/* Side drawer — unified queue (playlists + individual clips) */}
 {queueDrawerOpen && (
-  <div className="fixed inset-0 z-50 flex items-end md:items-stretch md:justify-end bg-black/70 backdrop-blur-sm" onClick={() => setQueueDrawerOpen(false)}>
+  <div className="fixed inset-0 z-[70] flex items-end md:items-stretch md:justify-end bg-black/70 backdrop-blur-sm" onClick={() => setQueueDrawerOpen(false)}>
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="queue-title"
-      className="w-full max-h-[85dvh] rounded-t-3xl bg-gradient-to-b from-yellow-900 to-amber-950 border-t border-yellow-700 shadow-2xl overflow-hidden flex flex-col md:w-96 md:max-w-[90vw] md:max-h-none md:h-full md:rounded-none md:border-t-0 md:border-l"
+      className="w-full max-h-[calc(100dvh-0.75rem)] rounded-t-3xl bg-gradient-to-b from-yellow-900 to-amber-950 border-t border-yellow-700 shadow-2xl overflow-hidden flex flex-col md:w-96 md:max-w-[90vw] md:max-h-none md:h-full md:rounded-none md:border-t-0 md:border-l"
       onClick={e => e.stopPropagation()}
     >
       <div className="md:hidden flex justify-center pt-2 pb-1" aria-hidden="true">
@@ -4952,6 +5015,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       </div>
       {queueEditMode && (
         <div className="px-5 pb-3 border-b border-yellow-800">
+          <p className="md:hidden text-xs text-yellow-400 mb-2">Use the ↑ and ↓ controls to reorder on touch screens.</p>
           <button
             onClick={() => setShowClearQueueConfirm(true)}
             className="w-full min-h-11 rounded-xl border border-red-600/50 bg-red-950/60 text-red-300 text-sm font-black hover:bg-red-900/70 transition"
@@ -4962,7 +5026,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       )}
 
       {/* Queue items — drag sortable when editing */}
-      <div className="flex-1 px-4 py-3 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-2 pb-24 md:pb-3">
         {combinedQueueItems.length === 0 ? (
           <p className="text-center text-yellow-600 text-sm py-6">Queue is empty</p>
         ) : (
@@ -4985,7 +5049,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 : 'border-yellow-800 bg-yellow-900 bg-opacity-30'
               }`}
             >
-              {queueEditMode && <span className="hidden md:inline text-yellow-500 text-lg cursor-grab">⠿</span>}
+              {queueEditMode && <span className="text-yellow-500 text-lg cursor-grab shrink-0" aria-hidden="true">⠿</span>}
               <button
                 onClick={() => { handlePlayQueue(qi); setQueueDrawerOpen(false); }}
                 className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition ${

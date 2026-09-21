@@ -174,11 +174,32 @@ export const getLeaderboard = async (limitCount = 10) => {
 // PLAYLIST CRUD
 export const deletePlaylist = async (playlistId) => {
   const { deleteDoc } = await import('firebase/firestore');
-  await deleteDoc(doc(db, 'playlists', playlistId));
+  await Promise.all([
+    deleteDoc(doc(db, 'playlists', playlistId)),
+    deleteDoc(doc(db, 'publicPlaylists', playlistId)).catch(() => {})
+  ]);
 };
 
 export const updatePlaylist = async (playlistId, updates) => {
-  await updateDoc(doc(db, 'playlists', playlistId), { ...updates, updatedAt: new Date() });
+  const { deleteDoc } = await import('firebase/firestore');
+  const playlistRef = doc(db, 'playlists', playlistId);
+  const currentSnapshot = await getDoc(playlistRef);
+  if (!currentSnapshot.exists()) throw new Error('Playlist not found');
+
+  const updatedAt = new Date();
+  const merged = { id: playlistId, ...currentSnapshot.data(), ...updates, updatedAt };
+  await updateDoc(playlistRef, { ...updates, updatedAt });
+
+  const publicRef = doc(db, 'publicPlaylists', playlistId);
+  const publicClips = (merged.clips || []).filter(clip => clip.isPublic === true);
+  if (merged.isPublic === true && publicClips.length > 0) {
+    const { id, ...publicPlaylist } = merged;
+    const currentPublic = await getDoc(publicRef);
+    const publicLikes = currentPublic.exists() ? (currentPublic.data().likes || 0) : (publicPlaylist.likes || 0);
+    await setDoc(publicRef, { ...publicPlaylist, clips: publicClips, likes: publicLikes }, { merge: false });
+  } else {
+    await deleteDoc(publicRef).catch(() => {});
+  }
 };
 
 export const getUserData = async (uid) => {

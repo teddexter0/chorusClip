@@ -10,6 +10,7 @@ export function useAuth() {
     songsToday: 0,
     accountCreatedDaysAgo: 0,
     likedClips: [],
+    likedPlaylists: [],
     appTheme: null
   });
  
@@ -34,6 +35,7 @@ export function useAuth() {
             songsToday: 0,
             accountCreatedDaysAgo: 0,
             likedClips: [],
+            likedPlaylists: [],
             appTheme: null
           });
         }
@@ -41,10 +43,13 @@ export function useAuth() {
         try {
           const userData = await getUserData(firebaseUser.uid);
           let likedClips = [];
+          let likedPlaylists = [];
           
           try {
             const likesDoc = await getDoc(doc(db, 'userLikes', firebaseUser.uid));
             if (likesDoc.exists()) likedClips = likesDoc.data().likedClips || [];
+            const playlistLikesDoc = await getDoc(doc(db, 'userPlaylistLikes', firebaseUser.uid));
+            if (playlistLikesDoc.exists()) likedPlaylists = playlistLikesDoc.data().likedPlaylists || [];
           } catch (e) {
             console.error('Failed to fetch liked clips:', e);
           }
@@ -62,7 +67,8 @@ export function useAuth() {
               accountCreatedDaysAgo: Math.floor(
                 (Date.now() - userData.accountCreated.toDate().getTime()) / (1000 * 60 * 60 * 24)
               ),
-              likedClips
+              likedClips,
+              likedPlaylists
             });
           }
         } catch (error) {

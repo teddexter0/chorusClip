@@ -47,15 +47,31 @@ service cloud.firestore {
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // Playlists: discovery can read public playlists; private playlists remain
-    // visible only to their owner. Only the declared owner may create or mutate.
+    // Full playlist documents may contain private clips and are owner-only.
+    // Public discovery reads the privacy-safe projection below.
     match /playlists/{playlistId} {
-      allow read: if resource.data.isPublic == true ||
-        (request.auth != null && resource.data.userId == request.auth.uid);
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
       allow create: if request.auth != null &&
         request.resource.data.userId == request.auth.uid;
       allow update: if request.auth != null && resource.data.userId == request.auth.uid;
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+    }
+
+    match /publicPlaylists/{playlistId} {
+      allow read: if true;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes']) &&
+          request.resource.data.likes >= 0 &&
+          (
+            request.resource.data.likes == resource.data.get('likes', 0) + 1 ||
+            request.resource.data.likes == resource.data.get('likes', 0) - 1
+          )
+        )
+      );
     }
 
     // Payments: only owner can read/write their payment records.
@@ -70,6 +86,10 @@ service cloud.firestore {
 
     // UserLikes: each user owns their own likes document.
     match /userLikes/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /userPlaylistLikes/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 

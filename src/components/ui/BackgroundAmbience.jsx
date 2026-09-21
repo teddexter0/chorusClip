@@ -1,13 +1,15 @@
 'use client';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-// Curated high-engagement highlight windows from official NFL performances.
+// The three requested performance moments. Keep this list intentionally fixed:
+// this ambience is not a generic music-video rotation.
 // Only the visible player is mounted: browsers commonly throttle or reject two
 // simultaneous background autoplay requests, which left the old crossfade stuck
 // on poster images on both mobile and desktop.
 const BG_VIDEOS = [
-  { id: 'K4DyBUG242c', start: 55, end: 63, title: 'Cartoon — On & On (NCS)' },
-  { id: '60ItHLz5WEA', start: 64, end: 72, title: 'Alan Walker — Fade (NCS)' }
+  { id: 'c9cUytejf1k', start: 476, end: 488, title: 'Coldplay, Beyoncé & Bruno Mars — Super Bowl 50' },
+  { id: 'gdsUKphmB3Y', start: 195, end: 207, title: 'Dr. Dre, Snoop Dogg & 50 Cent — Super Bowl LVI' },
+  { id: 'HJH-uSiOekk', start: 35, end: 47, title: 'The Rock — WrestleMania 32 flamethrower entrance' }
 ];
 
 const getEmbedUrl = ({ id, start, end }, origin) => (
@@ -43,7 +45,7 @@ const BackgroundAmbience = ({ theme = 'purple' }) => {
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentIdx(index => (index + 1) % BG_VIDEOS.length);
-    }, 7000);
+    }, 12000);
     return () => clearInterval(timer);
   }, []);
 

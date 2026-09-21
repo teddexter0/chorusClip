@@ -5,7 +5,9 @@ const ENDLESS_CAP_IN_PLAYLIST = 5; // "Infinite" loops are capped at 5 plays in 
 
 export const createPlaylist = async (userId, name, clips, ownerDisplayName = '') => {
   const { db } = await import('../lib/firebase');
-  const { collection, addDoc } = await import('firebase/firestore');
+  const { collection, doc, writeBatch } = await import('firebase/firestore');
+  const playlistRef = doc(collection(db, 'playlists'));
+  const publicClips = clips.filter(clip => clip.isPublic === true).slice(0, PLAYLIST_MAX_CLIPS);
 
   const playlist = {
     userId,
@@ -14,14 +16,20 @@ export const createPlaylist = async (userId, name, clips, ownerDisplayName = '')
     createdAt: new Date(),
     updatedAt: new Date(),
     plays: 0,
+    likes: 0,
     // A playlist made entirely from public clips is safe to publish immediately.
     // Any private member keeps the whole playlist private.
     isPublic: clips.length > 0 && clips.every(clip => clip.isPublic === true),
     createdBy: ownerDisplayName || 'Community'
   };
 
-  const docRef = await addDoc(collection(db, 'playlists'), playlist);
-  return docRef.id;
+  const batch = writeBatch(db);
+  batch.set(playlistRef, playlist);
+  if (playlist.isPublic && publicClips.length > 0) {
+    batch.set(doc(db, 'publicPlaylists', playlistRef.id), { ...playlist, clips: publicClips });
+  }
+  await batch.commit();
+  return playlistRef.id;
 };
 
 export const getUserPlaylists = async (userId) => {
@@ -42,8 +50,7 @@ export const getAllPublicPlaylists = async () => {
   const { collection, query, where, getDocs, getDoc, doc, limit } = await import('firebase/firestore');
 
   const q = query(
-    collection(db, 'playlists'),
-    where('isPublic', '==', true),
+    collection(db, 'publicPlaylists'),
     limit(50)
   );
   const snapshot = await getDocs(q);

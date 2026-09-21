@@ -70,8 +70,8 @@ export default function TutorialModal({ onClose }) {
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-green-400">
               <p className="font-semibold mb-1">Making a playlist public</p>
               <p className="text-purple-200 text-sm">
-                A new playlist is published automatically when <strong>every selected clip is public</strong>. If any selected clip is private, the playlist stays private.<br/>
-                You can change visibility later from <strong>Library → Manage</strong>. Making a member clip private also makes its public playlist private.
+                A new playlist is published automatically when <strong>every selected clip is public</strong>. You can also publish a mixed playlist later from <strong>Library → Manage</strong>.<br/>
+                Its public page shows only public clips; private clips remain in your personal version.
               </p>
               <p className="text-purple-400 text-xs mt-2">→ Privacy rule: public playlists never expose private clips</p>
             </div>

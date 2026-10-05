@@ -189,13 +189,13 @@ export const updatePlaylist = async (playlistId, updates) => {
   const updatedAt = new Date();
   const merged = { id: playlistId, ...currentSnapshot.data(), ...updates, updatedAt };
   const publicRef = doc(db, 'publicPlaylists', playlistId);
+  const currentPublic = await getDoc(publicRef);
   const publicClips = (merged.clips || []).filter(clip => clip.isPublic === true);
   const batch = writeBatch(db);
   batch.update(playlistRef, { ...updates, updatedAt });
 
   if (merged.isPublic === true && publicClips.length > 0) {
     const { id, ...publicPlaylist } = merged;
-    const currentPublic = await getDoc(publicRef);
     const publicLikes = currentPublic.exists() ? (currentPublic.data().likes || 0) : (publicPlaylist.likes || 0);
     batch.set(publicRef, {
       ...publicPlaylist,
@@ -204,7 +204,9 @@ export const updatePlaylist = async (playlistId, updates) => {
       totalClipCount: (merged.clips || []).length,
       likes: publicLikes
     });
-  } else {
+  } else if (currentPublic.exists()) {
+    // A private playlist may never have had a public projection. Deleting a
+    // missing document fails the owner-only rule and rejects the whole batch.
     batch.delete(publicRef);
   }
 

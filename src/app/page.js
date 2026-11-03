@@ -14,7 +14,7 @@ import ClipNetworkView from '../components/ui/ClipNetworkView';
 
 import AudioVisualizer from '../components/ui/AudioVisualizer';
 import FriendsPanel from '../components/ui/FriendsPanel';
-import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists, ENDLESS_CAP_IN_PLAYLIST } from '../utils/playlistUtils';
+import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists, getPublicPlaylist, ENDLESS_CAP_IN_PLAYLIST } from '../utils/playlistUtils';
 import { getArtistImageWithCache } from '../utils/spotifyUtils';
 import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
 import { validateDisplayName } from '../lib/profanityFilter';
@@ -68,6 +68,8 @@ const [playlistMode, setPlaylistMode] = useState('default'); // 'default' | 'onc
 const [managingPlaylist, setManagingPlaylist] = useState(null); // playlist open in mgmt modal
 const [artistImages, setArtistImages] = useState({});
 const [publicPlaylists, setPublicPlaylists] = useState([]);
+const [sharedPlaylist, setSharedPlaylist] = useState(null);
+const sharedPlaylistAutoplayRef = useRef(false);
 const [queueBannerCollapsed, setQueueBannerCollapsed] = useState(false);
 const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
 const [themeMode, setThemeMode] = useState('classic');
@@ -360,7 +362,7 @@ const loadTrendingData = async () => {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const isFirstVisit = !localStorage.getItem('tutorialSeen');
-      if (isFirstVisit) {
+      if (isFirstVisit && !new URLSearchParams(window.location.search).has('playlist')) {
         setTimeout(() => setShowTutorial(true), 500);
         localStorage.setItem('tutorialSeen', 'true');
       }
@@ -872,6 +874,23 @@ const loadPublicPlaylists = async () => {
   }
 };
 
+const handleSharePlaylist = async (playlist) => {
+  const url = new URL('/', window.location.origin);
+  url.searchParams.set('playlist', playlist.id);
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: playlist.name, url: url.href });
+      return;
+    }
+    await navigator.clipboard.writeText(url.href);
+    showNotification('Playlist link copied!', 'success');
+  } catch (error) {
+    if (error.name !== 'AbortError') {
+      window.prompt('Copy this public playlist link', url.href);
+    }
+  }
+};
+
 const handleDeletePlaylist = async (playlistId) => {
   if (!window.confirm('Delete this playlist? This cannot be undone.')) return;
   try {
@@ -1135,7 +1154,10 @@ const initAndPlay = (targetPlaylist, player, onReady) => {
       if (window.YT?.Player || retries > 20) {
         clearInterval(wait);
         if (window.YT?.Player) initAndPlay(targetPlaylist, player, onReady);
-        else showNotification('YouTube not ready — try again in a moment', 'error');
+        else {
+          setGlobalLoading(false);
+          showNotification('YouTube not ready - try again in a moment', 'error');
+        }
       }
     }, 300);
   }
@@ -2475,11 +2497,68 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
       })
     : playlists;
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has('playlist')) return;
+
+    let cancelled = false;
+    setSharedPlaylist({ status: 'loading' });
+    getPublicPlaylist(params.get('playlist')).then(playlist => {
+      if (cancelled) return;
+      setSharedPlaylist(playlist?.clips.length
+        ? { status: 'ready', playlist }
+        : { status: 'unavailable' });
+    }).catch(() => {
+      if (!cancelled) setSharedPlaylist({ status: 'error' });
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (sharedPlaylist?.status !== 'ready' || sharedPlaylistAutoplayRef.current) return;
+    sharedPlaylistAutoplayRef.current = true;
+    handlePlayPlaylist(sharedPlaylist.playlist);
+    // Only attempt autoplay once. Browser autoplay policies may require a tap.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharedPlaylist]);
+
   const combinedQueueItems = buildCombinedQueue();
   
   return (
     <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-gold' : 'theme-classic'}`}>
     <BackgroundAmbience theme={themeMode === 'electric' ? 'gold' : 'purple'} />
+
+    {sharedPlaylist && (
+      <section className="card relative z-10 mx-auto my-4 max-w-5xl p-5" aria-label="Shared playlist">
+        <p className="text-xs font-black uppercase tracking-widest text-purple-300">Shared playlist</p>
+        {sharedPlaylist.status === 'ready' ? (
+          <>
+            <h1 className="my-2 text-2xl font-black">{sharedPlaylist.playlist.name}</h1>
+            <p className="mb-4 text-sm text-purple-200">{sharedPlaylist.playlist.clips.length} public clips</p>
+            <div className="flex flex-wrap gap-2">
+              <button className="btn-primary" onClick={() => {
+                const active = currentPlaylistPlayerRef.current?.playlist === sharedPlaylist.playlist;
+                if (active && currentPlaylistInfo && playerRef.current?.playVideo) {
+                  if (isPlaying) playerRef.current.pauseVideo();
+                  else playerRef.current.playVideo();
+                } else {
+                  handlePlayPlaylist(sharedPlaylist.playlist);
+                }
+              }}>
+                {isPlaying && currentPlaylistPlayerRef.current?.playlist === sharedPlaylist.playlist ? 'Pause playlist' : 'Play playlist'}
+              </button>
+              <button className="rounded-xl bg-purple-900/60 px-4 py-2 font-bold" onClick={() => handleSharePlaylist(sharedPlaylist.playlist)}>Share playlist</button>
+            </div>
+          </>
+        ) : (
+          <p className="mt-2 text-purple-100" role="status">
+            {sharedPlaylist.status === 'loading' ? 'Loading playlist…' : sharedPlaylist.status === 'error'
+              ? 'Could not load this playlist. Refresh to try again.'
+              : 'This playlist is unavailable or has no public clips.'}
+          </p>
+        )}
+      </section>
+    )}
 
     {celebration && (
       <div className="fixed inset-0 z-[120] pointer-events-none overflow-hidden flex items-center justify-center" aria-live="polite">
@@ -4187,6 +4266,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               <Play size={16} fill="currentColor" />
               Preview
             </button>
+            <button onClick={() => handleSharePlaylist(playlist)} className="rounded-xl bg-purple-900/60 px-3 text-purple-200" aria-label={`Share playlist ${playlist.name}`}><Share2 size={16} /></button>
             <button
               onClick={() => handleTogglePlaylistLike(playlist)}
               disabled={pendingAction === `playlist-like-${playlist.id}`}
@@ -4218,6 +4298,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             <div key={playlist.id} className="flex items-center gap-3 rounded-xl bg-purple-900/30 p-3">
               <button onClick={() => handlePlayPlaylist(playlist)} className="w-10 h-10 rounded-full bg-emerald-500 text-black flex items-center justify-center shrink-0" aria-label={`Play ${playlist.name}`}><Play size={16} fill="currentColor" /></button>
               <div className="min-w-0 flex-1"><p className="font-bold truncate">{playlist.name}</p><p className="text-xs text-purple-300">{playlist.clips?.length || 0} public clips · {formatSeconds(playlist.runtimeSeconds)} · by @{playlist.createdBy || playlist.ownerDisplayName || 'creator'}</p></div>
+              <button onClick={() => handleSharePlaylist(playlist)} className="rounded-xl bg-purple-900/60 p-2 text-purple-200" aria-label={`Share playlist ${playlist.name}`}><Share2 size={16} /></button>
               <button onClick={() => handleTogglePlaylistLike(playlist)} disabled={pendingAction === `playlist-like-${playlist.id}`} className="px-2.5 py-2 rounded-xl bg-pink-500/15 text-pink-300 text-xs font-black flex items-center gap-1" aria-label={`Like ${playlist.name}`}>
                 {pendingAction === `playlist-like-${playlist.id}` ? <Loader2 size={13} className="animate-spin" /> : <Heart size={13} fill={user?.likedPlaylists?.includes(playlist.id) ? 'currentColor' : 'none'} />}{playlist.likes || 0}
               </button>
@@ -4776,6 +4857,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                   >
                     <Play size={14} fill="currentColor" /> Play
                   </button>
+                  {playlist.isPublic && (
+                    <button onClick={() => handleSharePlaylist(playlist)} className="rounded-xl bg-purple-800 px-3 py-2.5 text-sm font-bold" aria-label={`Share playlist ${playlist.name}`}><Share2 size={16} /></button>
+                  )}
                   <button
                     onClick={() => handleAddToQueue(playlist)}
                     className={`px-3 py-2.5 rounded-xl text-sm font-bold transition ${

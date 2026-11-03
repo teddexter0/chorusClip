@@ -50,29 +50,42 @@ export const getUserPlaylists = async (userId) => {
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 
+const hydratePublicPlaylist = async (entry, readClip) => {
+  const playlist = { ...entry.data(), id: entry.id };
+  const clips = await Promise.all((playlist.clips || []).map(async clip => {
+    if (!clip.id) return clip.isPublic === true ? clip : null;
+    try {
+      const live = await readClip(clip.id);
+      if (!live.exists() || live.data().isPublic !== true) return null;
+      return { ...clip, ...live.data(), id: live.id };
+    } catch {
+      return null;
+    }
+  }));
+  return { ...playlist, clips: clips.filter(Boolean) };
+};
+
+export const getPublicPlaylist = async (id) => {
+  if (!id || id.includes('/') || id === '.' || id === '..') return null;
+  const { db } = await import('../lib/firebase');
+  const { doc, getDocFromServer } = await import('firebase/firestore');
+  const entry = await getDocFromServer(doc(db, 'publicPlaylists', id));
+  if (!entry.exists() || entry.data().isPublic !== true) return null;
+  return hydratePublicPlaylist(entry, clipId => getDocFromServer(doc(db, 'clips', clipId)));
+};
+
 export const getAllPublicPlaylists = async () => {
   const { db } = await import('../lib/firebase');
-  const { collection, query, where, getDocs, getDoc, doc, limit } = await import('firebase/firestore');
+  const { collection, query, getDocs, getDoc, doc, limit } = await import('firebase/firestore');
 
   const q = query(
     collection(db, 'publicPlaylists'),
     limit(50)
   );
   const snapshot = await getDocs(q);
-  const playlists = snapshot.docs.map(entry => ({ id: entry.id, ...entry.data() }));
-  const hydrated = await Promise.all(playlists.map(async playlist => {
-    const liveClips = await Promise.all((playlist.clips || []).map(async clip => {
-      if (!clip.id) return clip.isPublic === true ? clip : null;
-      try {
-        const live = await getDoc(doc(db, 'clips', clip.id));
-        if (!live.exists() || live.data().isPublic !== true) return null;
-        return { ...clip, id: live.id, ...live.data() };
-      } catch {
-        return clip.isPublic === true ? clip : null;
-      }
-    }));
-    return { ...playlist, clips: liveClips.filter(Boolean) };
-  }));
+  const hydrated = await Promise.all(snapshot.docs.map(entry =>
+    hydratePublicPlaylist(entry, clipId => getDoc(doc(db, 'clips', clipId)))
+  ));
   return hydrated.filter(playlist => playlist.clips.length > 0);
 };
 

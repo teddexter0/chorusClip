@@ -195,7 +195,7 @@ export const updatePlaylist = async (playlistId, updates) => {
   batch.update(playlistRef, { ...updates, updatedAt });
 
   if (merged.isPublic === true && publicClips.length > 0) {
-    const { id, ...publicPlaylist } = merged;
+    const { id, sharedWith, ...publicPlaylist } = merged;
     const publicLikes = currentPublic.exists() ? (currentPublic.data().likes || 0) : (publicPlaylist.likes || 0);
     batch.set(publicRef, {
       ...publicPlaylist,
@@ -214,6 +214,37 @@ export const updatePlaylist = async (playlistId, updates) => {
   // The previous two-step write could leave the switch looking reset after a
   // partial network/permission failure.
   await batch.commit();
+};
+
+export const changePlaylistInvite = async (playlistId, username, removeUid) => {
+  const { collection, query, where, getDocs, updateDoc, FieldPath, deleteField } = await import('firebase/firestore');
+  const playlist = doc(db, 'playlists', playlistId);
+  if (removeUid) {
+    await updateDoc(playlist, new FieldPath('sharedWith', removeUid), deleteField());
+    return;
+  }
+  const name = username.trim().replace(/^@/, '');
+  const users = collection(db, 'users');
+  const results = await Promise.all([
+    getDocs(query(users, where('usernameLower', '==', name.toLocaleLowerCase()))),
+    getDocs(query(users, where('displayName', '==', name)))
+  ]);
+  const matches = new Map(results.flatMap(result => result.docs)
+    .filter(entry => entry.id !== auth.currentUser?.uid &&
+      entry.data().displayName?.toLocaleLowerCase() === name.toLocaleLowerCase())
+    .map(entry => [entry.id, entry.data().displayName]));
+  if (matches.size !== 1) throw new Error(matches.size ? 'That username matches multiple accounts.' : 'Username not found. Check the exact spelling and capitalization.');
+  const [[uid, displayName]] = matches;
+  await updateDoc(playlist, new FieldPath('sharedWith', uid), displayName);
+  return { uid, displayName };
+};
+
+export const getInvitedPlaylist = async (id) => {
+  if (!id || id.includes('/') || id === '.' || id === '..') return null;
+  const { getDocFromServer } = await import('firebase/firestore');
+  const entry = await getDocFromServer(doc(db, 'playlists', id));
+  if (!entry.exists() || entry.data().isPublic === true) return null;
+  return { ...entry.data(), id: entry.id };
 };
 
 export const getUserData = async (uid) => {

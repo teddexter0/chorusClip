@@ -52,13 +52,20 @@ service cloud.firestore {
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 
-    // Full playlist documents may contain private clips and are owner-only.
-    // Public discovery reads the privacy-safe projection below.
+    // sharedWith maps invited account UIDs to display names. Only the owner
+    // can edit the playlist or its invite list. Invitations permit direct reads.
     match /playlists/{playlistId} {
+      function validInvites() {
+        let invites = request.resource.data.get('sharedWith', {});
+        return invites is map && invites.size() <= 50;
+      }
       allow read: if request.auth != null && resource.data.userId == request.auth.uid;
+      allow get: if request.auth != null && resource.data.get('isPublic', false) == false &&
+        request.auth.uid in resource.data.get('sharedWith', {});
       allow create: if request.auth != null &&
-        request.resource.data.userId == request.auth.uid;
-      allow update: if request.auth != null && resource.data.userId == request.auth.uid;
+        request.resource.data.userId == request.auth.uid && validInvites();
+      allow update: if request.auth != null && resource.data.userId == request.auth.uid &&
+        request.resource.data.userId == resource.data.userId && validInvites();
       allow delete: if request.auth != null && resource.data.userId == request.auth.uid;
     }
 

@@ -362,7 +362,7 @@ const loadTrendingData = async () => {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const isFirstVisit = !localStorage.getItem('tutorialSeen');
-      if (isFirstVisit && !new URLSearchParams(window.location.search).has('playlist')) {
+      if (isFirstVisit && !['playlist', 'invite'].some(key => new URLSearchParams(window.location.search).has(key))) {
         setTimeout(() => setShowTutorial(true), 500);
         localStorage.setItem('tutorialSeen', 'true');
       }
@@ -874,9 +874,9 @@ const loadPublicPlaylists = async () => {
   }
 };
 
-const handleSharePlaylist = async (playlist) => {
+const handleSharePlaylist = async (playlist, inviteOnly = false) => {
   const url = new URL('/', window.location.origin);
-  url.searchParams.set('playlist', playlist.id);
+  url.searchParams.set(inviteOnly ? 'invite' : 'playlist', playlist.id);
   try {
     if (navigator.share) {
       await navigator.share({ title: playlist.name, url: url.href });
@@ -888,6 +888,26 @@ const handleSharePlaylist = async (playlist) => {
     if (error.name !== 'AbortError') {
       window.prompt('Copy this public playlist link', url.href);
     }
+  }
+};
+
+const handlePlaylistInvite = async (playlist, removeUid) => {
+  const username = removeUid ? '' : window.prompt('Enter the exact ChorusClip username to invite');
+  if (!removeUid && !username?.trim()) return;
+  try {
+    const { changePlaylistInvite } = await import('../lib/firebase');
+    const invite = await changePlaylistInvite(playlist.id, username, removeUid);
+    setManagingPlaylist(current => {
+      if (current?.id !== playlist.id) return current;
+      const sharedWith = { ...current.sharedWith };
+      if (removeUid) delete sharedWith[removeUid];
+      else sharedWith[invite.uid] = invite.displayName;
+      return { ...current, sharedWith };
+    });
+    loadUserPlaylists();
+    showNotification(removeUid ? 'Playlist access removed' : `@${invite.displayName} can now open your invite link`, 'success');
+  } catch (error) {
+    showNotification(error.code ? 'Could not update playlist access.' : error.message, 'error');
   }
 };
 
@@ -2499,23 +2519,31 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (!params.has('playlist')) return;
+    const inviteOnly = params.has('invite');
+    if (!inviteOnly && !params.has('playlist')) return;
+    if (inviteOnly && !user?.uid) {
+      setSharedPlaylist({ status: 'sign-in', inviteOnly });
+      return;
+    }
 
     let cancelled = false;
     setSharedPlaylist({ status: 'loading' });
-    getPublicPlaylist(params.get('playlist')).then(playlist => {
+    const request = inviteOnly
+      ? import('../lib/firebase').then(({ getInvitedPlaylist }) => getInvitedPlaylist(params.get('invite')))
+      : getPublicPlaylist(params.get('playlist'));
+    request.then(playlist => {
       if (cancelled) return;
       setSharedPlaylist(playlist?.clips.length
-        ? { status: 'ready', playlist }
+        ? { status: 'ready', playlist, inviteOnly }
         : { status: 'unavailable' });
-    }).catch(() => {
-      if (!cancelled) setSharedPlaylist({ status: 'error' });
+    }).catch(error => {
+      if (!cancelled) setSharedPlaylist({ status: error.code === 'permission-denied' ? 'denied' : 'error' });
     });
     return () => { cancelled = true; };
-  }, []);
+  }, [user?.uid]);
 
   useEffect(() => {
-    if (sharedPlaylist?.status !== 'ready' || sharedPlaylistAutoplayRef.current) return;
+    if (sharedPlaylist?.status !== 'ready' || sharedPlaylist.inviteOnly || sharedPlaylistAutoplayRef.current) return;
     sharedPlaylistAutoplayRef.current = true;
     handlePlayPlaylist(sharedPlaylist.playlist);
     // Only attempt autoplay once. Browser autoplay policies may require a tap.
@@ -2534,7 +2562,7 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
         {sharedPlaylist.status === 'ready' ? (
           <>
             <h1 className="my-2 text-2xl font-black">{sharedPlaylist.playlist.name}</h1>
-            <p className="mb-4 text-sm text-purple-200">{sharedPlaylist.playlist.clips.length} public clips</p>
+            <p className="mb-4 text-sm text-purple-200">{sharedPlaylist.playlist.clips.length} {sharedPlaylist.inviteOnly ? 'clips · Invite only' : 'public clips'}</p>
             <div className="flex flex-wrap gap-2">
               <button className="btn-primary" onClick={() => {
                 const active = currentPlaylistPlayerRef.current?.playlist === sharedPlaylist.playlist;
@@ -2547,14 +2575,17 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
               }}>
                 {isPlaying && currentPlaylistPlayerRef.current?.playlist === sharedPlaylist.playlist ? 'Pause playlist' : 'Play playlist'}
               </button>
-              <button className="rounded-xl bg-purple-900/60 px-4 py-2 font-bold" onClick={() => handleSharePlaylist(sharedPlaylist.playlist)}>Share playlist</button>
+              {!sharedPlaylist.inviteOnly && <button className="rounded-xl bg-purple-900/60 px-4 py-2 font-bold" onClick={() => handleSharePlaylist(sharedPlaylist.playlist)}>Share playlist</button>}
             </div>
           </>
+        ) : sharedPlaylist.status === 'sign-in' ? (
+          <button className="btn-primary mt-3" onClick={() => setShowAuthModal(true)}>Sign in with your invited account</button>
         ) : (
           <p className="mt-2 text-purple-100" role="status">
             {sharedPlaylist.status === 'loading' ? 'Loading playlist…' : sharedPlaylist.status === 'error'
               ? 'Could not load this playlist. Refresh to try again.'
-              : 'This playlist is unavailable or has no public clips.'}
+              : sharedPlaylist.status === 'denied' ? 'This account does not have access to the playlist.'
+              : 'This playlist is unavailable or has no playable clips.'}
           </p>
         )}
       </section>
@@ -2831,6 +2862,22 @@ className="btn-primary w-full py-5 text-xl">
               </div>
             </div>
 
+            {!managingPlaylist.isPublic && (
+              <section className="mb-3 space-y-2 rounded-xl bg-purple-950/50 p-4" aria-label="Private playlist access">
+                <h3 className="font-bold">Invite-only access</h3>
+                <p className="text-sm text-purple-200">Invited accounts can play every clip in this playlist, including private clips.</p>
+                <div className="flex flex-wrap gap-2">
+                  <button className="btn-primary" onClick={() => handlePlaylistInvite(managingPlaylist)}>Invite by username</button>
+                  <button className="rounded-xl bg-purple-700 px-3 py-2 font-bold" onClick={() => handleSharePlaylist(managingPlaylist, true)}>Share invite link</button>
+                </div>
+                {Object.entries(managingPlaylist.sharedWith || {}).map(([uid, name]) => (
+                  <div key={uid} className="flex items-center justify-between gap-2">
+                    <span>@{name}</span>
+                    <button className="text-sm text-pink-200" onClick={() => handlePlaylistInvite(managingPlaylist, uid)}>Remove access</button>
+                  </div>
+                ))}
+              </section>
+            )}
             {/* Public / Private toggle */}
             <div className="flex items-center justify-between bg-purple-900 bg-opacity-30 px-4 py-3 rounded-xl mb-3">
               <div>
@@ -2838,7 +2885,7 @@ className="btn-primary w-full py-5 text-xl">
                 <p className="text-xs text-purple-400 mt-0.5">
                   {managingPlaylist.isPublic === true
                     ? `🌍 Shared publicly — visitors see ${(managingPlaylist.clips || []).filter(clip => (myClips.find(item => item.id === clip.id)?.isPublic ?? clip.isPublic) === true).length} of ${managingPlaylist.clips?.length || 0} clips. Private clips remain visible only to you.`
-                    : '🔒 Private playlist — only you can open it'}
+                    : '🔒 Private playlist — you and invited accounts can open it'}
                 </p>
               </div>
               <button

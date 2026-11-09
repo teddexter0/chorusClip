@@ -3068,6 +3068,7 @@ className="btn-primary w-full py-5 text-xl">
 
       {/* Right-side actions */}
       <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+        <a href="/install.html" className="text-xs font-semibold text-purple-200 underline underline-offset-4 shrink-0">Install</a>
         {user?.uid ? (
           <>
             {/* Friends button — icon only on mobile */}
@@ -3848,9 +3849,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               <div className="bg-purple-900 bg-opacity-40 rounded-xl px-4 py-3 mb-4 text-sm">
                 <p className="font-bold text-purple-200 mb-1">📱 Listen on mobile like an app</p>
                 <p className="text-purple-400 text-xs leading-relaxed">
-                  On iPhone: tap Share → &quot;Add to Home Screen&quot;.<br/>
-                  On Android: tap the browser menu → &quot;Add to Home Screen&quot; or &quot;Install app&quot;.<br/>
-                  This runs ChorusClip fullscreen and enables lock-screen controls where the browser allows them. YouTube or iOS may still pause playback after the app is backgrounded.
+                  <a href="/install.html" className="font-semibold text-purple-200 underline underline-offset-4">See the install and home-screen shortcut steps.</a><br/>
+                  Lock-screen controls depend on the browser. YouTube or iOS may still pause playback after the app is backgrounded.
                 </p>
               </div>
               <a 

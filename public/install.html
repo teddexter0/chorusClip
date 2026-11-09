@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Install ChorusClip</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" href="/icon-192.png">
+  <style>
+    body { margin: 0; padding: clamp(1rem, 5vw, 3rem); background: #1a0533; color: #fff; font: 1rem/1.55 system-ui, sans-serif; }
+    main { max-width: 36rem; margin: auto; }
+    h1 { margin: 1.25rem 0; line-height: 1.15; }
+    h2 { margin: 0; font-size: 1.15rem; }
+    section { margin: 1rem 0; padding: 1rem 1.25rem; border-radius: 1rem; background: #2a1442; }
+    section p:last-child { margin-bottom: 0; }
+    a { color: #e5bdff; }
+    a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+    .chrome { display: inline-block; padding: .65rem 1rem; border-radius: .65rem; background: #e5bdff; color: #1a0533; font-weight: 700; }
+    .chrome[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <a href="/">Back to ChorusClip</a>
+    <h1>Install ChorusClip</h1>
+    <section>
+      <h2>Android with Chrome</h2>
+      <p>Open ChorusClip in Google Chrome. Tap <strong>⋮ → Add to Home screen → Install</strong>. Chrome may call the menu item <strong>Install app</strong>.</p>
+      <a class="chrome" id="open-chrome" hidden href="intent://chorus-clip.vercel.app/install.html#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Fchorus-clip.vercel.app%2Finstall.html;end">Open in Chrome</a>
+    </section>
+    <section>
+      <h2>Samsung Internet</h2>
+      <p>If Play Protect shows an older Android version warning, dismiss it and use Chrome to install. If the Chrome button does not open, open Chrome manually and go to <strong>chorus-clip.vercel.app</strong>.</p>
+      <p>To stay in Samsung Internet, go back to the homepage and use <strong>☰ → Add page to → Home screen</strong>. If offered a choice, pick the shortcut option.</p>
+    </section>
+    <section>
+      <h2>iPhone and iPad</h2>
+      <p>Open ChorusClip in Safari and tap <strong>Share → Add to Home Screen</strong>.</p>
+    </section>
+  </main>
+  <script>
+    if (/Android/i.test(navigator.userAgent) && /SamsungBrowser\//i.test(navigator.userAgent)) {
+      document.getElementById('open-chrome').hidden = false;
+    }
+  </script>
+</body>
+</html>

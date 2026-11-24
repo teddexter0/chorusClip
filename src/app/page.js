@@ -878,16 +878,10 @@ const handleSharePlaylist = async (playlist, inviteOnly = false) => {
   const url = new URL('/', window.location.origin);
   url.searchParams.set(inviteOnly ? 'invite' : 'playlist', playlist.id);
   try {
-    if (navigator.share) {
-      await navigator.share({ title: playlist.name, url: url.href });
-      return;
-    }
     await navigator.clipboard.writeText(url.href);
-    showNotification('Playlist link copied!', 'success');
-  } catch (error) {
-    if (error.name !== 'AbortError') {
-      window.prompt('Copy this public playlist link', url.href);
-    }
+    showNotification(inviteOnly ? 'Invite link copied!' : 'Playlist link copied!', 'success');
+  } catch {
+    window.prompt(inviteOnly ? 'Copy this invite link' : 'Copy this public playlist link', url.href);
   }
 };
 
@@ -2533,7 +2527,7 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
       : getPublicPlaylist(params.get('playlist'));
     request.then(playlist => {
       if (cancelled) return;
-      setSharedPlaylist(playlist?.clips.length
+      setSharedPlaylist(playlist?.clips?.length
         ? { status: 'ready', playlist, inviteOnly }
         : { status: 'unavailable' });
     }).catch(error => {

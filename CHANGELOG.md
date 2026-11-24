@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-11-25 | Chorus Mode and playback reliability
+
+- Open Chorus Mode as soon as a YouTube link is loaded. Wait briefly for the track length, use the original quarter-track suggestion, and label the fallback as an estimate. Reopen it from Detect a chorus.
+- Scope Play and Replay to the glowing snippet selected by its card or trim controls. Clear the selection to replay the full clip. Move either handle on the same timeline, scrub automatically, and use the time fields and keyboard for exact boundaries.
+- Stop at the section boundary. On disconnect or sustained buffering, pause at the last confirmed in-range position and save the Studio checkpoint to the browser. Restoring a draft cues it and waits for Play.
+- Keep the queue on standby throughout Studio editing, even if it restores after the editor opens. Show a standby notice and retain the desktop queue rail preference across refreshes.
+- Restore Firebase sign-in before loading Firestore profile and like data. Keep the trusted-device session by default and defer public playlist reads until their view or feed section is reached.
+- Open the same search reminder from Discover Clips, Studio Help, and How to use.
+
 ## 2026-11-24 | Studio and playback
 
 ### Loading and sign-in

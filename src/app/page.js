@@ -15,7 +15,7 @@ const ClipNetworkView = dynamic(() => import('../components/ui/ClipNetworkView')
 const AudioVisualizer = dynamic(() => import('../components/ui/AudioVisualizer'));
 const FriendsPanel = dynamic(() => import('../components/ui/FriendsPanel'));
 import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists, getPublicPlaylist, ENDLESS_CAP_IN_PLAYLIST } from '../utils/playlistUtils';
-import { loadYouTubeApi, trimSection } from '../utils/studioPlayback.mjs';
+import { getChorusSuggestion, getSectionTime, loadYouTubeApi, restoreStudioCheckpoint, trimSection } from '../utils/studioPlayback.mjs';
 import { getArtistImageWithCache } from '../utils/spotifyUtils';
 import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
 import { validateDisplayName } from '../lib/profanityFilter';
@@ -69,6 +69,9 @@ const [playlistMode, setPlaylistMode] = useState('default'); // 'default' | 'onc
 const [managingPlaylist, setManagingPlaylist] = useState(null); // playlist open in mgmt modal
 const [artistImages, setArtistImages] = useState({});
 const [publicPlaylists, setPublicPlaylists] = useState([]);
+const [publicPlaylistsLoading, setPublicPlaylistsLoading] = useState(true);
+const [feedPlaylistsVisible, setFeedPlaylistsVisible] = useState(false);
+const feedPlaylistsRef = useRef(null);
 const [sharedPlaylist, setSharedPlaylist] = useState(null);
 const sharedPlaylistAutoplayRef = useRef(false);
 const [queueBannerCollapsed, setQueueBannerCollapsed] = useState(false);
@@ -111,7 +114,7 @@ const [selectedSection, setSelectedSection] = useState(null); // focused desktop
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [videoId, setVideoId] = useState('');
   const [videoTitle, setVideoTitle] = useState('');
-  const [videoDuration, setVideoDuration] = useState(600); // actual duration from YT player (seconds)
+  const [videoDuration, setVideoDuration] = useState(0);
   const [artist, setArtist] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   // initial loop state — each loop has its own loopCount (0 = infinite)
@@ -126,9 +129,8 @@ const [selectedSection, setSelectedSection] = useState(null); // focused desktop
   
   const [showTutorial, setShowTutorial] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showMostReplayedSuggestion, setShowMostReplayedSuggestion] = useState(false);
-  const [suggestedStart, setSuggestedStart] = useState(0);
-  const [suggestedEnd, setSuggestedEnd] = useState(30);
+  const [showChorusMode, setShowChorusMode] = useState(false);
+  const [chorusFallbackReady, setChorusFallbackReady] = useState(false);
 
   const [notification, setNotification] = useState(null);
 const [leaderboard, setLeaderboard] = useState([]);
@@ -299,13 +301,12 @@ const loadTrendingData = async () => {
   const playbackWantedRef = useRef(false);
   const lastSafeTimeRef = useRef(null);
   const resumeTimeRef = useRef(null);
-  const queuedPreviewRef = useRef(null);
+  const studioCheckpointRef = useRef(null);
   const playerReadyRef = useRef(null);
   const pausedPreviewRef = useRef(false);
   const playbackInterruptedRef = useRef(false);
   const studioRef = useRef(false);
   const draftRef = useRef(false);
-  const studioSessionRef = useRef(0);
   const queueRevisionRef = useRef(0);
   const queueRestoreUidRef = useRef(null);
   const latestPlayerStateHandler = useRef(null);
@@ -313,7 +314,8 @@ const loadTrendingData = async () => {
   const durationsRef = useRef({});
   const loadedViewsRef = useRef(new Set());
   const activeView = desktop === null ? null : desktop ? desktopView : mobileTab;
-  studioRef.current = activeView === 'create' || draftRef.current;
+  const studioStandby = activeView === 'create' || draftActive || !!pendingDraft;
+  studioRef.current = studioStandby || draftRef.current;
   // Refs mirror the loop-tracking state so setInterval callbacks always read fresh values
   // (React state inside setInterval suffers stale closures — refs don't)
   const loopsRef = useRef([{ start: 0, end: 30, loopCount: 1 }]);
@@ -417,7 +419,9 @@ const loadTrendingData = async () => {
       load();
     };
     if (['feed', 'clips'].includes(activeView)) runOnce('clips', loadTrendingClips);
-    if (['feed', 'playlists'].includes(activeView)) runOnce('playlists', loadPublicPlaylists);
+    if (activeView === 'playlists' || (activeView === 'feed' && feedPlaylistsVisible)) {
+      runOnce('playlists', loadPublicPlaylists);
+    }
     if (activeView === 'community' || (activeView === 'feed' && (artistsExpanded || leaderboardExpanded))) {
       if (desktop || leaderboardExpanded) runOnce('leaders', loadLeaderboard);
       if (desktop || artistsExpanded) runOnce('artists', async () => {
@@ -431,18 +435,45 @@ const loadTrendingData = async () => {
     }
     if (['clips', 'feed'].includes(activeView) && feedSort === 'most-played') runOnce('trending', loadTrendingData);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView, desktop, artistsExpanded, leaderboardExpanded, feedSort]);
+  }, [activeView, desktop, artistsExpanded, leaderboardExpanded, feedSort, feedPlaylistsVisible]);
+
+  useEffect(() => {
+    if (activeView !== 'feed' || feedPlaylistsVisible || !feedPlaylistsRef.current) return;
+    if (!window.IntersectionObserver) {
+      setFeedPlaylistsVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setFeedPlaylistsVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '200px 0px' });
+    observer.observe(feedPlaylistsRef.current);
+    return () => observer.disconnect();
+  }, [activeView, feedPlaylistsVisible]);
 
   const needsLibrary = ['library', 'profile'].includes(activeView);
   const needsOwnedPlaylists = needsLibrary || activeView === 'create';
-  useEffect(() => {
-    if (!draftActive || !editorSourceRef.current) return;
+  const persistStudioDraft = () => {
+    if (!draftRef.current || !editorSourceRef.current) return;
     try {
       localStorage.setItem('chorusclip-studio-draft', JSON.stringify({
-        source: editorSourceRef.current, sections: loops
+        source: editorSourceRef.current, sections: loopsRef.current, checkpoint: studioCheckpointRef.current
       }));
     } catch {}
+  };
+
+  useEffect(() => {
+    persistStudioDraft();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftActive, loops, videoTitle]);
+
+  useEffect(() => {
+    if (!showChorusMode || videoDuration > 0) return;
+    const timer = setTimeout(() => setChorusFallbackReady(true), 1500);
+    return () => clearTimeout(timer);
+  }, [showChorusMode, videoId, videoDuration]);
   useEffect(() => {
     setMyClips([]);
     if (!user.uid || !needsLibrary) return;
@@ -698,43 +729,58 @@ const handleThemeToggle = async () => {
     return parts.length > 1 ? parts[0].trim() : 'Unknown Artist';
   };
 
-  const suggestSection = (duration) => {
-    const start = Math.floor(duration * 0.25);
-    setSuggestedStart(start);
-    setSuggestedEnd(Math.min(duration, start + 30));
-    setShowMostReplayedSuggestion(true);
-  };
+  const chorusSuggestion = getChorusSuggestion(videoDuration || (chorusFallbackReady ? 240 : 0));
 
   const selectSection = (index) => {
-    if (draftRef.current && selectedSectionRef.current !== index && playbackWantedRef.current) {
+    if (draftRef.current && selectedSectionRef.current !== index) {
       pausePlayback();
       resumeTimeRef.current = null;
+      studioCheckpointRef.current = null;
+      playbackInterruptedRef.current = false;
+      setPlaybackInterrupted(false);
+      persistStudioDraft();
     }
     selectedSectionRef.current = index;
     setSelectedSection(index);
   };
 
-  const beginStudio = (source, sections) => {
+  const beginStudio = (source, sections, { suggest = false, checkpoint = null } = {}) => {
+    setMobileTab('create');
+    setDesktopView('create');
     draftRef.current = true;
     setDraftActive(true);
-    editorSourceRef.current = { ...source, durationKnown: false };
+    editorSourceRef.current = { ...source };
     setYoutubeUrl('https://youtube.com/watch?v=' + source.id);
     setVideoId(source.id);
     setVideoTitle(source.title || '');
     setArtist(source.artist || '');
-    setVideoDuration(durationsRef.current[source.id] || Math.max(600, ...sections.map(section => section.end)));
+    setVideoDuration(durationsRef.current[source.id] || 0);
+    sections = sections.map(section => {
+      const duration = durationsRef.current[getLoopVideoId(section, source.id)];
+      return duration ? trimSection(section, 'end', section.end, duration) : section;
+    });
     setLoops(sections);
     loopsRef.current = sections;
-    setSectionPosition(0);
     selectedOnlyRef.current = false;
-    selectSection(null);
-    setExpandedSections([0]);
     setIsReadOnlyMode(false);
     setPendingDraft(null);
-    setShowMostReplayedSuggestion(false);
-    standByQueue();
-    const firstSection = sections[0];
-    void previewSection(firstSection, firstSection.start, false);
+    setChorusFallbackReady(false);
+    setShowChorusMode(suggest);
+    standByQueue(false);
+    const restored = restoreStudioCheckpoint(checkpoint, sections);
+    const index = restored?.index ?? 0;
+    const section = sections[index];
+    selectSection(restored?.selection ?? null);
+    setExpandedSections(index > 0 ? [0, index] : [0]);
+    setSectionPosition(index, restored?.iteration ?? 0);
+    void previewSection(section, restored?.time ?? section.start, false);
+    studioCheckpointRef.current = restored;
+    if (restored) {
+      resumeTimeRef.current = restored.time;
+      playbackInterruptedRef.current = true;
+      setPlaybackInterrupted(true);
+    }
+    persistStudioDraft();
   };
 
   const handleUrlSubmit = () => {
@@ -743,27 +789,37 @@ const handleThemeToggle = async () => {
       showNotification('Enter a valid YouTube URL', 'error');
       return;
     }
-    beginStudio({ id }, [{ start: 0, end: 30, loopCount: 1, youtubeVideoId: id }]);
+    beginStudio({ id }, [{ start: 0, end: 30, loopCount: 1, youtubeVideoId: id }], { suggest: true });
   };
 
   const applySuggestedLoop = () => {
-    const current = loopsRef.current[0];
-    if (!current) return;
-    const section = { ...current, start: suggestedStart, end: suggestedEnd };
-    const updated = [section, ...loopsRef.current.slice(1)];
-    setLoops(updated);
+    if (!chorusSuggestion || !editorSourceRef.current) return;
+    const id = editorSourceRef.current.id;
+    const index = loopsRef.current.findIndex(section => getLoopVideoId(section, id) === id);
+    if (index < 0) return;
+    const section = { ...loopsRef.current[index], ...chorusSuggestion };
+    const updated = loopsRef.current.map((loop, position) => position === index ? section : loop);
     loopsRef.current = updated;
-    setShowMostReplayedSuggestion(false);
-    selectSection(0);
-    setSectionPosition(0);
-    void previewSection(section, section.start, false);
+    setLoops(updated);
+    setShowChorusMode(false);
+    selectSection(index);
+    setExpandedSections(previous => [...new Set([...previous, index])]);
+    setSectionPosition(index);
+    selectedOnlyRef.current = true;
+    void previewSection(section, section.start, true);
   };
 
-const dismissSuggestion = () => {
-  // Keep default 20-50s but DON'T seek - let user control
-  setShowMostReplayedSuggestion(false);
-  console.log('✅ Manual mode: User will adjust sliders');
-};
+  useEffect(() => {
+    if (!draftActive || !videoId || videoDuration > 0) return;
+    const deadline = Date.now() + 10000;
+    const timer = setInterval(() => {
+      const player = playerRef.current;
+      if (player?.getVideoData?.()?.video_id === videoId) updatePlayerMetadata(player);
+      if (Date.now() >= deadline || durationsRef.current[videoId]) clearInterval(timer);
+    }, 250);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftActive, videoId, videoDuration]);
 
 const getPlaybackPlayer = async (id) => {
   await loadYouTubeApi();
@@ -820,6 +876,7 @@ const initAndPlay = async (targetPlaylist, player) => {
 const playMediaSection = async (section, time, play, source = editorSourceRef.current) => {
   if (!section) return;
   clearTimeout(bufferingTimerRef.current);
+  bufferingTimerRef.current = null;
   const generation = ++playerGenerationRef.current;
   const id = getLoopVideoId(section, source?.id || videoId);
   playbackWantedRef.current = play;
@@ -828,45 +885,72 @@ const playMediaSection = async (section, time, play, source = editorSourceRef.cu
   lastSafeTimeRef.current = time;
   playbackInterruptedRef.current = false;
   setPlaybackInterrupted(false);
+  if (studioCheckpointRef.current) {
+    studioCheckpointRef.current = null;
+    persistStudioDraft();
+  }
   setPlayerCurrentTime(time);
   skipTrackingUntilRef.current = Date.now() + 250;
   try {
     const player = await getPlaybackPlayer(id);
     if (generation !== playerGenerationRef.current) return;
-    const data = player.getVideoData?.() || {};
-    const duration = player.getDuration?.();
-    if (data.video_id === id && duration > 0) durationsRef.current[id] = Math.ceil(duration);
-    if (source?.id === id && data.video_id === id && data.title && editorSourceRef.current === source) {
-      const title = source.title || data.title;
-      const nextArtist = source.artist || extractArtist(title);
-      Object.assign(source, { title, artist: nextArtist });
-      setVideoTitle(title);
-      setArtist(nextArtist);
-      if (duration > 0) updateEditorDuration(source, Math.ceil(duration));
+    if (play && navigator.onLine === false) {
+      interruptPlayback();
+      return;
     }
+    const playerVideoId = player.getVideoData?.()?.video_id;
+    if (playerVideoId === id) updatePlayerMetadata(player);
+    const duration = durationsRef.current[id];
+    const seekTime = duration ? Math.min(time, duration) : time;
+    if (seekTime !== time) setPlayerCurrentTime(seekTime);
 
-    if (data.video_id !== id) {
-      const options = { videoId: id, startSeconds: time };
+    if (play && draftRef.current) {
+      const active = loopsRef.current[currentLoopIndexRef.current];
+      const bounds = active && getLoopVideoId(active, source?.id || videoId) === id ? active : section;
+      const startSeconds = getSectionTime(bounds, seekTime);
+      player.loadVideoById({ videoId: id, startSeconds: startSeconds < bounds.end ? startSeconds : bounds.start, endSeconds: bounds.end });
+    } else if (playerVideoId !== id || (!play && player.getPlayerState?.() !== window.YT.PlayerState.PAUSED)) {
+      const options = { videoId: id, startSeconds: seekTime };
       if (play) player.loadVideoById(options);
       else player.cueVideoById(options);
     } else {
-      if (!play) player.pauseVideo();
-      player.seekTo(time, true);
+      player.seekTo(seekTime, true);
       if (play) player.playVideo();
     }
   } catch {
-    if (generation === playerGenerationRef.current) showNotification('YouTube could not load. Try again once connected.', 'error');
+    if (generation !== playerGenerationRef.current) return;
+    if (play) {
+      interruptPlayback();
+      return;
+    }
+    showNotification('YouTube could not load. Try again once connected.', 'error');
   }
 };
 
-const updateEditorDuration = (source, duration) => {
-      setVideoDuration(duration);
-  if (source.durationKnown) return;
-  source.durationKnown = true;
-  const sections = loopsRef.current.map(section => getLoopVideoId(section, source.id) === source.id
-    ? trimSection(section, 'end', section.end, duration) : section);
-  loopsRef.current = sections;
-  setLoops(sections);
+const updatePlayerMetadata = (player) => {
+  const data = player.getVideoData?.();
+  const id = data?.video_id;
+  if (!id) return;
+  const previousDuration = durationsRef.current[id];
+  const duration = Math.floor(player.getDuration?.() || 0);
+  if (duration > 0) durationsRef.current[id] = duration;
+  const source = editorSourceRef.current;
+  if (!draftRef.current || !source) return;
+  if (source.id === id) {
+    if (!source.title && data.title) {
+      source.title = data.title;
+      source.artist = extractArtist(data.title);
+      setVideoTitle(source.title);
+      setArtist(source.artist);
+    }
+    if (duration > 0) setVideoDuration(duration);
+  }
+  if (duration > 0 && previousDuration !== duration) {
+    const sections = loopsRef.current.map(section => getLoopVideoId(section, source.id) === id
+      ? trimSection(section, 'end', section.end, duration) : section);
+    loopsRef.current = sections;
+    setLoops(sections);
+  }
 };
 
 const previewSection = (section, time, play) => {
@@ -924,6 +1008,8 @@ const loadPublicPlaylists = async () => {
     setPublicPlaylists(publicLists);
   } catch (error) {
     console.error('Failed to load public playlists:', error);
+  } finally {
+    setPublicPlaylistsLoading(false);
   }
 };
 
@@ -1629,31 +1715,20 @@ const completeCurrentClipPlayback = () => {
   const onPlayerStateChange = (event) => {
     if (event.target !== playerRef.current) return;
     const state = window.YT.PlayerState;
-    clearTimeout(bufferingTimerRef.current);
-    if (event.data === state.CUED || event.data === state.PLAYING) {
-      const data = event.target.getVideoData?.();
-      const duration = Math.ceil(event.target.getDuration?.() || 0);
-      if (data?.video_id && duration > 0) durationsRef.current[data.video_id] = duration;
-      const source = editorSourceRef.current;
-      if (source && source.id === data?.video_id && duration > 0) {
-        updateEditorDuration(source, duration);
-        if (!source.title && data.title) {
-          source.title = data.title;
-          source.artist = extractArtist(data.title);
-          setVideoTitle(source.title);
-          setArtist(source.artist);
-        }
-      }
+    if (event.data !== state.BUFFERING) {
+      clearTimeout(bufferingTimerRef.current);
+      bufferingTimerRef.current = null;
     }
+    if (event.data === state.CUED || event.data === state.PLAYING) updatePlayerMetadata(event.target);
     if (event.data === state.PLAYING) {
-      if (pausedPreviewRef.current || resumeTimeRef.current !== null || navigator.onLine === false) {
+      if (!playbackWantedRef.current || pausedPreviewRef.current || resumeTimeRef.current !== null || navigator.onLine === false) {
         event.target.pauseVideo();
         return;
       }
       playbackWantedRef.current = true;
       setIsPlaying(true);
       startTimeTracking();
-    } else if (event.data === state.BUFFERING && playbackWantedRef.current) {
+    } else if (event.data === state.BUFFERING && playbackWantedRef.current && bufferingTimerRef.current === null) {
       bufferingTimerRef.current = setTimeout(interruptPlayback, 1800);
     } else if (event.data === state.PAUSED || event.data === state.ENDED) {
       setIsPlaying(false);
@@ -1718,8 +1793,6 @@ const endTouchQueueSort = (event) => {
 
 const handleEditClipInStudio = (clip) => {
   if (!clip) return;
-  setMobileTab('create');
-  setDesktopView('create');
   beginStudio({ id: clip.youtubeVideoId, title: clip.title, artist: clip.artist },
     clip.loops?.length ? clip.loops : [{ start: clip.startTime || 0, end: clip.endTime || 30, loopCount: clip.loopCount ?? 1 }]);
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -1733,13 +1806,15 @@ const setSectionPosition = (index, iteration = 0) => {
 };
 
 const pausePlayback = () => {
+  const playerMayBeRunning = playbackWantedRef.current || !pausedPreviewRef.current;
   ++playerGenerationRef.current;
   playbackWantedRef.current = false;
   pausedPreviewRef.current = true;
   clearTimeout(previewTimerRef.current);
   clearTimeout(bufferingTimerRef.current);
+  bufferingTimerRef.current = null;
   clearTimeout(handoffTimerRef.current);
-  playerRef.current?.pauseVideo?.();
+  if (playerMayBeRunning) playerRef.current?.pauseVideo?.();
   stopTimeTracking();
   setIsPlaying(false);
 };
@@ -1759,13 +1834,22 @@ const standByQueue = (notify = true) => {
 
 const interruptPlayback = () => {
   if (!playbackWantedRef.current) return;
-  const section = loopsRef.current[currentLoopIndexRef.current];
-  resumeTimeRef.current = section
-    ? Math.min(section.end, Math.max(section.start, lastSafeTimeRef.current ?? section.start))
-    : lastSafeTimeRef.current;
+  const index = currentLoopIndexRef.current;
+  const section = loopsRef.current[index];
+  resumeTimeRef.current = section ? getSectionTime(section, lastSafeTimeRef.current) : lastSafeTimeRef.current;
   pausePlayback();
   playbackInterruptedRef.current = true;
   setPlaybackInterrupted(true);
+  if (resumeTimeRef.current !== null) setPlayerCurrentTime(resumeTimeRef.current);
+  if (draftRef.current && section) {
+    studioCheckpointRef.current = {
+      index,
+      time: resumeTimeRef.current,
+      iteration: currentLoopIterationRef.current,
+      selection: selectedSectionRef.current
+    };
+    persistStudioDraft();
+  }
   showNotification('Connection interrupted. Playback paused. Press Play to resume.', 'info');
 };
 
@@ -1777,13 +1861,13 @@ useEffect(() => {
 const latestOfflineHandler = useRef(null);
 latestOfflineHandler.current = interruptPlayback;
 
+const hasQueuedItems = playlistQueue.length > 0 || clipQueue.length > 0;
 useEffect(() => {
-  if (activeView === 'create' && !draftRef.current && (currentPlaylistPlayerRef.current || queueOrderRef.current.length)) {
-    standByQueue();
-  }
-  // Playback is stopped on entry to Studio, independently of queue changes.
+  if (!studioStandby) return;
+  if (!draftRef.current) standByQueue(false);
+  if (hasQueuedItems) showNotification('Queue on standby while Studio is open or a draft is waiting.', 'info');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [activeView]);
+}, [studioStandby, hasQueuedItems]);
 
 const finishSection = () => {
   const index = currentLoopIndexRef.current;
@@ -1822,9 +1906,14 @@ const startTimeTracking = () => {
       const time = playerRef.current.getCurrentTime();
       const state = playerRef.current.getPlayerState();
 
-      if (state !== window.YT.PlayerState.PLAYING || !playbackWantedRef.current) return;
-      setPlayerCurrentTime(time);
-      lastSafeTimeRef.current = time;
+      if (state !== window.YT.PlayerState.PLAYING || !playbackWantedRef.current || !Number.isFinite(time)) return;
+      const section = loopsRef.current[currentLoopIndexRef.current];
+      if (!section) return;
+      const actualId = playerRef.current.getVideoData?.()?.video_id;
+      if (section.youtubeVideoId && actualId && actualId !== section.youtubeVideoId) return;
+      const safeTime = getSectionTime(section, time);
+      setPlayerCurrentTime(safeTime);
+      lastSafeTimeRef.current = safeTime;
 
       if (playCreditRef.current) {
         const lastTime = lastTrackingTimeRef.current;
@@ -1842,8 +1931,6 @@ const startTimeTracking = () => {
         }
       }
 
-      const section = loopsRef.current[currentLoopIndexRef.current];
-      if (!section) return;
       if (time < section.start - 0.35) {
         skipTrackingUntilRef.current = Date.now() + 250;
         playerRef.current.seekTo(section.start, true);
@@ -1866,14 +1953,15 @@ const startTimeTracking = () => {
   const startSelectedPlayback = (restart = false) => {
     if (!videoId || (!draftRef.current && studioRef.current)) return;
     const selected = draftRef.current ? selectedSectionRef.current : null;
-    const resume = restart ? null : resumeTimeRef.current;
+    const resume = restart || (selected !== null && selected !== currentLoopIndexRef.current)
+      ? null : resumeTimeRef.current;
     const index = resume !== null ? currentLoopIndexRef.current : selected ?? (draftRef.current || restart ? 0 : currentLoopIndexRef.current);
     const section = loopsRef.current[index];
     if (!section) return;
     clearTimeout(previewTimerRef.current);
     selectedOnlyRef.current = selected !== null;
     setSectionPosition(index, resume === null ? 0 : currentLoopIterationRef.current);
-    void playMediaSection(section, resume === null || resume >= section.end ? section.start : resume, true);
+    void playMediaSection(section, resume === null || resume >= section.end ? section.start : getSectionTime(section, resume), true);
   };
 
   const togglePlayPause = () => {
@@ -1882,8 +1970,8 @@ const startTimeTracking = () => {
     const changingSection = draftRef.current && selectedSectionRef.current !== null &&
       selectedSectionRef.current !== currentLoopIndexRef.current;
     if (playbackWantedRef.current && !changingSection) {
-      const time = playerRef.current?.getCurrentTime?.();
-      if (Number.isFinite(time)) resumeTimeRef.current = time;
+      const section = loopsRef.current[currentLoopIndexRef.current];
+      if (section) resumeTimeRef.current = getSectionTime(section, lastSafeTimeRef.current);
       pausePlayback();
     } else if (navigator.onLine === false) {
       showNotification('You’re offline. Playback will stay paused.', 'info');
@@ -1908,8 +1996,9 @@ const startTimeTracking = () => {
     }
     // New section starts where the last one ends (capped by video duration)
     const lastLoop = loops[loops.length - 1];
-    const newStart = Math.min(lastLoop.end, videoDuration - 1);
-    const newEnd = Math.min(newStart + 30, videoDuration);
+    const duration = durationsRef.current[videoId] || videoDuration || Math.max(600, lastLoop.end);
+    const newStart = Math.min(lastLoop.end, duration - 1);
+    const newEnd = Math.min(newStart + 30, duration);
     const updated = [...loops, {
       start: newStart,
       end: newEnd,
@@ -1925,21 +2014,24 @@ const startTimeTracking = () => {
   };
 
   const updateLoopCount = (index, value) => {
-    const newLoops = [...loops];
+    const newLoops = [...loopsRef.current];
     newLoops[index] = { ...newLoops[index], loopCount: Number(value) };
+    loopsRef.current = newLoops;
     setLoops(newLoops);
   };
 
-  const updateLoopMeta = (index, updates) => {
-    const newLoops = [...loops];
-    newLoops[index] = { ...newLoops[index], ...updates };
-    setLoops(newLoops);
-  };
-
-  const handleUseLoadedSongForLoop = (index) => {
-    if (!videoId) return;
-    updateLoopMeta(index, { youtubeVideoId: videoId, title: videoTitle, artist });
-    showNotification(`Section ${index + 1} set to loaded song`, 'success');
+  const setMixSource = (index, id = videoId) => {
+    const { title, artist: sectionArtist, ...current } = loopsRef.current[index];
+    const next = { ...current, youtubeVideoId: id };
+    const duration = durationsRef.current[id];
+    const section = duration ? trimSection(next, 'end', next.end, duration) : next;
+    const updated = loopsRef.current.map((loop, position) => position === index ? section : loop);
+    loopsRef.current = updated;
+    setLoops(updated);
+    selectSection(index);
+    pausePlayback();
+    setSectionPosition(index);
+    void previewSection(section, section.start, false);
   };
 
   const moveLoop = (index, direction) => {
@@ -1959,8 +2051,8 @@ const startTimeTracking = () => {
     setCurrentLoopIteration(0);
   };
 
-  const getSectionDuration = section => durationsRef.current[getLoopVideoId(section, editorSourceRef.current?.id || videoId)] ||
-    (getLoopVideoId(section, videoId) === videoId ? videoDuration : Math.max(600, section.end));
+  const getSectionDuration = section => durationsRef.current[getLoopVideoId(section, editorSourceRef.current?.id || videoId)]
+    || Math.max(600, section.end);
 
   const updateLoop = (index, field, value) => {
     const current = loopsRef.current[index];
@@ -1973,17 +2065,20 @@ const startTimeTracking = () => {
     setSectionPosition(index);
     pausePlayback();
     resumeTimeRef.current = null;
+    studioCheckpointRef.current = null;
     setPlayerCurrentTime(next[field]);
     previewTimerRef.current = setTimeout(() => {
-      void previewSection(next, next[field], false);
+      const section = loopsRef.current[index];
+      if (section && selectedSectionRef.current === index) {
+        void previewSection(section, section[field], false);
+      }
     }, 85);
   };
 
   const nudgeLoop = (event, index, field, step = 1) => {
-    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
     event.preventDefault();
-    const forward = event.key === 'ArrowUp' || event.key === 'ArrowRight';
-    updateLoop(index, field, loopsRef.current[index][field] + (forward ? step : -step));
+    updateLoop(index, field, loopsRef.current[index][field] + (event.key === 'ArrowUp' ? step : -step));
   };
 
   const removeLoop = (index) => {
@@ -1999,11 +2094,14 @@ const startTimeTracking = () => {
   const closeStudioDraft = () => {
     pausePlayback();
     resumeTimeRef.current = null;
+    studioCheckpointRef.current = null;
     playbackInterruptedRef.current = false;
     setPlaybackInterrupted(false);
     draftRef.current = false;
     setDraftActive(false);
     setPendingDraft(null);
+    setShowChorusMode(false);
+    setChorusFallbackReady(false);
     editorSourceRef.current = null;
     selectSection(null);
     setVideoId('');
@@ -2843,18 +2941,20 @@ h1, h2, h3 {
     showNotification={showNotification}
   />
 )}
-      {showMostReplayedSuggestion && activeView === 'create' && (
-        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
+      {showChorusMode && draftActive && activeView === 'create' && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="chorus-mode-title">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-8 max-w-md w-full border border-purple-500">
-            <h3 className="text-3xl font-bold mb-4">Smart Loop Suggestion!</h3>
-            <p className="text-purple-200 mb-2 text-xl">Suggested section: {Math.floor(suggestedStart/60)}:{(suggestedStart%60).toString().padStart(2,'0')} - {Math.floor(suggestedEnd/60)}:{(suggestedEnd%60).toString().padStart(2,'0')}</p>
-            <p className="text-base text-purple-300 mb-6">This is typically where the chorus/hook is. You can adjust using the sliders below.</p>
+            <h3 id="chorus-mode-title" className="text-3xl font-bold mb-4">Chorus Mode</h3>
+            <p className="text-purple-200 mb-6 text-lg" role="status">
+              {chorusSuggestion
+                ? `Suggested section ${formatSeconds(chorusSuggestion.start)}–${formatSeconds(chorusSuggestion.end)}${videoDuration ? '' : ' (estimated)'}`
+                : 'Getting the song length…'}
+            </p>
             <div className="space-y-3">
-              <button onClick={applySuggestedLoop} 
-className="btn-primary w-full py-5 text-xl">
+              <button onClick={applySuggestedLoop} disabled={!chorusSuggestion} className="btn-primary w-full py-5 text-xl disabled:opacity-50">
                 Use This Section
               </button>
-              <button onClick={dismissSuggestion} className="w-full py-4 text-lg bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
+              <button onClick={() => setShowChorusMode(false)} className="w-full py-4 text-lg bg-purple-800 bg-opacity-50 rounded-xl hover:bg-opacity-70 transition">
                 I&apos;ll Choose Manually
               </button>
             </div>
@@ -3313,11 +3413,18 @@ className="input"/>
               </div>
 
               {pendingDraft && !draftActive && (
-                <button className="btn-secondary mt-4" onClick={() => beginStudio(pendingDraft.source, pendingDraft.sections)}>Restore saved Studio draft</button>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button className="btn-secondary" onClick={() => beginStudio(pendingDraft.source, pendingDraft.sections, { checkpoint: pendingDraft.checkpoint })}>Restore saved Studio draft</button>
+                  <button className="btn-secondary" onClick={() => {
+                    if (window.confirm('Discard this Studio draft?')) closeStudioDraft();
+                  }}>Discard saved draft</button>
+                </div>
               )}
               {draftActive && (
                 <div className="mt-4 flex flex-wrap gap-4 text-sm text-purple-300">
-                  {editorSourceRef.current?.durationKnown && <button className="underline" onClick={() => suggestSection(videoDuration)}>Suggest a section</button>}
+                  {loops.some(loop => getLoopVideoId(loop, videoId) === videoId) && (
+                    <button className="underline" onClick={() => setShowChorusMode(true)}>Detect a chorus</button>
+                  )}
                   <button className="underline" onClick={() => {
                     if (window.confirm('Discard this Studio draft?')) closeStudioDraft();
                   }}>Discard draft</button>
@@ -3346,14 +3453,12 @@ className="input"/>
                     <div className="text-center">
                       <p className="font-bold text-2xl">{videoTitle}</p>
                       <p className="text-purple-300 text-xl">{artist}</p>
-                      <div className="mt-3 bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-6 py-3 rounded-xl text-center">
-  <p className="text-sm font-bold uppercase tracking-wide">Live Playback</p>
-  <p className="text-3xl font-black">
-    {Math.floor(playerCurrentTime/60)}:{Math.floor(playerCurrentTime%60).toString().padStart(2,'0')}
-  </p>
-</div>
                     </div>
                   )}
+                  <div className="bg-gradient-to-r from-yellow-400 to-orange-500 text-black px-6 py-3 rounded-xl text-center">
+                    <p className="text-sm font-bold uppercase tracking-wide">Playhead</p>
+                    <p className="text-3xl font-black">{formatSeconds(playerCurrentTime)}</p>
+                  </div>
 
                   {/* Read-only banner when playing from feed */}
                   {isReadOnlyMode && (
@@ -3460,13 +3565,7 @@ className="input"/>
                           </div>
                           {!isReadOnlyMode && (
                             <button
-                              onClick={() => {
-                                const newLoops = [...loops];
-                                const { youtubeVideoId, title, artist, ...rest } = newLoops[idx];
-                                newLoops[idx] = rest;
-                                setLoops(newLoops);
-                                showNotification('Mix section cleared', 'info');
-                              }}
+                              onClick={() => setMixSource(idx)}
                               className="ml-auto text-yellow-500 hover:text-red-400 transition text-xs shrink-0"
                             >
                               ✕ Clear
@@ -3516,7 +3615,7 @@ className="input"/>
       step="1"
       aria-label={'Start time for section ' + (idx + 1)}
       aria-valuetext={formatSeconds(loop.start)}
-      onKeyDown={event => nudgeLoop(event, idx, 'start')}
+      onFocus={() => selectSection(idx)}
       value={loop.start}
       onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'start', e.target.value)}
       disabled={isReadOnlyMode}
@@ -3532,6 +3631,7 @@ className="input"/>
           placeholder="Min"
           value={Math.floor(loop.start / 60)}
           aria-label="Start minutes"
+          onFocus={() => selectSection(idx)}
           onKeyDown={event => nudgeLoop(event, idx, 'start', 60)}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
@@ -3548,6 +3648,7 @@ className="input"/>
           placeholder="Sec"
           value={loop.start % 60}
           aria-label="Start seconds"
+          onFocus={() => selectSection(idx)}
           onKeyDown={event => nudgeLoop(event, idx, 'start')}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
@@ -3577,7 +3678,7 @@ className="input"/>
       step="1"
       aria-label={'End time for section ' + (idx + 1)}
       aria-valuetext={formatSeconds(loop.end)}
-      onKeyDown={event => nudgeLoop(event, idx, 'end')}
+      onFocus={() => selectSection(idx)}
       value={loop.end}
       onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'end', e.target.value)}
       disabled={isReadOnlyMode}
@@ -3593,6 +3694,7 @@ className="input"/>
           placeholder="Min"
           value={Math.floor(loop.end / 60)}
           aria-label="End minutes"
+          onFocus={() => selectSection(idx)}
           onKeyDown={event => nudgeLoop(event, idx, 'end', 60)}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
@@ -3609,6 +3711,7 @@ className="input"/>
           placeholder="Sec"
           value={loop.end % 60}
           aria-label="End seconds"
+          onFocus={() => selectSection(idx)}
           onKeyDown={event => nudgeLoop(event, idx, 'end')}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
@@ -3653,29 +3756,22 @@ className="input"/>
               onClick={() => {
                 const input = document.getElementById(`mix-url-${idx}`);
                 const url = input?.value?.trim();
-                if (!url) {
-                  const newLoops = [...loops];
-                  const { youtubeVideoId, title, artist, _showMixPanel, ...rest } = newLoops[idx];
-                  newLoops[idx] = { ...rest, _showMixPanel: true };
-                  setLoops(newLoops);
-                  return;
-                }
+                if (!url) { setMixSource(idx); return; }
                 const newVideoId = extractVideoId(url);
                 if (!newVideoId) { showNotification('Invalid YouTube URL', 'error'); return; }
-                const newLoops = [...loops];
-                newLoops[idx] = { ...newLoops[idx], youtubeVideoId: newVideoId, title: 'Loading…', artist: '', _showMixPanel: true };
-                setLoops(newLoops);
+                const source = editorSourceRef.current;
+                setMixSource(idx, newVideoId);
                 fetch(`https://www.youtube.com/oembed?url=https://youtube.com/watch?v=${newVideoId}&format=json`)
                   .then(r => r.json())
                   .then(data => {
                     const parts = (data.title || '').split(' - ');
                     const sectionArtist = parts.length > 1 ? parts[0].trim() : data.author_name || '';
                     const sectionTitle = parts.length > 1 ? parts.slice(1).join(' - ').trim() : data.title;
-                    setLoops(prev => {
-                      const updated = [...prev];
-                      updated[idx] = { ...updated[idx], title: sectionTitle, artist: sectionArtist };
-                      return updated;
-                    });
+                    if (editorSourceRef.current !== source) return;
+                    const updated = loopsRef.current.map(section => section.youtubeVideoId === newVideoId
+                      ? { ...section, title: sectionTitle, artist: sectionArtist } : section);
+                    loopsRef.current = updated;
+                    setLoops(updated);
                   })
                   .catch(() => {});
                 showNotification(`✅ Section ${idx + 1} set to a different song`, 'success');
@@ -4329,7 +4425,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
             </div>
             </div>
 
-            <div className={`${mobileTab !== 'feed' ? 'hidden' : ''} ${desktopView === 'playlists' ? 'md:block' : 'md:hidden'}`}>
+            <div ref={feedPlaylistsRef} className={`${mobileTab !== 'feed' ? 'hidden' : ''} ${desktopView === 'playlists' ? 'md:block' : 'md:hidden'}`}>
+{publicPlaylistsLoading && <p className="card mt-6 text-purple-300" role="status">Loading public playlists…</p>}
 {publicPlaylistShowcase.length > 0 && (
   <div className="bg-black bg-opacity-40 backdrop-blur-xl rounded-3xl p-6 border border-purple-700 border-opacity-50 mt-6">
     <div className="flex items-start justify-between gap-3 mb-4">
@@ -4417,7 +4514,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
     )}
   </div>
 )}
-{publicPlaylistShowcase.length === 0 && (
+{!publicPlaylistsLoading && publicPlaylistShowcase.length === 0 && (
   <div className={`${mobileTab === 'feed' ? 'block' : 'hidden'} md:block card text-center py-16 mt-6`}>
     <Music size={42} className="mx-auto text-purple-500 mb-4" />
     <h3 className="text-2xl font-black text-white">Playlist picks are warming up</h3>
@@ -5246,7 +5343,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       <div className="flex items-center justify-between px-5 py-4 border-b border-yellow-700">
         <div>
           <h3 id="queue-title" className="font-black text-lg text-yellow-300">Up next</h3>
-          {(draftActive || activeView === 'create') && <p className="text-sm text-yellow-200" role="status">On standby while Studio is open.</p>}
+          {studioStandby && <p className="text-sm text-yellow-200" role="status">On standby while Studio is open or a draft is waiting.</p>}
           <p className="text-xs text-yellow-500">{combinedQueueItems.length} item{combinedQueueItems.length !== 1 ? 's' : ''} in your queue</p>
         </div>
         <button onClick={() => setQueueDrawerOpen(false)} className="w-11 h-11 flex items-center justify-center rounded-full text-yellow-300 hover:bg-white/10" aria-label="Close queue">

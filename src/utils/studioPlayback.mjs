@@ -1,6 +1,29 @@
 const MIN_SECTION_SECONDS = 1;
 const MAX_SECTION_SECONDS = 45;
 
+export function getChorusSuggestion(duration) {
+  const length = Math.floor(duration);
+  if (!Number.isFinite(length) || length < MIN_SECTION_SECONDS) return null;
+  const start = Math.floor(length / 4);
+  return { start, end: Math.min(length, start + 30) };
+}
+
+export function getSectionTime(section, time) {
+  return Number.isFinite(time) ? Math.min(section.end, Math.max(section.start, time)) : section.start;
+}
+
+export function restoreStudioCheckpoint(checkpoint, sections) {
+  if (!Number.isInteger(checkpoint?.index) || !Number.isFinite(checkpoint.time)) return null;
+  const section = sections[checkpoint.index];
+  if (!section) return null;
+  return {
+    index: checkpoint.index,
+    time: getSectionTime(section, checkpoint.time),
+    iteration: Number.isInteger(checkpoint.iteration) ? Math.max(0, checkpoint.iteration) : 0,
+    selection: checkpoint.selection === checkpoint.index ? checkpoint.index : null
+  };
+}
+
 export function trimSection(section, boundary, value, duration) {
   if (value === '' || !Number.isFinite(Number(value))) return section;
 

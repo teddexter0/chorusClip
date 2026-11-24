@@ -16,11 +16,11 @@ export function useAuth() {
     let generation = 0;
 
     async function subscribe() {
-      const [{ auth, db }, { onAuthStateChanged }, { getDoc, doc }] = await Promise.all([
-        import('../lib/firebase'), import('firebase/auth'), import('firebase/firestore')
+      const [{ getClientFirebaseApp }, { getAuth, onAuthStateChanged }] = await Promise.all([
+        import('../lib/firebaseClient'), import('firebase/auth')
       ]);
       if (disposed) return;
-      unsubscribe = onAuthStateChanged(auth, account => {
+      unsubscribe = onAuthStateChanged(getAuth(getClientFirebaseApp()), account => {
         const current = ++generation;
         const active = () => !disposed && current === generation;
         setProfile(null);
@@ -32,31 +32,42 @@ export function useAuth() {
 
         const { uid, email, displayName } = account;
         setUser({ ...guest, uid, email, displayName: displayName || email?.split('@')[0] || 'Member' });
-        getDoc(doc(db, 'users', uid)).then(snapshot => {
-          if (!active()) return;
-          const data = snapshot.data() || {};
-          setProfile({ uid, data });
-          setUser(prev => ({
-            ...prev,
-            displayName: data.displayName || prev.displayName,
-            isPremium: data.isPremium || false,
-            appTheme: data.appTheme || 'classic',
-            usernameChanges: data.usernameChanges || 0,
-            accountCreatedDaysAgo: data.accountCreated?.toMillis
-              ? Math.floor((Date.now() - data.accountCreated.toMillis()) / 86400000)
-              : 0
-          }));
-        }).catch(error => {
+        loadAccountData(uid, active).catch(error => {
           if (active()) setProfile({ uid, data: {} });
-          console.error('Profile could not load:', error);
+          console.error('Account data could not load:', error);
         });
-        for (const [collection, field] of [['userLikes', 'likedClips'], ['userPlaylistLikes', 'likedPlaylists']]) {
-          getDoc(doc(db, collection, uid)).then(snapshot => {
-            if (!active()) return;
-            setUser(prev => ({ ...prev, [field]: [...new Set([...(snapshot.data()?.[field] || []), ...prev[field]])] }));
-          }).catch(error => console.error('Likes could not load:', error));
-        }
       });
+    }
+
+    async function loadAccountData(uid, active) {
+      const [{ db }, { getDoc, doc }] = await Promise.all([
+        import('../lib/firebase'), import('firebase/firestore')
+      ]);
+      if (!active()) return;
+      getDoc(doc(db, 'users', uid)).then(snapshot => {
+        if (!active()) return;
+        const data = snapshot.data() || {};
+        setProfile({ uid, data });
+        setUser(prev => ({
+          ...prev,
+          displayName: data.displayName || prev.displayName,
+          isPremium: data.isPremium || false,
+          appTheme: data.appTheme || 'classic',
+          usernameChanges: data.usernameChanges || 0,
+          accountCreatedDaysAgo: data.accountCreated?.toMillis
+            ? Math.floor((Date.now() - data.accountCreated.toMillis()) / 86400000)
+            : 0
+        }));
+      }).catch(error => {
+        if (active()) setProfile({ uid, data: {} });
+        console.error('Profile could not load:', error);
+      });
+      for (const [collection, field] of [['userLikes', 'likedClips'], ['userPlaylistLikes', 'likedPlaylists']]) {
+        getDoc(doc(db, collection, uid)).then(snapshot => {
+          if (!active()) return;
+          setUser(prev => ({ ...prev, [field]: [...new Set([...(snapshot.data()?.[field] || []), ...prev[field]])] }));
+        }).catch(error => console.error('Likes could not load:', error));
+      }
     }
 
     subscribe().catch(error => {

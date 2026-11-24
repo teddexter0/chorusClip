@@ -27,12 +27,12 @@ export default function TutorialModal({ onClose, onSearchTips }) {
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-purple-400">
               <p className="font-semibold mb-1">Paste a YouTube URL</p>
               <p className="text-purple-200 text-sm">Any YouTube music link works. Hit <strong>Load Song</strong> → the player loads in the background.</p>
-              <p className="text-purple-400 text-xs mt-2">Use Suggest a section to get a starting point.</p>
+              <p className="text-purple-400 text-xs mt-2">Chorus Mode opens with a suggested section. Use Detect a chorus to reopen it.</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-pink-400">
               <p className="font-semibold mb-1">Set your section timestamps</p>
               <p className="text-purple-200 text-sm">Drag the sliders or type exact min:sec. You get up to <strong>3 sections</strong> per clip.</p>
-              <p className="text-purple-400 text-xs mt-2">Select a section to limit Play and Replay to it. Clear the selection to play the whole clip.</p>
+              <p className="text-purple-400 text-xs mt-2">Both sliders move the playhead as you trim. Play and Replay follow the selected section.</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-yellow-400">
               <p className="font-semibold mb-1">Mix-clips: 3 different songs</p>
@@ -117,8 +117,8 @@ export default function TutorialModal({ onClose, onSearchTips }) {
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-pink-400">
             <p className="font-semibold mb-1">Timestamp accuracy on mobile</p>
-            <p className="text-purple-200 text-sm">Drag a trim handle or type a timestamp. The playhead follows the edit automatically.</p>
-            <p className="text-purple-400 text-xs mt-2">Use Jump to section start to cue that section without playing it.</p>
+              <p className="text-purple-200 text-sm">Drag a trim handle or type a timestamp. The playhead follows the edit automatically.</p>
+              <p className="text-purple-400 text-xs mt-2">Use Jump to section start to cue that section without playing it.</p>
           </div>
         </div>
 

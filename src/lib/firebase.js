@@ -1,5 +1,5 @@
 // lib/firebase.js
-import { initializeApp } from 'firebase/app';
+import { getClientFirebaseApp } from './firebaseClient';
 import { getAuth, sendEmailVerification } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, query, where, getDocs, orderBy, limit, onSnapshot, startAfter } from 'firebase/firestore';
 import { 
@@ -21,20 +21,12 @@ export const resetPassword = async (email) => {
   }
 };
 
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID
-};
-
 let app;
 let auth;
 let db;
 
 try {
-  app = initializeApp(firebaseConfig);
+  app = getClientFirebaseApp();
   auth = getAuth(app);
   db = getFirestore(app);
   console.log('✅ Firebase initialized successfully');

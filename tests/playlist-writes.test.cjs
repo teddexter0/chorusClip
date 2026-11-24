@@ -50,7 +50,7 @@ async function setup(playlist, publicPlaylist, readError) {
     'createUserWithEmailAndPassword', 'sendPasswordResetEmail', 'signOut'
   ].map(name => [name, () => ({})]));
   const modules = new Map(Object.entries({
-    'firebase/app': { initializeApp: () => ({}) },
+    './firebaseClient': { getClientFirebaseApp: () => ({}) },
     'firebase/auth': auth,
     'firebase/firestore': firestore
   }).map(([name, exports]) => [name, new vm.SyntheticModule(Object.keys(exports), function () {

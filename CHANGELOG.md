@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## 2026-11-24 | Studio and playback
+
+### Loading and sign-in
+
+- Restore the Firebase account before fetching profile and like data. Fetch view-specific data when its view opens, and restore the saved queue only once per account.
+- Load the YouTube API and create its player on first playback or Studio import. Split the tutorial, audio visualizer, authentication dialog, and social panel into separate bundles.
+- Keep sign-in on the device by default. Uncheck the option for a session that ends when the browser session closes. The sign-in form supports password-manager autofill.
+
+### Studio and queue
+
+- Select a section from its card or trim handles. The selected section glows and limits Play and Replay to that section. Clear the selection to play the whole clip.
+- Start and End use the same song timeline. Moving either handle preserves the opposite boundary within the 1–45 second clip limits and seeks to the committed timestamp automatically.
+- Keep the draft and section boundaries in the browser across refreshes. Restore the draft manually from Studio. A successful post or explicit discard clears the draft.
+- Stop advancing the queue while Studio is open or a draft is active. The queue drawer shows standby, and the desktop queue rail can be hidden or shown.
+- Pause on disconnect or a sustained YouTube buffering stall. Resume from the last confirmed timestamp with Play. Remove delayed automatic Play calls that could restart or advance playback after a pause.
+- Open the same search tips from Discover Clips or the How to use section.
+
+### Verification
+
+- Run `node --test tests/studio-playback.test.mjs` and `npm run test:playlists`.
+- Run `npm run build` for the production bundle.
+
 ## [0.3.0]  2026-04
 
 ### Added

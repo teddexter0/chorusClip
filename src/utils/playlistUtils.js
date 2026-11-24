@@ -83,8 +83,13 @@ export const getAllPublicPlaylists = async () => {
     limit(50)
   );
   const snapshot = await getDocs(q);
+  const clipReads = new Map();
+  const readClip = id => {
+    if (!clipReads.has(id)) clipReads.set(id, getDoc(doc(db, 'clips', id)));
+    return clipReads.get(id);
+  };
   const hydrated = await Promise.all(snapshot.docs.map(entry =>
-    hydratePublicPlaylist(entry, clipId => getDoc(doc(db, 'clips', clipId)))
+    hydratePublicPlaylist(entry, readClip)
   ));
   return hydrated.filter(playlist => playlist.clips.length > 0);
 };
@@ -186,6 +191,8 @@ export class PlaylistPlayer {
    * repetitions and call advanceToNextClip() when all loops are done.
    */
   async playNext() {
+    if (this.stopped || this.callbacks.canAdvance?.() === false) return;
+    clearTimeout(this.advanceTimer);
     if (this.currentIndex >= this.playlistOrder.length) {
       if (this.repeatPlaylist) {
         this.currentIndex = 0;
@@ -212,10 +219,7 @@ export class PlaylistPlayer {
         videoId: clip.loops[0]?.youtubeVideoId || clip.youtubeVideoId,
         startSeconds: clip.loops[0]?.start ?? 0
       });
-      // Give the player time to buffer before calling playVideo
-      setTimeout(() => {
-        try { this.playerRef.current?.playVideo(); } catch (e) {}
-      }, 1000); // increased from 700ms — mobile needs more buffer
+
     }
     // No setupCompletionListener — startTimeTracking handles completion and calls advanceToNextClip().
   }
@@ -225,15 +229,19 @@ export class PlaylistPlayer {
    * have completed. Advances to the next clip.
    */
   advanceToNextClip() {
+    if (this.stopped || this.callbacks.canAdvance?.() === false) return;
+    clearTimeout(this.advanceTimer);
     // Stop the player immediately — prevent any further tracking ticks
     try { this.playerRef.current?.pauseVideo(); } catch(e) {}
     this.currentIndex++;
-    setTimeout(() => this.playNext(), 500);
+    this.advanceTimer = setTimeout(() => this.playNext(), 250);
   }
 
-  stop() {
-    try { this.playerRef.current?.pauseVideo(); } catch (e) {}
-    this.callbacks.showNotification('⏸️ Playlist stopped', 'info');
+  stop(notify = true) {
+    this.stopped = true;
+    clearTimeout(this.advanceTimer);
+    this.playerRef.current?.pauseVideo?.();
+    if (notify) this.callbacks.showNotification('Playlist stopped', 'info');
   }
 
   skip() {

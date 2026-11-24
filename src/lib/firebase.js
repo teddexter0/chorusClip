@@ -580,14 +580,11 @@ export const getFriendActivity = async (friendUids, limitCount = 10) => {
 // ── END FRIENDS SYSTEM ──────────────────────────────────────────────────────
 
 // Add these functions at the end of firebase.js
-export const signInUser = async (email, password) => {
-  try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    return userCredential.user;
-  } catch (error) {
-    // Re-throw original Firebase error to preserve error.code for smart UI messaging
-    throw error;
-  }
+export const signInUser = async (email, password, rememberDevice = true) => {
+  const { browserLocalPersistence, browserSessionPersistence, setPersistence } = await import('firebase/auth');
+  await setPersistence(auth, rememberDevice ? browserLocalPersistence : browserSessionPersistence);
+  const { user } = await signInWithEmailAndPassword(auth, email.trim(), password);
+  return user;
 };
 
 export const signUpUser = async (email, password, displayName) => {

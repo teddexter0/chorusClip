@@ -21,6 +21,7 @@ export default function AuthModal({ onClose, onSuccess }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resetSent, setResetSent] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(true);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -32,7 +33,7 @@ export default function AuthModal({ onClose, onSuccess }) {
       const { signInUser, signUpUser, sendPasswordResetEmail } = await import('../../lib/firebase');
 
       if (mode === 'signin') {
-        await signInUser(email, password);
+        await signInUser(email, password, rememberDevice);
         onSuccess?.('Welcome back!');
         onClose();
       } else if (mode === 'signup') {
@@ -91,11 +92,13 @@ export default function AuthModal({ onClose, onSuccess }) {
           )}
 
           <div>
-            <label className="block text-sm font-bold text-purple-300 mb-2">Strathmore Email</label>
+          <label htmlFor="auth-email" className="block text-sm font-bold text-purple-300 mb-2">Strathmore Email</label>
             <div className="relative">
               <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" size={20} />
               <input
+                id="auth-email"
                 type="email"
+                autoComplete="username"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="your.name@strathmore.edu"
@@ -107,11 +110,13 @@ export default function AuthModal({ onClose, onSuccess }) {
 
           {mode !== 'reset' && (
             <div>
-              <label className="block text-sm font-bold text-purple-300 mb-2">Password</label>
+              <label htmlFor="auth-password" className="block text-sm font-bold text-purple-300 mb-2">Password</label>
               <div className="relative">
                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400" size={20} />
                 <input
+                  id="auth-password"
                   type="password"
+                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
@@ -120,6 +125,13 @@ export default function AuthModal({ onClose, onSuccess }) {
                 />
               </div>
             </div>
+          )}
+
+          {mode === 'signin' && (
+            <label className="flex items-center gap-2 text-sm text-purple-200">
+              <input type="checkbox" checked={rememberDevice} onChange={event => setRememberDevice(event.target.checked)} />
+              Keep me signed in on this device
+            </label>
           )}
 
           {error && (

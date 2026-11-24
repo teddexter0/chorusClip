@@ -1,7 +1,7 @@
 'use client';
 import { X, Sparkles } from 'lucide-react';
 
-export default function TutorialModal({ onClose }) {
+export default function TutorialModal({ onClose, onSearchTips }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-6 sm:p-8 max-w-2xl w-full relative border border-purple-500 my-8 max-h-[90vh] overflow-y-auto">
@@ -15,6 +15,8 @@ export default function TutorialModal({ onClose }) {
         </h2>
         <p className="text-purple-400 text-sm mb-6">Everything you need to know — tap any section to expand</p>
 
+        <button type="button" className="btn-secondary mb-5" onClick={onSearchTips}>Search tips</button>
+
         {/* HOW TO CREATE A CLIP */}
         <div className="mb-4">
           <p className="text-xs font-bold text-purple-400 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -25,12 +27,12 @@ export default function TutorialModal({ onClose }) {
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-purple-400">
               <p className="font-semibold mb-1">Paste a YouTube URL</p>
               <p className="text-purple-200 text-sm">Any YouTube music link works. Hit <strong>Load Song</strong> → the player loads in the background.</p>
-              <p className="text-purple-400 text-xs mt-2">→ You&apos;ll see a Smart Loop suggestion pop up automatically</p>
+              <p className="text-purple-400 text-xs mt-2">Use Suggest a section to get a starting point.</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-pink-400">
               <p className="font-semibold mb-1">Set your section timestamps</p>
               <p className="text-purple-200 text-sm">Drag the sliders or type exact min:sec. You get up to <strong>3 sections</strong> per clip.</p>
-              <p className="text-purple-400 text-xs mt-2">→ Tap <strong>&quot;Jump to section start &amp; pause&quot;</strong> on mobile for precision</p>
+              <p className="text-purple-400 text-xs mt-2">Select a section to limit Play and Replay to it. Clear the selection to play the whole clip.</p>
             </div>
             <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-yellow-400">
               <p className="font-semibold mb-1">Mix-clips: 3 different songs</p>
@@ -115,8 +117,8 @@ export default function TutorialModal({ onClose }) {
           </div>
           <div className="bg-purple-800 bg-opacity-50 p-4 rounded-xl border-l-4 border-pink-400">
             <p className="font-semibold mb-1">Timestamp accuracy on mobile</p>
-            <p className="text-purple-200 text-sm">Use the large sliders or type exact min:sec. Tap <strong>&quot;Jump to section start &amp; pause&quot;</strong> to land exactly where you want, then fine-tune.</p>
-            <p className="text-purple-400 text-xs mt-2">→ Always pause before adjusting — drag sliders left/right slowly</p>
+            <p className="text-purple-200 text-sm">Drag a trim handle or type a timestamp. The playhead follows the edit automatically.</p>
+            <p className="text-purple-400 text-xs mt-2">Use Jump to section start to cue that section without playing it.</p>
           </div>
         </div>
 

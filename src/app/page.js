@@ -1979,6 +1979,13 @@ const startTimeTracking = () => {
     }, 85);
   };
 
+  const nudgeLoop = (event, index, field, step = 1) => {
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+    event.preventDefault();
+    const forward = event.key === 'ArrowUp' || event.key === 'ArrowRight';
+    updateLoop(index, field, loopsRef.current[index][field] + (forward ? step : -step));
+  };
+
   const removeLoop = (index) => {
     if (loops.length === 1) return;
     pausePlayback();
@@ -2823,7 +2830,10 @@ h1, h2, h3 {
       )}
 
 
-{showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
+{showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} onSearchTips={() => {
+  setShowTutorial(false);
+  setShowSearchTip(true);
+}} />}
 
 {showFriendsPanel && (
   <FriendsPanel
@@ -3506,6 +3516,7 @@ className="input"/>
       step="1"
       aria-label={'Start time for section ' + (idx + 1)}
       aria-valuetext={formatSeconds(loop.start)}
+      onKeyDown={event => nudgeLoop(event, idx, 'start')}
       value={loop.start}
       onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'start', e.target.value)}
       disabled={isReadOnlyMode}
@@ -3521,6 +3532,7 @@ className="input"/>
           placeholder="Min"
           value={Math.floor(loop.start / 60)}
           aria-label="Start minutes"
+          onKeyDown={event => nudgeLoop(event, idx, 'start', 60)}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
             const minutes = parseInt(e.target.value) || 0;
@@ -3536,6 +3548,7 @@ className="input"/>
           placeholder="Sec"
           value={loop.start % 60}
           aria-label="Start seconds"
+          onKeyDown={event => nudgeLoop(event, idx, 'start')}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
             const minutes = Math.floor(loop.start / 60);
@@ -3564,6 +3577,7 @@ className="input"/>
       step="1"
       aria-label={'End time for section ' + (idx + 1)}
       aria-valuetext={formatSeconds(loop.end)}
+      onKeyDown={event => nudgeLoop(event, idx, 'end')}
       value={loop.end}
       onChange={(e) => !isReadOnlyMode && updateLoop(idx, 'end', e.target.value)}
       disabled={isReadOnlyMode}
@@ -3579,6 +3593,7 @@ className="input"/>
           placeholder="Min"
           value={Math.floor(loop.end / 60)}
           aria-label="End minutes"
+          onKeyDown={event => nudgeLoop(event, idx, 'end', 60)}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
             const minutes = parseInt(e.target.value) || 0;
@@ -3594,6 +3609,7 @@ className="input"/>
           placeholder="Sec"
           value={loop.end % 60}
           aria-label="End seconds"
+          onKeyDown={event => nudgeLoop(event, idx, 'end')}
           className="w-20 px-3 py-2 bg-purple-950 border border-purple-600 rounded-lg text-white"
           onChange={(e) => {
             const minutes = Math.floor(loop.end / 60);

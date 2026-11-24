@@ -788,7 +788,16 @@ const getPlaybackPlayer = async (id) => {
           resolve(target);
         },
         onStateChange: event => latestPlayerStateHandler.current?.(event),
+        onAutoplayBlocked: ({ target }) => {
+          if (target !== playerRef.current) return;
+          playbackWantedRef.current = false;
+          clearTimeout(bufferingTimerRef.current);
+          setIsPlaying(false);
+        },
         onError: () => {
+          playbackWantedRef.current = false;
+          clearTimeout(bufferingTimerRef.current);
+          setIsPlaying(false);
           setGlobalLoading(false);
           showNotification('This video could not be played in ChorusClip.', 'error');
         }

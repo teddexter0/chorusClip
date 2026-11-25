@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import dynamic from 'next/dynamic';
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, RotateCcw, Share2, Heart, Plus, X, AlertCircle, Video, Sparkles, LogOut, Users, Music, ChevronDown, ChevronUp, UserPlus, Bell, Search, Loader2, Edit3, ListMusic } from 'lucide-react';
 
 // Use relative imports instead of @/
@@ -15,7 +15,7 @@ const ClipNetworkView = dynamic(() => import('../components/ui/ClipNetworkView')
 const AudioVisualizer = dynamic(() => import('../components/ui/AudioVisualizer'));
 const FriendsPanel = dynamic(() => import('../components/ui/FriendsPanel'));
 import { PlaylistPlayer, getUserPlaylists, createPlaylist, getAllPublicPlaylists, getPublicPlaylist, ENDLESS_CAP_IN_PLAYLIST } from '../utils/playlistUtils';
-import { getChorusSuggestion, getSectionTime, loadYouTubeApi, restoreStudioCheckpoint, trimSection } from '../utils/studioPlayback.mjs';
+import { getChorusSuggestion, getSectionTime, loadYouTubeApi, restoreStudioCheckpoint, trimSection, matchesPlaybackTarget } from '../utils/studioPlayback.mjs';
 import { getArtistImageWithCache } from '../utils/spotifyUtils';
 import { SkipForward, SkipBack, Shuffle, Repeat } from 'lucide-react';
 import { validateDisplayName } from '../lib/profanityFilter';
@@ -103,7 +103,8 @@ const [clipsViewMode, setClipsViewMode] = useState('grid'); // 'grid' | 'list' |
 const [desktopView, setDesktopView] = useState('overview');
 const [desktop, setDesktop] = useState(null);
 const [showSearchTip, setShowSearchTip] = useState(false);
-const [queueRailVisible, setQueueRailVisible] = useState(true);
+const [desktopPlayerCollapsed, setDesktopPlayerCollapsed] = useState(false);
+const [playbackPhase, setPlaybackPhase] = useState('ready');
 const [playbackInterrupted, setPlaybackInterrupted] = useState(false);
 const [pendingDraft, setPendingDraft] = useState(null);
 const [draftActive, setDraftActive] = useState(false);
@@ -133,6 +134,8 @@ const [selectedSection, setSelectedSection] = useState(null); // focused desktop
   const [chorusFallbackReady, setChorusFallbackReady] = useState(false);
 
   const [notification, setNotification] = useState(null);
+  const notificationIdRef = useRef(0);
+  const dismissNotification = useCallback(() => setNotification(null), []);
 const [leaderboard, setLeaderboard] = useState([]);
 const [leaderboardSort, setLeaderboardSort] = useState('plays');
 const [clips, setClips] = useState([]);
@@ -299,6 +302,7 @@ const loadTrendingData = async () => {
   const handoffTimerRef = useRef(null);
   const playerGenerationRef = useRef(0);
   const playbackWantedRef = useRef(false);
+  const pendingPlaybackNoticeRef = useRef(null);
   const lastSafeTimeRef = useRef(null);
   const resumeTimeRef = useRef(null);
   const studioCheckpointRef = useRef(null);
@@ -343,7 +347,7 @@ const loadTrendingData = async () => {
   const USERNAME_CHANGE_QUOTA = 3;
 
   const showNotification = (message, type = 'info') => {
-    setNotification({ message, type });
+    setNotification({ message, type, id: ++notificationIdRef.current });
   };
 
   const celebrate = (message) => {
@@ -399,7 +403,7 @@ const loadTrendingData = async () => {
     try {
       const savedDraft = JSON.parse(localStorage.getItem('chorusclip-studio-draft') || 'null');
       if (savedDraft?.source?.id && Array.isArray(savedDraft.sections) && savedDraft.sections.length) setPendingDraft(savedDraft);
-      setQueueRailVisible(localStorage.getItem('chorusclip-queue-rail') !== 'hidden');
+      setDesktopPlayerCollapsed(localStorage.getItem('chorusclip-desktop-player') === 'collapsed');
     } catch {}
     const params = new URLSearchParams(window.location.search);
     if (!localStorage.getItem('tutorialSeen') && !['playlist', 'invite'].some(key => params.has(key))) {
@@ -848,9 +852,15 @@ const getPlaybackPlayer = async (id) => {
           if (target !== playerRef.current) return;
           playbackWantedRef.current = false;
           clearTimeout(bufferingTimerRef.current);
+          pendingPlaybackNoticeRef.current = null;
           setIsPlaying(false);
+          setPlaybackPhase('blocked');
+          showNotification('YouTube blocked playback. Press Play to retry.', 'info');
         },
-        onError: () => {
+        onError: ({ target }) => {
+          if (target !== playerRef.current) return;
+          pendingPlaybackNoticeRef.current = null;
+          setPlaybackPhase('error');
           playbackWantedRef.current = false;
           clearTimeout(bufferingTimerRef.current);
           setIsPlaying(false);
@@ -869,16 +879,19 @@ const initAndPlay = async (targetPlaylist, player) => {
     if (currentPlaylistPlayerRef.current === player && !studioRef.current) player.playNext();
   } catch {
     setGlobalLoading(false);
+    pendingPlaybackNoticeRef.current = null;
+    setPlaybackPhase('error');
     showNotification('YouTube could not load. Try playing again.', 'error');
   }
 };
 
-const playMediaSection = async (section, time, play, source = editorSourceRef.current) => {
+const playMediaSection = async (section, time, play, source = editorSourceRef.current, feedbackTitle) => {
   if (!section) return;
   clearTimeout(bufferingTimerRef.current);
   bufferingTimerRef.current = null;
   const generation = ++playerGenerationRef.current;
   const id = getLoopVideoId(section, source?.id || videoId);
+  if (play && feedbackTitle) armPlaybackNotice(id, section, feedbackTitle);
   playbackWantedRef.current = play;
   pausedPreviewRef.current = !play;
   resumeTimeRef.current = null;
@@ -1245,7 +1258,7 @@ const canStartListening = () => {
   return true;
 };
 
-const preparePlaylistClip = () => {
+const preparePlaylistClip = (clip) => {
   pausePlayback();
   pausedPreviewRef.current = false;
   playbackWantedRef.current = true;
@@ -1256,6 +1269,8 @@ const preparePlaylistClip = () => {
   selectSection(null);
   setSectionPosition(0);
   setIsReadOnlyMode(true);
+  const first = clip.loops[0];
+  armPlaybackNotice(getLoopVideoId(first, clip.youtubeVideoId), first, getLoopTitle(first, clip.title) || 'Clip');
 };
 
 const canAdvancePlaylist = () => !studioRef.current && !playbackInterruptedRef.current && navigator.onLine !== false;
@@ -1275,7 +1290,7 @@ const handlePlayPlaylist = (playlist) => {
   const player = new PlaylistPlayer(playlist, playerRef, {
     // clip.loops are already normalized by PlaylistPlayer.normalizeClip()
     onClipChange: (clip, index, total) => {
-      preparePlaylistClip();
+      preparePlaylistClip(clip);
       setGlobalLoading(false); // clear once first clip loads
       setCurrentPlaylistInfo({ name: playlist.name, currentIndex: index, total, currentClip: clip });
       setLoops(clip.loops);
@@ -1303,7 +1318,6 @@ const handlePlayPlaylist = (playlist) => {
   currentPlaylistPlayerRef.current = player;
   setCurrentPlaylistPlayer(player);
   setIsPlayingPlaylist(true);
-  showNotification(`▶️ Playing: ${playlist.name}`, 'success');
 
   void initAndPlay(playlist, player);
 };
@@ -1549,14 +1563,13 @@ const handlePlayQueue = (startIdx = 0) => {
   const targetPlaylist = targetItem.kind === 'clip'
     ? { id: `clip-${targetItem.data.id}`, name: targetItem.data.title, clips: [targetItem.data], _isSingleClip: true }
     : targetItem.data;
-  showNotification(`Queue ${startIdx + 1}/${queue.length}: "${targetPlaylist.name}"`, 'info');
 
   // Override the playlist's onPlaylistComplete to advance the queue
   currentPlaylistPlayerRef.current?.stop(false);
 
   const player = new PlaylistPlayer(targetPlaylist, playerRef, {
     onClipChange: (clip, index, total) => {
-      preparePlaylistClip();
+      preparePlaylistClip(clip);
       setGlobalLoading(false);
       setCurrentPlaylistInfo({ name: targetPlaylist.name, currentIndex: index, total, currentClip: clip, queuePos: startIdx, queueTotal: queue.length });
       setLoops(clip.loops);
@@ -1616,7 +1629,7 @@ const handlePlayStagedClips = () => {
 
   const player = new PlaylistPlayer(clipQueue, playerRef, {
     onClipChange: (clip, index, total) => {
-      preparePlaylistClip();
+      preparePlaylistClip(clip);
       setCurrentPlaylistInfo({ name: clipQueue.name, currentIndex: index, total, currentClip: clip });
       setLoops(clip.loops);
       setVideoTitle(clip.title);
@@ -1643,7 +1656,6 @@ const handlePlayStagedClips = () => {
   currentPlaylistPlayerRef.current = player;
   setCurrentPlaylistPlayer(player);
   setIsPlayingPlaylist(true);
-  showNotification(`Playing clip queue (${clipQueue.clips.length}/10)`, 'success');
 
   void initAndPlay(clipQueue, player);
 };
@@ -1686,7 +1698,10 @@ const completeCurrentClipPlayback = () => {
     }, 350);
   } else {
     try { playerRef.current?.pauseVideo(); } catch(e) {}
+    playbackWantedRef.current = false;
+    pendingPlaybackNoticeRef.current = null;
     setIsPlaying(false);
+    setPlaybackPhase('ended');
   }
 };
 
@@ -1712,6 +1727,22 @@ const completeCurrentClipPlayback = () => {
     }
   };
 
+  const armPlaybackNotice = (id, section, title) => {
+    pendingPlaybackNoticeRef.current = { action: 'play', id, section, title };
+    setPlaybackPhase('loading');
+  };
+
+  const confirmPlaying = (player) => {
+    const pending = pendingPlaybackNoticeRef.current;
+    if (pending?.action === 'play') {
+      if (!matchesPlaybackTarget(pending, player)) return;
+      pendingPlaybackNoticeRef.current = null;
+      showNotification(`Playing · ${pending.title}`, 'success');
+    }
+    setIsPlaying(true);
+    setPlaybackPhase('playing');
+  };
+
   const onPlayerStateChange = (event) => {
     if (event.target !== playerRef.current) return;
     const state = window.YT.PlayerState;
@@ -1726,13 +1757,24 @@ const completeCurrentClipPlayback = () => {
         return;
       }
       playbackWantedRef.current = true;
-      setIsPlaying(true);
+      confirmPlaying(event.target);
       startTimeTracking();
     } else if (event.data === state.BUFFERING && playbackWantedRef.current && bufferingTimerRef.current === null) {
+      setIsPlaying(false);
+      setPlaybackPhase('buffering');
       bufferingTimerRef.current = setTimeout(interruptPlayback, 1800);
     } else if (event.data === state.PAUSED || event.data === state.ENDED) {
       setIsPlaying(false);
       stopTimeTracking();
+      const pending = pendingPlaybackNoticeRef.current;
+      if (event.data === state.PAUSED && pending?.action === 'pause' && matchesPlaybackTarget(pending, event.target)) {
+        pendingPlaybackNoticeRef.current = null;
+        showNotification(`Paused · ${pending.title}`, 'info');
+      }
+      if (pending?.action !== 'play') {
+        setPlaybackPhase(phase => ['blocked', 'error', 'interrupted', 'ended', 'ready'].includes(phase)
+          ? phase : event.data === state.ENDED ? 'ended' : 'paused');
+      }
       if (event.data === state.ENDED && playbackWantedRef.current && resumeTimeRef.current === null) {
         finishSection();
       }
@@ -1759,7 +1801,7 @@ const handlePlayClip = (clipId, sourceId, clip) => {
   selectedOnlyRef.current = false;
   setSectionPosition(0);
   startPlayCredit({ ...clip, id: clipId, loops: sections });
-  void playMediaSection(sections[0], sections[0].start, true, { id: sourceId });
+  void playMediaSection(sections[0], sections[0].start, true, { id: sourceId }, getLoopTitle(sections[0], clip.title) || 'Clip');
 };
 
 const beginTouchQueueSort = (event, index) => {
@@ -1805,7 +1847,18 @@ const setSectionPosition = (index, iteration = 0) => {
   setCurrentLoopIteration(iteration);
 };
 
-const pausePlayback = () => {
+const pausePlayback = (announce = false) => {
+  const player = playerRef.current;
+  const ytState = window.YT?.PlayerState;
+  const liveId = player?.getVideoData?.()?.video_id;
+  const confirmedPlaying = ytState && player?.getPlayerState?.() === ytState.PLAYING;
+  const section = loopsRef.current[currentLoopIndexRef.current];
+  const title = getLoopTitle(section, (draftRef.current ? editorSourceRef.current?.title : videoTitle) || videoTitle) || 'Clip';
+  const pauseTitle = draftRef.current && selectedOnlyRef.current
+    ? `Section ${currentLoopIndexRef.current + 1} · ${title}` : title;
+  pendingPlaybackNoticeRef.current = announce && liveId && confirmedPlaying
+    ? { action: 'pause', id: liveId, title: pauseTitle } : null;
+  setPlaybackPhase(pendingPlaybackNoticeRef.current ? 'pausing' : 'ready');
   const playerMayBeRunning = playbackWantedRef.current || !pausedPreviewRef.current;
   ++playerGenerationRef.current;
   playbackWantedRef.current = false;
@@ -1840,6 +1893,7 @@ const interruptPlayback = () => {
   pausePlayback();
   playbackInterruptedRef.current = true;
   setPlaybackInterrupted(true);
+  setPlaybackPhase('interrupted');
   if (resumeTimeRef.current !== null) setPlayerCurrentTime(resumeTimeRef.current);
   if (draftRef.current && section) {
     studioCheckpointRef.current = {
@@ -1911,6 +1965,7 @@ const startTimeTracking = () => {
       if (!section) return;
       const actualId = playerRef.current.getVideoData?.()?.video_id;
       if (section.youtubeVideoId && actualId && actualId !== section.youtubeVideoId) return;
+      if (pendingPlaybackNoticeRef.current?.action === 'play') confirmPlaying(playerRef.current);
       const safeTime = getSectionTime(section, time);
       setPlayerCurrentTime(safeTime);
       lastSafeTimeRef.current = safeTime;
@@ -1961,7 +2016,10 @@ const startTimeTracking = () => {
     clearTimeout(previewTimerRef.current);
     selectedOnlyRef.current = selected !== null;
     setSectionPosition(index, resume === null ? 0 : currentLoopIterationRef.current);
-    void playMediaSection(section, resume === null || resume >= section.end ? section.start : getSectionTime(section, resume), true);
+    const title = getLoopTitle(section, (draftRef.current ? editorSourceRef.current?.title : videoTitle) || videoTitle) || 'Clip';
+    const feedbackTitle = selected !== null ? `Section ${selected + 1} · ${title}` : title;
+    const source = draftRef.current ? editorSourceRef.current : { id: videoId };
+    void playMediaSection(section, resume === null || resume >= section.end ? section.start : getSectionTime(section, resume), true, source, feedbackTitle);
   };
 
   const togglePlayPause = () => {
@@ -1972,7 +2030,7 @@ const startTimeTracking = () => {
     if (playbackWantedRef.current && !changingSection) {
       const section = loopsRef.current[currentLoopIndexRef.current];
       if (section) resumeTimeRef.current = getSectionTime(section, lastSafeTimeRef.current);
-      pausePlayback();
+      pausePlayback(true);
     } else if (navigator.onLine === false) {
       showNotification('You’re offline. Playback will stay paused.', 'info');
     } else {
@@ -2575,6 +2633,26 @@ const handlePlaylistVisibilityChange = async (playlist) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, videoTitle, artist]);
 
+const playbackLabel = {
+  ready: 'Ready to play',
+  loading: 'Starting…',
+  buffering: 'Buffering…',
+  playing: 'Now playing',
+  pausing: 'Pausing…',
+  paused: 'Paused',
+  ended: 'Finished',
+  blocked: 'Tap Play to retry',
+  interrupted: 'Interrupted',
+  error: 'Could not play'
+}[playbackPhase];
+const playbackStarting = playbackPhase === 'loading' || playbackPhase === 'buffering';
+const playbackControlLabel = playbackStarting ? 'Cancel pending playback' : isPlaying ? 'Pause' : 'Play';
+
+const setDesktopPlayerVisibility = (collapsed) => {
+  setDesktopPlayerCollapsed(collapsed);
+  try { localStorage.setItem('chorusclip-desktop-player', collapsed ? 'collapsed' : 'expanded'); } catch {}
+};
+
 const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   const showcasedPlaylistIds = new Set(publicPlaylistShowcase.map(item => item.playlist.id));
   const remainingPublicPlaylists = publicPlaylists
@@ -2910,10 +2988,11 @@ h1, h2, h3 {
 `}</style>
 
       {notification && (
-        <Notification 
-          message={notification.message} 
-          type={notification.type} 
-          onClose={() => setNotification(null)} 
+        <Notification
+          key={notification.id}
+          message={notification.message}
+          type={notification.type}
+          onClose={dismissNotification}
         />
       )}
 
@@ -3473,7 +3552,7 @@ className="input"/>
 
                   <div className="flex items-center justify-between gap-3">
                     <span className="text-sm text-purple-300" role="status">
-                      {playbackInterrupted ? 'Connection interrupted. Press Play to resume.' : selectedSection === null ? 'Playback: whole clip' : 'Playback: section ' + (selectedSection + 1)}
+                      {playbackInterrupted ? 'Connection interrupted. Press Play to resume.' : `${playbackLabel} · ${selectedSection === null ? 'Whole clip' : `Section ${selectedSection + 1}`}`}
                     </span>
                     {selectedSection !== null && <button className="btn-secondary" onClick={() => {
                       pausePlayback();
@@ -3806,11 +3885,11 @@ className="input"/>
   onClick={togglePlayPause}
   
 className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justify-center gap-2"
- aria-label={isPlaying ? 'Pause playback' : 'Play loop'}
+ aria-label={playbackStarting ? 'Cancel pending playback' : isPlaying ? 'Pause playback' : 'Play loop'}
   aria-pressed={isPlaying}
 >
-  {isPlaying ? <Pause size={28} aria-hidden="true" /> : <Play size={28} aria-hidden="true" />}
-  {isPlaying ? 'Pause' : 'Play'}
+  {playbackStarting ? <Loader2 size={28} className="motion-safe:animate-spin" aria-hidden="true" /> : isPlaying ? <Pause size={28} aria-hidden="true" /> : <Play size={28} aria-hidden="true" />}
+  {playbackStarting ? 'Cancel' : playbackControlLabel}
 </button>
 {/* // 8. ADD PLAYLIST CONTROLS */}
 {isPlayingPlaylist && currentPlaylistInfo && (
@@ -5303,20 +5382,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 )}
 
 {combinedQueueItems.length > 0 && (
-  <button className="fixed right-3 top-24 z-40 hidden rounded-lg bg-purple-950 px-3 py-2 text-sm font-semibold md:block"
-    aria-pressed={queueRailVisible}
-    onClick={() => {
-      const visible = !queueRailVisible;
-      setQueueRailVisible(visible);
-      if (!visible) setQueueDrawerOpen(false);
-      try { localStorage.setItem('chorusclip-queue-rail', visible ? 'visible' : 'hidden'); } catch {}
-    }}>{queueRailVisible ? 'Hide queue rail' : 'Show queue rail'}</button>
-)}
-{combinedQueueItems.length > 0 && (
   <button
     onClick={() => setQueueDrawerOpen(open => !open)}
-    className={`fixed right-3 z-40 min-h-12 px-4 rounded-full bg-yellow-500 hover:bg-yellow-400 active:scale-95 text-black font-black shadow-2xl transition-all flex items-center gap-2 md:right-0 md:top-1/2 md:bottom-auto md:-translate-y-1/2 md:min-h-0 md:py-6 md:px-2 md:rounded-l-2xl md:rounded-r-none ${videoTitle ? 'bottom-36' : 'bottom-20'} md:[writing-mode:vertical-rl] ${queueRailVisible ? '' : 'md:hidden'}`}
-    aria-label={`Open play queue with ${combinedQueueItems.length} items`}
+    className={`fixed right-3 z-40 min-h-12 px-4 rounded-full bg-yellow-500 hover:bg-yellow-400 active:scale-95 text-black font-black shadow-2xl transition-all flex items-center gap-2 md:right-0 md:top-1/2 md:bottom-auto md:-translate-y-1/2 md:min-h-0 md:py-6 md:px-2 md:rounded-l-2xl md:rounded-r-none ${videoTitle ? 'bottom-36' : 'bottom-20'} md:[writing-mode:vertical-rl]`}
+    aria-label={`${queueDrawerOpen ? 'Close' : 'Open'} play queue with ${combinedQueueItems.length} items`}
+    aria-controls="play-queue-drawer"
     aria-expanded={queueDrawerOpen}
   >
     <ListMusic size={18} className="md:hidden" />
@@ -5331,6 +5401,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 {queueDrawerOpen && (
   <div className="fixed inset-0 z-[70] flex items-end md:items-stretch md:justify-end bg-black/70 backdrop-blur-sm" onClick={() => setQueueDrawerOpen(false)}>
     <div
+      id="play-queue-drawer"
       role="dialog"
       aria-modal="true"
       aria-labelledby="queue-title"
@@ -5531,14 +5602,25 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 </div>
 
 {/* Desktop now-playing dock — playback stays visible in every workspace. */}
-{videoTitle && (
+{videoTitle && (desktopPlayerCollapsed ? (
+  <button
+    onClick={() => setDesktopPlayerVisibility(false)}
+    className="hidden md:flex fixed bottom-5 left-1/2 -translate-x-1/2 z-[55] max-w-[calc(100vw-4rem)] items-center gap-2 rounded-full border border-purple-500/60 bg-black/90 px-4 py-2 text-sm font-bold text-purple-200 shadow-2xl hover:bg-purple-950"
+    aria-label="Expand bottom player"
+    aria-expanded={false}
+  >
+    <ChevronUp size={16} aria-hidden="true" />
+    <span className="shrink-0">Show player</span>
+    <span aria-hidden="true" className="truncate text-white">· {videoTitle}</span>
+  </button>
+) : (
   <aside className="hidden md:flex fixed bottom-5 left-1/2 -translate-x-1/2 z-[55] w-[min(760px,calc(100vw-220px))] items-center gap-4 rounded-2xl border border-purple-500/40 bg-black/90 px-4 py-3 shadow-2xl backdrop-blur-xl" aria-label="Now playing">
     <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center shrink-0">
       <Music size={20} />
     </div>
     <div className="min-w-0 flex-1">
-      <p className="text-[10px] font-black uppercase tracking-[0.18em] text-purple-400">
-        {isPlayingQueue ? `Queue ${playlistQueueIndex + 1} of ${combinedQueueItems.length}` : currentPlaylistInfo ? currentPlaylistInfo.name : 'Now playing'}
+      <p className={`truncate text-[10px] font-black uppercase tracking-[0.18em] ${isPlaying ? 'text-emerald-300' : 'text-purple-300'}`}>
+        {playbackLabel}{isPlayingQueue ? ` · Queue ${playlistQueueIndex + 1} of ${combinedQueueItems.length}` : currentPlaylistInfo ? ` · ${currentPlaylistInfo.name}` : ''}
       </p>
       <p className="truncate text-sm font-black text-white">{videoTitle}</p>
       <p className="truncate text-xs text-purple-300">{artist || 'ChorusClip'}{combinedQueueItems.length > 0 && !isPlayingQueue ? ` · ${combinedQueueItems.length} up next` : ''}</p>
@@ -5552,8 +5634,8 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       <button
         onClick={togglePlayPause}
         className="w-11 h-11 rounded-full bg-white text-black hover:scale-105 transition flex items-center justify-center"
-        aria-label={isPlaying ? 'Pause' : 'Play'}
-      >{isPlaying ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" className="ml-0.5" />}</button>
+        aria-label={playbackControlLabel}
+      >{playbackStarting ? <Loader2 size={19} className="motion-safe:animate-spin" /> : isPlaying ? <Pause size={19} fill="currentColor" /> : <Play size={19} fill="currentColor" className="ml-0.5" />}</button>
       <button
         onClick={() => currentPlaylistPlayerRef.current?.skip?.()}
         disabled={!currentPlaylistPlayerRef.current}
@@ -5568,12 +5650,21 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         title="Repeat current clip"
       ><Repeat size={16} /></button>
       <button
-        onClick={() => setQueueDrawerOpen(true)}
+        onClick={() => setQueueDrawerOpen(open => !open)}
+        aria-expanded={queueDrawerOpen}
+        aria-controls="play-queue-drawer"
         className="ml-2 min-h-9 rounded-xl bg-yellow-500/20 px-3 text-xs font-black text-yellow-300 hover:bg-yellow-500/30"
       >Queue {combinedQueueItems.length}</button>
+      <button
+        onClick={() => setDesktopPlayerVisibility(true)}
+        className="w-9 h-9 rounded-full text-white hover:bg-white/10 flex items-center justify-center"
+        aria-label="Collapse bottom player"
+        aria-expanded={true}
+        title="Collapse bottom player"
+      ><ChevronDown size={17} /></button>
     </div>
   </aside>
-)}
+))}
 
 {/* Mobile mini-player — persistent controls above the tab bar when a track is loaded */}
 {videoTitle && (
@@ -5595,7 +5686,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold truncate text-white">{videoTitle}</p>
-          <p className="text-xs text-purple-400 truncate">{artist || 'ChorusClip'}</p>
+          <p className="text-xs text-purple-300 truncate">{playbackLabel} · {artist || 'ChorusClip'}</p>
         </div>
         {/* Mini-player controls — Spotify layout */}
         <div className="flex items-center gap-1 shrink-0">
@@ -5618,9 +5709,9 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           <button
             onClick={togglePlayPause}
             className="w-11 h-11 flex items-center justify-center rounded-full bg-white transition hover:scale-105"
-            aria-label={isPlaying ? 'Pause' : 'Play'}
+            aria-label={playbackControlLabel}
           >
-            {isPlaying
+            {playbackStarting ? <Loader2 size={20} className="text-black motion-safe:animate-spin" /> : isPlaying
               ? <Pause size={20} fill="black" className="text-black" />
               : <Play size={20} fill="black" className="text-black ml-0.5" />
             }

@@ -8,6 +8,13 @@ export function getChorusSuggestion(duration) {
   return { start, end: Math.min(length, start + 30) };
 }
 
+export function matchesPlaybackTarget(target, player) {
+  if (player.getVideoData?.()?.video_id !== target.id) return false;
+  if (!target.section) return true;
+  const time = player.getCurrentTime?.();
+  return Number.isFinite(time) && time >= target.section.start - 0.35 && time < target.section.end;
+}
+
 export function getSectionTime(section, time) {
   return Number.isFinite(time) ? Math.min(section.end, Math.max(section.start, time)) : section.start;
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { getChorusSuggestion, getSectionTime, restoreStudioCheckpoint, trimSection } from '../src/utils/studioPlayback.mjs';
+import { getChorusSuggestion, getSectionTime, restoreStudioCheckpoint, trimSection, matchesPlaybackTarget } from '../src/utils/studioPlayback.mjs';
 
 const section = { start: 15, end: 35, loopCount: 2, youtubeVideoId: 'video' };
 
@@ -46,6 +46,17 @@ test('a restored draft keeps its selected section and safe position', () => {
   assert.deepEqual(restoreStudioCheckpoint(checkpoint, sections), { ...checkpoint, time: 35 });
   assert.equal(restoreStudioCheckpoint({ ...checkpoint, index: 2 }, sections), null);
   assert.equal(restoreStudioCheckpoint({ ...checkpoint, time: null }, sections), null);
+});
+
+test('playback feedback waits for the requested video and section', () => {
+  const target = { id: 'video', section };
+  const player = (id, time) => ({ getVideoData: () => ({ video_id: id }), getCurrentTime: () => time });
+  assert.equal(matchesPlaybackTarget(target, player('previous', 16)), false);
+  assert.equal(matchesPlaybackTarget(target, player('video', 10)), false);
+  assert.equal(matchesPlaybackTarget(target, player('video', 35)), false);
+  assert.equal(matchesPlaybackTarget(target, player('video', undefined)), false);
+  assert.equal(matchesPlaybackTarget(target, player('video', 16)), true);
+  assert.equal(matchesPlaybackTarget({ id: 'video' }, player('video', undefined)), true);
 });
 
 const playerSource = await readFile(new URL('../src/utils/playlistUtils.js', import.meta.url), 'utf8');

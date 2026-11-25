@@ -58,7 +58,6 @@ export default function ChorusClipModern() {
   const [currentPlaylistIndex, setCurrentPlaylistIndex] = useState(0); 
 const [playlists, setPlaylists] = useState([]);
 const [selectedClipsForPlaylist, setSelectedClipsForPlaylist] = useState([]);
-const [playlistModalCandidates, setPlaylistModalCandidates] = useState([]);
 const [selectedTargetPlaylistIds, setSelectedTargetPlaylistIds] = useState([]);
 const [duplicatePlaylistAction, setDuplicatePlaylistAction] = useState(null);
 const [showPlaylistModal, setShowPlaylistModal] = useState(false);
@@ -74,7 +73,6 @@ const [feedPlaylistsVisible, setFeedPlaylistsVisible] = useState(false);
 const feedPlaylistsRef = useRef(null);
 const [sharedPlaylist, setSharedPlaylist] = useState(null);
 const sharedPlaylistAutoplayRef = useRef(false);
-const [queueBannerCollapsed, setQueueBannerCollapsed] = useState(false);
 const [expandedPlaylistId, setExpandedPlaylistId] = useState(null);
 
 const [themeMode, setThemeMode] = useState('classic');
@@ -86,15 +84,17 @@ const [searchHighlight, setSearchHighlight] = useState(null); // { id } of the m
 const [playlistSearchQuery, setPlaylistSearchQuery] = useState('');
 const [queueEditMode, setQueueEditMode] = useState(false);
 const [globalLoading, setGlobalLoading] = useState(false);
-const [stagedClipsEditMode, setStagedClipsEditMode] = useState(false);
 const [myClips, setMyClips] = useState([]);
 const [libraryLoading, setLibraryLoading] = useState(false);
+const [ownedPlaylistsLoading, setOwnedPlaylistsLoading] = useState(false);
+const [queueRestoring, setQueueRestoring] = useState(false);
 const [privateClipsLimit, setPrivateClipsLimit] = useState(8);
 const [libraryClipFilter, setLibraryClipFilter] = useState('all'); // 'all' | 'public' | 'private'
 const [libraryClipSort, setLibraryClipSort] = useState('newest'); // 'newest' | 'plays' | 'likes'
 const [libraryClipSearchQuery, setLibraryClipSearchQuery] = useState('');
 const [openClipMenuId, setOpenClipMenuId] = useState(null);
 const [queueDrawerOpen, setQueueDrawerOpen] = useState(false);
+const queueDialogRef = useRef(null);
 const [draggedQueueIdx, setDraggedQueueIdx] = useState(null);
 const [draggedClipForQueue, setDraggedClipForQueue] = useState(null);
 const [queueDropActive, setQueueDropActive] = useState(false);
@@ -480,7 +480,10 @@ const loadTrendingData = async () => {
   }, [showChorusMode, videoId, videoDuration]);
   useEffect(() => {
     setMyClips([]);
-    if (!user.uid || !needsLibrary) return;
+    if (!user.uid || !needsLibrary) {
+      setLibraryLoading(false);
+      return;
+    }
     let cancelled = false;
     let unsubscribe;
     setLibraryLoading(true);
@@ -497,6 +500,8 @@ const loadTrendingData = async () => {
   }, [user.uid, needsLibrary]);
 
   useEffect(() => {
+    setOwnedPlaylistsLoading(false);
+    setQueueRestoring(false);
     if (!user.uid) {
       setPlaylists([]);
       queueRestoreUidRef.current = null;
@@ -504,21 +509,24 @@ const loadTrendingData = async () => {
     }
     if (profile?.uid !== user.uid) return;
     const hasSavedQueue = profile.data.savedQueueIds?.length || profile.data.savedClipQueueIds?.length;
-    const shouldRestoreQueue = hasSavedQueue && queueRestoreUidRef.current !== user.uid;
+    const shouldRestoreQueue = Boolean(hasSavedQueue) && queueRestoreUidRef.current !== user.uid;
     if (!needsOwnedPlaylists && !shouldRestoreQueue) return;
     let cancelled = false;
     const revision = queueRevisionRef.current;
-    const listRequest = needsOwnedPlaylists || (shouldRestoreQueue && profile.data.savedQueueIds?.length)
-      ? getUserPlaylists(user.uid)
-      : Promise.resolve(null);
+    const fetchPlaylists = needsOwnedPlaylists || (shouldRestoreQueue && profile.data.savedQueueIds?.length);
+    setOwnedPlaylistsLoading(Boolean(fetchPlaylists));
+    setQueueRestoring(shouldRestoreQueue);
+    const listRequest = fetchPlaylists ? getUserPlaylists(user.uid) : Promise.resolve(null);
     listRequest.then(items => {
       if (!cancelled && items) {
         setPlaylists(items.sort((a, b) => getCreatedAtValue(b.updatedAt || b.createdAt) - getCreatedAtValue(a.updatedAt || a.createdAt)));
       }
-    }).catch(error => console.error('Playlists could not load:', error));
+    }).catch(error => console.error('Playlists could not load:', error))
+      .finally(() => { if (!cancelled) setOwnedPlaylistsLoading(false); });
     if (shouldRestoreQueue) {
       loadSavedQueue(profile.data, listRequest, () => !cancelled && revision === queueRevisionRef.current)
-        .then(restored => { if (restored) queueRestoreUidRef.current = user.uid; });
+        .then(restored => { if (!cancelled && restored) queueRestoreUidRef.current = user.uid; })
+        .finally(() => { if (!cancelled) setQueueRestoring(false); });
     }
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -592,18 +600,36 @@ useEffect(() => {
   return () => document.removeEventListener('click', close);
 }, [openClipMenuId]);
 
-// Treat the queue like a native modal: lock the page behind it and support Escape.
 useEffect(() => {
   if (!queueDrawerOpen) return;
+  const dialog = queueDialogRef.current;
+  const previousFocus = document.activeElement;
   const previousOverflow = document.body.style.overflow;
-  const closeOnEscape = (event) => {
-    if (event.key === 'Escape') setQueueDrawerOpen(false);
+  dialog.querySelector('button')?.focus();
+  const onKeyDown = (event) => {
+    if (document.querySelector('[aria-labelledby="clear-queue-title"]')) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setQueueDrawerOpen(false);
+    } else if (event.key === 'Tab') {
+      const buttons = Array.from(dialog.querySelectorAll('button:not(:disabled)'));
+      const first = buttons[0];
+      const last = buttons.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
   };
   document.body.style.overflow = 'hidden';
-  document.addEventListener('keydown', closeOnEscape);
+  document.addEventListener('keydown', onKeyDown);
   return () => {
     document.body.style.overflow = previousOverflow;
-    document.removeEventListener('keydown', closeOnEscape);
+    document.removeEventListener('keydown', onKeyDown);
+    if (previousFocus instanceof HTMLElement && previousFocus.offsetParent !== null) previousFocus.focus();
   };
 }, [queueDrawerOpen]);
 
@@ -979,8 +1005,6 @@ const loadUserPlaylists = async () => {
 
   } catch (error) {
     console.error('Failed to load playlists:', error);
-  } finally {
-    setLibraryLoading(false);
   }
 };
 
@@ -1133,7 +1157,6 @@ const commitClipsToPlaylist = async (targetPlaylist, clipsToAdd) => {
       'success'
     );
     setSelectedClipsForPlaylist([]);
-    setPlaylistModalCandidates([]);
     setShowPlaylistModal(false);
     setDuplicatePlaylistAction(null);
     loadUserPlaylists();
@@ -1142,12 +1165,17 @@ const commitClipsToPlaylist = async (targetPlaylist, clipsToAdd) => {
   }
 };
 
+const closePlaylistModal = () => {
+  setShowPlaylistModal(false);
+  setSelectedClipsForPlaylist([]);
+  setSelectedTargetPlaylistIds([]);
+};
+
 const openAddToPlaylist = (clipsToChoose) => {
   const unique = clipsToChoose.reduce((result, clip) => {
     if (!isClipDuplicate(clip, result)) result.push(clip);
     return result;
   }, []).slice(0, 10);
-  setPlaylistModalCandidates(unique);
   setSelectedClipsForPlaylist(unique);
   setSelectedTargetPlaylistIds([]);
   setShowPlaylistModal(true);
@@ -1178,7 +1206,6 @@ const handleAddToSelectedPlaylists = async () => {
     setShowPlaylistModal(false);
     setSelectedTargetPlaylistIds([]);
     setSelectedClipsForPlaylist([]);
-    setPlaylistModalCandidates([]);
     await loadUserPlaylists();
     showNotification(`${addedTotal} clip placement${addedTotal === 1 ? '' : 's'} added across ${targets.length} playlist${targets.length === 1 ? '' : 's'}`, 'success');
   } catch (error) {
@@ -1237,7 +1264,6 @@ const handleCreatePlaylist = async () => {
     celebrate(`“${name}” is ready!`);
     setShowPlaylistModal(false);
     setSelectedClipsForPlaylist([]);
-    setPlaylistModalCandidates([]);
     if (nameInput) nameInput.value = '';
     loadUserPlaylists();
   } catch (error) {
@@ -1515,28 +1541,6 @@ const reorderCombinedQueue = (fromIdx, toIdx) => {
   }
 };
 
-const handleMoveStagedClip = (index, dir) => {
-  const newClips = [...selectedClipsForPlaylist];
-  const target = dir === 'up' ? index - 1 : index + 1;
-  if (target < 0 || target >= newClips.length) return;
-  [newClips[index], newClips[target]] = [newClips[target], newClips[index]];
-  setSelectedClipsForPlaylist(newClips);
-};
-
-const handleMoveQueueItem = (index, dir) => {
-  const newQueue = [...playlistQueue];
-  const target = dir === 'up' ? index - 1 : index + 1;
-  if (target < 0 || target >= newQueue.length) return;
-  [newQueue[index], newQueue[target]] = [newQueue[target], newQueue[index]];
-  setPlaylistQueue(newQueue);
-  playlistQueueRef.current = newQueue;
-  if (user?.uid) {
-    import('../lib/firebase').then(({ saveQueueToFirestore }) => {
-      saveQueueToFirestore(user.uid, newQueue.map(p => p.id));
-    });
-  }
-};
-
 const handlePlayQueue = (startIdx = 0) => {
   if (!canStartListening()) return;
   playbackInterruptedRef.current = false;
@@ -1609,55 +1613,6 @@ const handlePlayQueue = (startIdx = 0) => {
   setIsPlayingPlaylist(true);
 
   void initAndPlay(targetPlaylist, player);
-};
-
-const handlePlayStagedClips = () => {
-  if (!canStartListening()) return;
-  playbackInterruptedRef.current = false;
-  if (selectedClipsForPlaylist.length === 0) {
-    showNotification('Add clips to the queue first!', 'error');
-    return;
-  }
-
-  currentPlaylistPlayerRef.current?.stop(false);
-
-  const clipQueue = {
-    id: 'staged-clip-queue',
-    name: 'Clip Queue',
-    clips: selectedClipsForPlaylist.slice(0, 10)
-  };
-
-  const player = new PlaylistPlayer(clipQueue, playerRef, {
-    onClipChange: (clip, index, total) => {
-      preparePlaylistClip(clip);
-      setCurrentPlaylistInfo({ name: clipQueue.name, currentIndex: index, total, currentClip: clip });
-      setLoops(clip.loops);
-      setVideoTitle(clip.title);
-      setArtist(clip.artist);
-      setVideoId(clip.youtubeVideoId);
-      setIsReadOnlyMode(true);
-      loopsRef.current = clip.loops;
-      currentLoopIndexRef.current = 0;
-      currentLoopIterationRef.current = 0;
-      skipTrackingUntilRef.current = Date.now() + 800;
-      startPlayCredit(clip);
-    },
-    onPlaylistComplete: () => {
-      currentPlaylistPlayerRef.current = null;
-      setIsPlayingPlaylist(false);
-      setCurrentPlaylistInfo(null);
-      setCurrentPlaylistPlayer(null);
-      showNotification('Clip queue finished!', 'success');
-    },
-    showNotification,
-    canAdvance: canAdvancePlaylist
-  }, playlistMode);
-
-  currentPlaylistPlayerRef.current = player;
-  setCurrentPlaylistPlayer(player);
-  setIsPlayingPlaylist(true);
-
-  void initAndPlay(clipQueue, player);
 };
 
 const loadLoopSection = (section, fallbackId = videoId) => {
@@ -2737,7 +2692,49 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
   }, [sharedPlaylist]);
 
   const combinedQueueItems = buildCombinedQueue();
-  
+  const viewingClips = ['feed', 'clips'].includes(activeView);
+  const loadingLabel = [
+    [pendingAction === 'post', 'Posting clip…'],
+    [playbackPhase === 'buffering', 'Buffering playback…'],
+    [globalLoading || playbackStarting, 'Connecting to YouTube…'],
+    [!authReady, 'Restoring session…'],
+    [user.uid && profile?.uid !== user.uid, 'Loading your account…'],
+    [sharedPlaylist?.status === 'loading', 'Opening shared playlist…'],
+    [queueRestoring, 'Restoring your queue…'],
+    [needsLibrary && libraryLoading, 'Loading your clips…'],
+    [needsOwnedPlaylists && ownedPlaylistsLoading, 'Loading your playlists…'],
+    [viewingClips && feedSearchLoading, 'Searching clips…'],
+    [viewingClips && (feedLoading || (feedSort === 'most-played' && discoveryLoading)), 'Loading clips…'],
+    [(activeView === 'playlists' || (activeView === 'feed' && feedPlaylistsVisible)) && publicPlaylistsLoading, 'Loading public playlists…'],
+    [(activeView === 'community' || (activeView === 'feed' && artistsExpanded)) && artistsLoading, 'Loading artists…']
+  ].find(([pending]) => pending)?.[1];
+
+  const renderQueueButton = (compact = false) => (
+    <button
+      type="button"
+      onClick={() => { setQueueEditMode(false); setQueueDrawerOpen(true); }}
+      onDragOver={event => {
+        if (!draggedClipForQueue) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+        setQueueDropActive(true);
+      }}
+      onDragLeave={() => setQueueDropActive(false)}
+      onDrop={handleDropClipInQueue}
+      title={draggedClipForQueue ? 'Drop clip to add to queue' : 'Queue'}
+      aria-label={`Open queue, ${combinedQueueItems.length} items`}
+      aria-expanded={queueDrawerOpen}
+      aria-controls="play-queue-drawer"
+      className={`flex shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-black transition ${draggedClipForQueue
+        ? queueDropActive ? 'bg-violet-500 text-white ring-2 ring-violet-200' : 'bg-violet-950 text-violet-200 ring-2 ring-violet-400'
+        : 'bg-purple-900/60 text-purple-100 hover:bg-purple-800'}`}
+    >
+      <ListMusic size={16} aria-hidden="true" />
+      {!compact && <span>Queue</span>}
+      {combinedQueueItems.length > 0 && <span>{combinedQueueItems.length}</span>}
+    </button>
+  );
+
   return (
     <div className={`min-h-screen text-white relative overflow-hidden ${themeMode === 'electric' ? 'theme-gold' : 'theme-classic'}`}>
     <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(ellipse_at_20%_0%,#3b175e,transparent_62%),radial-gradient(ellipse_at_90%_90%,#251448,transparent_60%)]" aria-hidden="true" />
@@ -2807,23 +2804,18 @@ const publicPlaylistShowcase = buildPublicPlaylistShowcase(publicPlaylists);
       </div>
     )}
 
-    {/* Global loading overlay */}
-    {globalLoading && (
-      <div className="fixed inset-0 z-[100] bg-black bg-opacity-60 backdrop-blur-sm flex flex-col items-center justify-center pointer-events-auto cursor-wait">
-        {/* Outer ring */}
-        <div className="relative w-20 h-20">
-          <div className="absolute inset-0 rounded-full border-4 border-purple-800 border-opacity-30" />
-          <div className="absolute inset-0 rounded-full border-4 border-t-purple-400 border-r-pink-400 border-b-transparent border-l-transparent animate-spin" />
-          <div className="absolute inset-2 rounded-full border-4 border-t-transparent border-r-transparent border-b-yellow-400 border-l-purple-400 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '0.8s' }} />
-          {/* Music note at center */}
-          <div className="absolute inset-0 flex items-center justify-center text-2xl">🎵</div>
-        </div>
-        <p className="text-purple-300 text-sm font-semibold mt-4 animate-pulse">
-          {pendingAction === 'post' ? 'Posting clip...' : 'Loading...'}
-        </p>
-      </div>
-    )}
-    
+    <div role="status" aria-live="polite" aria-atomic="true" className="pointer-events-none fixed inset-x-0 top-0 z-[110] flex justify-center">
+      {loadingLabel && (
+        <>
+          <div aria-hidden="true" className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/85 via-black/40 to-transparent" />
+          <div className="relative mt-3 flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border border-purple-500/40 bg-gray-950/95 px-4 py-2 text-sm font-semibold text-purple-100 shadow-lg">
+            <Loader2 size={17} className="shrink-0 text-violet-300 motion-safe:animate-spin" aria-hidden="true" />
+            {loadingLabel}
+          </div>
+        </>
+      )}
+    </div>
+
      {/* Skip to main content link for screen readers */}
     <a 
       href="#main-content" 
@@ -3194,15 +3186,15 @@ h1, h2, h3 {
       {showPlaylistModal && (
         <div className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4">
           <div className="bg-gradient-to-br from-purple-900 to-indigo-900 rounded-3xl p-5 sm:p-8 max-w-2xl w-full border border-purple-500 max-h-[92dvh] overflow-y-auto overscroll-contain pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
-            <button onClick={() => setShowPlaylistModal(false)} className="float-right text-white hover:text-purple-300">
+            <button onClick={closePlaylistModal} className="float-right text-white hover:text-purple-300" aria-label="Close playlist picker">
               <X size={32} />
             </button>
 
             <h2 className="text-2xl sm:text-3xl font-bold mb-1">Add to playlist</h2>
-            <p className="text-sm text-purple-300 mb-4">The clip is already selected. Tick every playlist you want to add it to.</p>
+            <p className="text-sm text-purple-300 mb-4">Choose where to save your selected clips.</p>
 
             <div className="bg-purple-900 bg-opacity-30 p-3 rounded-xl max-h-52 overflow-y-auto mb-5 space-y-1">
-              {playlistModalCandidates.map((clip, idx) => (
+              {selectedClipsForPlaylist.map((clip, idx) => (
                 <div key={clip.id || idx} className="flex items-center gap-3 p-2.5 rounded-xl border border-yellow-500/50 bg-yellow-500/10">
                   <span className="w-6 h-6 rounded-full bg-yellow-400 text-black flex items-center justify-center font-black shrink-0">✓</span>
                   <div className="flex-1 min-w-0 mr-2">
@@ -5172,55 +5164,6 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       )}
     </div>
 
-    {/* Unified Queue Panel — playlists + individual clips */}
-    {combinedQueueItems.length > 0 && (
-      <div className="mt-5 bg-yellow-900 bg-opacity-30 border border-yellow-600 border-opacity-50 rounded-2xl p-4">
-        <div className="flex justify-between items-center mb-3">
-          <p className="font-bold text-yellow-300 flex items-center gap-2">
-            Play Queue ({combinedQueueItems.length})
-          </p>
-          {isPlayingQueue && (
-            <span className="text-xs text-yellow-400 animate-pulse font-semibold">▶ Playing queue…</span>
-          )}
-        </div>
-        <div className="space-y-2 mb-3">
-          {combinedQueueItems.map((item, qi) => (
-            <div key={item.key} className="flex items-center gap-2 bg-yellow-900 bg-opacity-20 px-3 py-2 rounded-xl">
-              <button
-                onClick={() => handlePlayQueue(qi)}
-                className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg bg-yellow-600 hover:bg-yellow-500 text-black transition"
-                aria-label={`Play ${item.name}`}
-              >
-                <Play size={14} fill="currentColor" />
-              </button>
-              <span className="text-yellow-400 font-bold w-5 text-sm">{qi + 1}</span>
-              <span className="flex-1 min-w-0">
-                <span className="block text-sm font-semibold truncate">{item.name}</span>
-                {item.kind === 'clip' && (
-                  <span className="block text-xs text-yellow-600 truncate">{item.subtitle}</span>
-                )}
-              </span>
-              <span className="text-xs text-yellow-700 shrink-0 uppercase tracking-wide">{item.kind === 'clip' ? 'clip' : 'list'}</span>
-              <div className="flex gap-1">
-                <button onClick={() => reorderCombinedQueue(qi, qi - 1)} disabled={qi === 0}
-                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▲</button>
-                <button onClick={() => reorderCombinedQueue(qi, qi + 1)} disabled={qi === combinedQueueItems.length - 1}
-                  className="text-yellow-400 hover:text-yellow-200 disabled:opacity-20 text-sm px-1">▼</button>
-                <button onClick={() => handleRemoveQueueItem(item.kind, item.id)}
-                  className="text-red-400 hover:text-red-300 ml-1"><X size={14}/></button>
-              </div>
-            </div>
-          ))}
-        </div>
-        <button
-          onClick={() => handlePlayQueue(0)}
-          className="w-full py-3 bg-gradient-to-r from-yellow-600 to-orange-600 rounded-xl font-bold hover:shadow-lg transition flex items-center justify-center gap-2"
-        >
-          <Play size={18} fill="currentColor" />
-          Play Queue ({combinedQueueItems.length})
-        </button>
-      </div>
-    )}
   </div>
 )}
             </div>
@@ -5228,218 +5171,54 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         </div>
       
       
-
-{/* STICKY BOTTOM BANNER — staged clips only (playlist queue lives in the side drawer) */}
-{selectedClipsForPlaylist.length > 0 && (
-  <div className={`fixed bottom-0 left-0 right-0 z-40 transition-transform duration-300 ${queueBannerCollapsed ? 'translate-y-[calc(100%-48px)]' : 'translate-y-0'}`}>
-    <div className="max-w-2xl mx-auto px-4 pb-4">
-      <div className="bg-gradient-to-r from-amber-900 via-yellow-900 to-amber-900 border border-amber-700 rounded-2xl shadow-2xl overflow-hidden">
-        {/* Header / collapse toggle */}
-        <button
-          onClick={() => setQueueBannerCollapsed(v => !v)}
-          className="w-full flex items-center justify-between px-5 py-3 border-b border-amber-700 hover:bg-white hover:bg-opacity-5 transition"
-        >
-          <div className="flex items-center gap-4 flex-wrap">
-            <span className="text-amber-300 font-bold text-sm">
-              🎵 {selectedClipsForPlaylist.length} clip{selectedClipsForPlaylist.length !== 1 ? 's' : ''} staged
-            </span>
-          </div>
-          <span className="text-amber-400 text-xs font-semibold shrink-0">
-            {queueBannerCollapsed ? ' show' : ' hide'}
-          </span>
-        </button>
-
-        {/* Staged clips edit section */}
-        {!queueBannerCollapsed && (
-          <div className="px-5 pt-2 pb-1">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-amber-300 font-bold text-sm">
-                Reorder staged clips
-              </span>
-              <button
-                onClick={() => setStagedClipsEditMode(v => !v)}
-                className={`text-xs font-bold px-3 py-1 rounded-lg transition ${stagedClipsEditMode ? 'bg-amber-500 text-black' : 'bg-purple-800 text-purple-300 hover:text-white'}`}
-              >
-                {stagedClipsEditMode ? 'Done' : 'Edit Order'}
-              </button>
-            </div>
-
-            {stagedClipsEditMode && (
-              <div className="space-y-1.5 max-h-64 overflow-y-auto pb-2">
-                {selectedClipsForPlaylist.map((clip, idx) => (
-                  <div
-                    key={clip.id || idx}
-                    draggable
-                    onDragStart={() => setDraggedQueueIdx(idx)}
-                    onDragOver={(e) => { e.preventDefault(); }}
-                    onDrop={() => {
-                      if (draggedQueueIdx === null || draggedQueueIdx === idx) return;
-                      const newClips = [...selectedClipsForPlaylist];
-                      const [moved] = newClips.splice(draggedQueueIdx, 1);
-                      newClips.splice(idx, 0, moved);
-                      setSelectedClipsForPlaylist(newClips);
-                      setDraggedQueueIdx(null);
-                    }}
-                    onDragEnd={() => setDraggedQueueIdx(null)}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-xl border transition-all cursor-grab active:cursor-grabbing ${
-                      draggedQueueIdx === idx
-                        ? 'opacity-40 border-amber-400 bg-amber-900 bg-opacity-40'
-                        : 'border-amber-700 border-opacity-30 bg-amber-900 bg-opacity-20 hover:bg-opacity-30'
-                    }`}
-                  >
-                    <span className="text-amber-400 text-xl cursor-grab" aria-hidden="true">⠿</span>
-                    <span className="text-amber-400 font-bold text-sm w-5 shrink-0">{idx + 1}</span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-white truncate">{clip.title}</p>
-                      <p className="text-xs text-amber-400 truncate">{clip.artist}</p>
-                    </div>
-                    <div className="flex gap-1 md:hidden">
-                      <button
-                        onClick={() => {
-                          if (idx === 0) return;
-                          const reordered = [...selectedClipsForPlaylist];
-                          [reordered[idx - 1], reordered[idx]] = [reordered[idx], reordered[idx - 1]];
-                          setSelectedClipsForPlaylist(reordered);
-                        }}
-                        disabled={idx === 0}
-                        className="w-9 h-9 rounded-full bg-amber-950 text-amber-300 disabled:opacity-25"
-                        aria-label={`Move ${clip.title} up`}
-                      >↑</button>
-                      <button
-                        onClick={() => {
-                          if (idx === selectedClipsForPlaylist.length - 1) return;
-                          const reordered = [...selectedClipsForPlaylist];
-                          [reordered[idx], reordered[idx + 1]] = [reordered[idx + 1], reordered[idx]];
-                          setSelectedClipsForPlaylist(reordered);
-                        }}
-                        disabled={idx === selectedClipsForPlaylist.length - 1}
-                        className="w-9 h-9 rounded-full bg-amber-950 text-amber-300 disabled:opacity-25"
-                        aria-label={`Move ${clip.title} down`}
-                      >↓</button>
-                    </div>
-                    <button
-                      onClick={() => setSelectedClipsForPlaylist(selectedClipsForPlaylist.filter((_, i) => i !== idx))}
-                      className="w-8 h-8 flex items-center justify-center rounded-full bg-red-900 bg-opacity-50 hover:bg-opacity-80 text-red-400 text-xs transition shrink-0"
-                    >✕</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Actions row */}
-        <div className="flex flex-wrap gap-2 px-5 py-3">
-          {selectedClipsForPlaylist.length > 0 && (
-            <button
-              onClick={handlePlayStagedClips}
-              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
-            >
-              <Play size={14} fill="currentColor" /> Play Clips
-            </button>
-          )}
-          {selectedClipsForPlaylist.length > 0 && (
-            <button
-              onClick={() => openAddToPlaylist(selectedClipsForPlaylist)}
-              className="px-4 py-2 bg-gradient-to-r from-amber-600 to-yellow-600 text-black rounded-xl text-sm font-bold flex items-center gap-1 hover:shadow-lg transition"
-            >
-              <Plus size={14}/> Save to Playlist
-            </button>
-          )}
-          {selectedClipsForPlaylist.length > 0 && (
-            <button
-              onClick={() => { setSelectedClipsForPlaylist([]); setStagedClipsEditMode(false); }}
-              className="px-4 py-2 bg-purple-800 hover:bg-purple-700 rounded-xl text-sm font-semibold transition"
-            >
-              Clear Staged
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  </div>
-)}
-
-{/* Desktop drag target — appears only while a clip is being dragged. */}
-{draggedClipForQueue && (
-  <div
-    onDragOver={(event) => {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = 'copy';
-      setQueueDropActive(true);
-    }}
-    onDragLeave={() => setQueueDropActive(false)}
-    onDrop={handleDropClipInQueue}
-    className={`hidden md:flex fixed right-6 bottom-6 z-[60] w-72 min-h-28 items-center justify-center gap-3 rounded-3xl border-2 border-dashed px-6 text-center shadow-2xl backdrop-blur-xl transition-all ${queueDropActive ? 'scale-105 border-yellow-300 bg-yellow-500 text-black' : 'border-yellow-500 bg-black/85 text-yellow-300'}`}
-    aria-label="Drop clip to add it to the queue"
-  >
-    <ListMusic size={28} />
-    <span>
-      <span className="block font-black">Drop to queue</span>
-      <span className={`block text-xs mt-1 ${queueDropActive ? 'text-black/70' : 'text-yellow-600'}`}>Release “{draggedClipForQueue.title}” here</span>
-    </span>
-  </div>
-)}
-
-{combinedQueueItems.length > 0 && (
-  <button
-    onClick={() => setQueueDrawerOpen(open => !open)}
-    className={`fixed right-3 z-40 min-h-12 px-4 rounded-full bg-yellow-500 hover:bg-yellow-400 active:scale-95 text-black font-black shadow-2xl transition-all flex items-center gap-2 md:right-0 md:top-1/2 md:bottom-auto md:-translate-y-1/2 md:min-h-0 md:py-6 md:px-2 md:rounded-l-2xl md:rounded-r-none ${videoTitle ? 'bottom-36' : 'bottom-20'} md:[writing-mode:vertical-rl]`}
-    aria-label={`${queueDrawerOpen ? 'Close' : 'Open'} play queue with ${combinedQueueItems.length} items`}
-    aria-controls="play-queue-drawer"
-    aria-expanded={queueDrawerOpen}
-  >
-    <ListMusic size={18} className="md:hidden" />
-    <span className="text-xs font-black">QUEUE</span>
-    <span className="min-w-5 h-5 px-1 rounded-full bg-black text-yellow-300 text-xs flex items-center justify-center md:bg-transparent md:text-black md:p-0">
-      {combinedQueueItems.length}
-    </span>
-  </button>
-)}
 
 {/* Side drawer — unified queue (playlists + individual clips) */}
 {queueDrawerOpen && (
   <div className="fixed inset-0 z-[70] flex items-end md:items-stretch md:justify-end bg-black/70 backdrop-blur-sm" onClick={() => setQueueDrawerOpen(false)}>
     <div
+      ref={queueDialogRef}
       id="play-queue-drawer"
       role="dialog"
       aria-modal="true"
       aria-labelledby="queue-title"
-      className="w-full max-h-[calc(100dvh-0.75rem)] rounded-t-3xl bg-gradient-to-b from-yellow-900 to-amber-950 border-t border-yellow-700 shadow-2xl overflow-hidden flex flex-col md:w-96 md:max-w-[90vw] md:max-h-none md:h-full md:rounded-none md:border-t-0 md:border-l"
+      className="w-full max-h-[calc(100dvh-0.75rem)] rounded-t-3xl bg-gray-950 border-t border-purple-800 shadow-2xl overflow-hidden flex flex-col md:w-96 md:max-w-[90vw] md:max-h-none md:h-full md:rounded-none md:border-t-0 md:border-l"
       onClick={e => e.stopPropagation()}
     >
       <div className="md:hidden flex justify-center pt-2 pb-1" aria-hidden="true">
-        <span className="w-10 h-1 rounded-full bg-yellow-600" />
+        <span className="w-10 h-1 rounded-full bg-purple-700" />
       </div>
-      <div className="flex items-center justify-between px-5 py-4 border-b border-yellow-700">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-purple-800/70">
         <div>
-          <h3 id="queue-title" className="font-black text-lg text-yellow-300">Up next</h3>
-          {studioStandby && <p className="text-sm text-yellow-200" role="status">On standby while Studio is open or a draft is waiting.</p>}
-          <p className="text-xs text-yellow-500">{combinedQueueItems.length} item{combinedQueueItems.length !== 1 ? 's' : ''} in your queue</p>
+          <h3 id="queue-title" className="font-black text-lg text-purple-200">Up next</h3>
+          {studioStandby && <p className="text-sm text-purple-200" role="status">On standby while Studio is open or a draft is waiting.</p>}
+          <p className="text-xs text-purple-300">{queueRestoring ? 'Restoring your queue…' : `${combinedQueueItems.length} item${combinedQueueItems.length !== 1 ? 's' : ''} in your queue`}</p>
         </div>
-        <button onClick={() => setQueueDrawerOpen(false)} className="w-11 h-11 flex items-center justify-center rounded-full text-yellow-300 hover:bg-white/10" aria-label="Close queue">
+        <button onClick={() => setQueueDrawerOpen(false)} className="w-11 h-11 flex items-center justify-center rounded-full text-purple-200 hover:bg-white/10" aria-label="Close queue">
           <X size={22} />
         </button>
       </div>
 
       {/* Edit Order toggle */}
-      <div className="px-5 py-3 border-b border-yellow-800 flex items-center gap-2">
+      <div className="px-5 py-3 border-b border-purple-800/70 flex items-center gap-2">
         <button
           onClick={() => setQueueEditMode(v => !v)}
-          className={`min-h-11 text-sm font-bold px-4 py-2 rounded-xl transition ${queueEditMode ? 'bg-yellow-500 text-black' : 'bg-yellow-900 text-yellow-300 hover:bg-yellow-800'}`}
+          disabled={combinedQueueItems.length === 0}
+          aria-pressed={queueEditMode}
+          className={`min-h-11 text-sm font-bold px-4 py-2 rounded-xl transition disabled:opacity-40 ${queueEditMode ? 'bg-purple-600 text-white' : 'bg-purple-950 text-purple-200 hover:bg-purple-900'}`}
         >
           {queueEditMode ? 'Done Editing' : 'Edit Order'}
         </button>
         <button
           onClick={handleSaveQueueToPlaylist}
-          className="min-h-11 flex-1 text-sm font-bold px-4 py-2 rounded-xl bg-emerald-700 hover:bg-emerald-600 text-white transition flex items-center justify-center gap-1.5"
+          disabled={combinedQueueItems.length === 0}
+          className="min-h-11 flex-1 text-sm font-bold px-4 py-2 rounded-xl border border-purple-500/60 bg-purple-900/50 hover:bg-purple-800 text-white transition flex items-center justify-center gap-1.5 disabled:opacity-40"
         >
           <Plus size={16} /> Save as Playlist
         </button>
       </div>
       {queueEditMode && (
-        <div className="px-5 pb-3 border-b border-yellow-800">
-          <p className="md:hidden text-xs text-yellow-400 mb-2">Use the ↑ and ↓ controls to reorder on touch screens.</p>
+        <div className="px-5 pb-3 border-b border-purple-800/70">
+          <p className="md:hidden text-xs text-purple-300 mb-2">Use the ↑ and ↓ controls to reorder on touch screens.</p>
           <button
             onClick={() => setShowClearQueueConfirm(true)}
             className="w-full min-h-11 rounded-xl border border-red-600/50 bg-red-950/60 text-red-300 text-sm font-black hover:bg-red-900/70 transition"
@@ -5452,7 +5231,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       {/* Queue items — drag sortable when editing */}
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-2 pb-24 md:pb-3">
         {combinedQueueItems.length === 0 ? (
-          <p className="text-center text-yellow-600 text-sm py-6">Queue is empty</p>
+          <p className="text-center text-purple-200 text-sm py-6" role="status">{queueRestoring ? 'Loading your saved items…' : 'Add clips or playlists to line up what plays next.'}</p>
         ) : (
           combinedQueueItems.map((item, qi) => (
             <div
@@ -5470,14 +5249,14 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
               className={`flex items-center gap-3 p-3 rounded-xl border transition ${
                 draggedQueueIdx === qi ? 'opacity-40' : ''
               } ${isPlayingQueue && playlistQueueIndex === qi
-                ? 'border-yellow-400 bg-yellow-800 bg-opacity-60'
-                : 'border-yellow-800 bg-yellow-900 bg-opacity-30'
+                ? 'border-purple-400 bg-purple-900 bg-opacity-60'
+                : 'border-purple-800/70 bg-purple-950 bg-opacity-30'
               }`}
             >
               {queueEditMode && (
                 <button
                   type="button"
-                  className="queue-drag-handle flex h-10 w-8 touch-none select-none items-center justify-center text-xl text-yellow-400 cursor-grab active:cursor-grabbing shrink-0"
+                  className="queue-drag-handle flex h-10 w-8 touch-none select-none items-center justify-center text-xl text-purple-300 cursor-grab active:cursor-grabbing shrink-0"
                   aria-label={`Drag ${item.name} to reorder`}
                   onPointerDown={(event) => beginTouchQueueSort(event, qi)}
                   onPointerMove={continueTouchQueueSort}
@@ -5490,27 +5269,27 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
                 className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-lg transition ${
                   isPlayingQueue && playlistQueueIndex === qi
                     ? 'bg-yellow-400 text-black'
-                    : 'bg-yellow-900 hover:bg-yellow-700 text-yellow-300'
+                    : 'bg-purple-950 hover:bg-yellow-700 text-purple-200'
                 }`}
                 aria-label={`Play ${item.name}`}
               >
                 <Play size={14} fill="currentColor" />
               </button>
-              <span className={`font-black text-sm w-5 shrink-0 ${isPlayingQueue && playlistQueueIndex === qi ? 'text-yellow-300' : 'text-yellow-600'}`}>
+              <span className={`font-black text-sm w-5 shrink-0 ${isPlayingQueue && playlistQueueIndex === qi ? 'text-purple-200' : 'text-purple-400'}`}>
                 {isPlayingQueue && playlistQueueIndex === qi ? '▶' : qi + 1}
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold truncate text-white">{item.name}</p>
-                <p className={`text-xs ${item.kind === 'clip' ? 'text-purple-300' : 'text-yellow-500'}`}>
+                <p className={`text-xs ${item.kind === 'clip' ? 'text-purple-300' : 'text-purple-300'}`}>
                   {item.kind === 'clip' ? `🎵 ${item.subtitle}` : `${item.data.clips?.length || 0} clips`}
                 </p>
               </div>
               {queueEditMode && (
                 <div className="flex items-center gap-1 shrink-0">
                   <button onClick={() => reorderCombinedQueue(qi, qi - 1)} disabled={qi === 0}
-                    className="md:hidden w-10 h-10 rounded-full text-yellow-300 bg-yellow-950 disabled:opacity-25" aria-label={`Move ${item.name} up`}>↑</button>
+                    className="md:hidden w-10 h-10 rounded-full text-purple-200 bg-yellow-950 disabled:opacity-25" aria-label={`Move ${item.name} up`}>↑</button>
                   <button onClick={() => reorderCombinedQueue(qi, qi + 1)} disabled={qi === combinedQueueItems.length - 1}
-                    className="md:hidden w-10 h-10 rounded-full text-yellow-300 bg-yellow-950 disabled:opacity-25" aria-label={`Move ${item.name} down`}>↓</button>
+                    className="md:hidden w-10 h-10 rounded-full text-purple-200 bg-yellow-950 disabled:opacity-25" aria-label={`Move ${item.name} down`}>↓</button>
                   <button
                     onClick={() => handleRemoveQueueItem(item.kind, item.id)}
                     className="w-10 h-10 flex items-center justify-center rounded-full bg-red-900 bg-opacity-50 hover:bg-red-700 text-red-300 transition"
@@ -5524,10 +5303,11 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
       </div>
 
       {/* Actions */}
-      <div className="px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-yellow-800 space-y-2 bg-amber-950">
+      <div className="px-5 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] border-t border-purple-800/70 space-y-2 bg-gray-950">
         <button
           onClick={() => { handlePlayQueue(0); setQueueDrawerOpen(false); }}
-          className="w-full py-3 bg-gradient-to-r from-yellow-500 to-orange-500 text-black rounded-xl font-black hover:shadow-lg transition flex items-center justify-center gap-2"
+          disabled={combinedQueueItems.length === 0 || studioStandby}
+          className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white rounded-xl font-black transition flex items-center justify-center gap-2 disabled:opacity-40"
         >
           <Play size={17} fill="currentColor" /> {isPlayingQueue ? 'Restart Queue' : 'Play Queue'}
         </button>
@@ -5601,18 +5381,27 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 )}
 </div>
 
-{/* Desktop now-playing dock — playback stays visible in every workspace. */}
+{!videoTitle && (
+  <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] right-4 z-[55] rounded-xl border border-purple-700/60 bg-gray-950 shadow-lg md:left-1/2 md:right-auto md:bottom-5 md:-translate-x-1/2">
+    {renderQueueButton()}
+  </div>
+)}
+
+{/* Desktop now-playing dock */}
 {videoTitle && (desktopPlayerCollapsed ? (
-  <button
-    onClick={() => setDesktopPlayerVisibility(false)}
-    className="hidden md:flex fixed bottom-5 left-1/2 -translate-x-1/2 z-[55] max-w-[calc(100vw-4rem)] items-center gap-2 rounded-full border border-purple-500/60 bg-black/90 px-4 py-2 text-sm font-bold text-purple-200 shadow-2xl hover:bg-purple-950"
-    aria-label="Expand bottom player"
-    aria-expanded={false}
-  >
-    <ChevronUp size={16} aria-hidden="true" />
-    <span className="shrink-0">Show player</span>
-    <span aria-hidden="true" className="truncate text-white">· {videoTitle}</span>
-  </button>
+  <div className="hidden md:flex fixed bottom-5 left-1/2 -translate-x-1/2 z-[55] w-max max-w-[min(28rem,calc(100vw-4rem))] items-center gap-1.5 rounded-full border border-purple-500/60 bg-black/90 p-1.5 pl-3 shadow-2xl">
+    <button
+      onClick={() => setDesktopPlayerVisibility(false)}
+      className="flex min-w-0 flex-1 items-center gap-2 rounded-full py-1 pr-2 text-left text-sm font-bold text-purple-200 hover:text-white"
+      aria-label="Expand bottom player"
+      aria-expanded={false}
+    >
+      <ChevronUp size={16} className="shrink-0" aria-hidden="true" />
+      <span className="shrink-0">Show player</span>
+      <span aria-hidden="true" className="truncate text-white">· {videoTitle}</span>
+    </button>
+    {renderQueueButton()}
+  </div>
 ) : (
   <aside className="hidden md:flex fixed bottom-5 left-1/2 -translate-x-1/2 z-[55] w-[min(760px,calc(100vw-220px))] items-center gap-4 rounded-2xl border border-purple-500/40 bg-black/90 px-4 py-3 shadow-2xl backdrop-blur-xl" aria-label="Now playing">
     <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center shrink-0">
@@ -5649,12 +5438,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
         aria-pressed={standaloneLoop}
         title="Repeat current clip"
       ><Repeat size={16} /></button>
-      <button
-        onClick={() => setQueueDrawerOpen(open => !open)}
-        aria-expanded={queueDrawerOpen}
-        aria-controls="play-queue-drawer"
-        className="ml-2 min-h-9 rounded-xl bg-yellow-500/20 px-3 text-xs font-black text-yellow-300 hover:bg-yellow-500/30"
-      >Queue {combinedQueueItems.length}</button>
+      {renderQueueButton()}
       <button
         onClick={() => setDesktopPlayerVisibility(true)}
         className="w-9 h-9 rounded-full text-white hover:bg-white/10 flex items-center justify-center"
@@ -5670,26 +5454,37 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
 {videoTitle && (
   <div className="fixed bottom-16 left-0 right-0 z-40 px-3 flex justify-center md:hidden pointer-events-none">
     {miniPlayerCollapsed ? (
-      <button
-        onClick={() => setMiniPlayerCollapsed(false)}
-        className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-black bg-opacity-90 backdrop-blur-md border border-purple-700 border-opacity-60 rounded-full shadow-2xl text-purple-300 text-xs font-semibold"
-      >
-        <ChevronUp size={16} className="text-purple-400" />
-        {isPlaying ? <Pause size={14}/> : <Play size={14}/>}
-        <Music size={14} className="text-purple-400" />
-        <span className="max-w-[160px] truncate">{videoTitle}</span>
-      </button>
+      <div className="pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border border-purple-700/60 bg-black/90 p-1.5 pl-3 shadow-2xl">
+        <button
+          onClick={() => setMiniPlayerCollapsed(false)}
+          className="flex min-w-0 items-center gap-2 pr-2 text-xs font-semibold text-purple-200"
+          aria-label="Expand bottom player"
+          aria-expanded={false}
+        >
+          <ChevronUp size={16} className="shrink-0" aria-hidden="true" />
+          <span className="max-w-[160px] truncate">{videoTitle}</span>
+        </button>
+        {renderQueueButton(true)}
+      </div>
     ) : (
-      <div className="pointer-events-auto w-full max-w-md bg-black bg-opacity-90 backdrop-blur-md border border-purple-700 border-opacity-60 rounded-2xl px-3 py-2.5 shadow-2xl flex items-center gap-3">
-        <div className="shrink-0 w-10 h-10 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
+      <div className="pointer-events-auto w-full max-w-md bg-black bg-opacity-90 backdrop-blur-md border border-purple-700 border-opacity-60 rounded-2xl px-3 py-2 shadow-2xl flex flex-wrap items-center gap-2">
+        <div className="shrink-0 w-9 h-9 rounded-xl bg-gradient-to-br from-purple-600 to-pink-600 flex items-center justify-center">
           <Music size={18} />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold truncate text-white">{videoTitle}</p>
           <p className="text-xs text-purple-300 truncate">{playbackLabel} · {artist || 'ChorusClip'}</p>
         </div>
-        {/* Mini-player controls — Spotify layout */}
-        <div className="flex items-center gap-1 shrink-0">
+        {renderQueueButton(true)}
+        <button
+          onClick={() => setMiniPlayerCollapsed(true)}
+          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 transition text-white shrink-0"
+          aria-label="Collapse bottom player"
+          aria-expanded={true}
+        >
+          <ChevronDown size={16} />
+        </button>
+        <div className="flex w-full items-center justify-center gap-1 border-t border-purple-900/70 pt-1">
           {/* Restart / Previous */}
           <button
             onClick={() => {
@@ -5751,14 +5546,7 @@ className="btn-success flex-1 min-w-[200px] py-5 text-xl flex items-center justi
           )}
         </div>
 
-        {/* Collapse toggle — hides the expanded mini-player back to the pill */}
-        <button
-          onClick={() => setMiniPlayerCollapsed(true)}
-          className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white hover:bg-opacity-10 transition text-white shrink-0"
-          title="Collapse player"
-        >
-          <ChevronDown size={16} />
-        </button>
+
       </div>
     )}
   </div>
